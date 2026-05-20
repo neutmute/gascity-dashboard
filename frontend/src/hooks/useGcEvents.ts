@@ -75,7 +75,14 @@ export function useGcEventRefresh(
           setState('open');
           retryDelayMs = 1_000;
         };
-        es.onmessage = (msg: MessageEvent<string>) => {
+        // gc supervisor sends events with `event: event` (the event NAME
+        // is literally "event"), not the default "message". EventSource
+        // routes named events to addEventListener('<name>', ...) — only
+        // unnamed events reach .onmessage. Without the explicit listener
+        // below, the connection opens, the indicator reads 'live', and
+        // refreshes never fire. Both handlers point to the same dispatch
+        // so the path is identical regardless of how the server names them.
+        const handleData = (msg: MessageEvent<string>) => {
           if (cancelled) return;
           if (msg.lastEventId) lastEventId = msg.lastEventId;
           let parsed: { type?: string } | null = null;
@@ -93,6 +100,8 @@ export function useGcEventRefresh(
             }
           }
         };
+        es.onmessage = handleData;
+        es.addEventListener('event', handleData as EventListener);
         es.onerror = () => {
           if (cancelled) return;
           setState('closed');
