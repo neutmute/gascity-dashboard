@@ -28,31 +28,53 @@ await mkdir(OUT, { recursive: true });
 
 /**
  * Parse a CSS color string and return its alpha channel (0..1).
- * Accepts rgb(), rgba(), and hex (#rgb / #rrggbb / #rrggbbaa).
- * Returns 1 for any opaque format, the actual alpha for rgba/hex-with-alpha.
- * Returns null if the string can't be parsed (treat as unknown, not opaque).
+ * Accepts rgb(), rgba(), hex (#rgb / #rrggbb / #rrggbbaa), and the modern
+ * color-function syntax oklch() / oklab() / lch() / lab() / hsl() / hwb() /
+ * color(). Chromium 111+ serializes getComputedStyle().backgroundColor in the
+ * declared color space, so on this codebase bg-surface comes back as oklch(...).
+ *
+ * Returns 1 for any opaque format, the literal alpha when an "/ <alpha>" tail
+ * is present. Returns null if the string can't be parsed at all (treat as
+ * unknown, NOT opaque — caller should surface the unparsed string).
  */
 function parseAlpha(color) {
   if (!color) return null;
   const s = String(color).trim().toLowerCase();
-  // rgb(r, g, b) — implicitly opaque
-  const rgbMatch = s.match(/^rgb\(\s*[\d.]+\s*[, ]\s*[\d.]+\s*[, ]\s*[\d.]+\s*\)$/);
-  if (rgbMatch) return 1;
-  // rgba(r, g, b, a) or rgb(r g b / a)
-  const rgbaMatch = s.match(/^rgba?\(.+[,/]\s*([\d.]+)\s*\)$/);
-  if (rgbaMatch) return Number(rgbaMatch[1]);
-  // hex
+  // hex first (no parens)
   if (s.startsWith('#')) {
     if (s.length === 9) return parseInt(s.slice(7, 9), 16) / 255; // #rrggbbaa
     if (s.length === 5) return parseInt(s.slice(4, 5).repeat(2), 16) / 255; // #rgba
     return 1; // opaque hex
+  }
+  // Any function-form color: rgb / rgba / hsl / hsla / hwb / lab / lch /
+  // oklab / oklch / color. The contract for all of them is the same:
+  // an explicit "/ <alpha>" tail means non-opaque, otherwise opaque.
+  const fnMatch = s.match(/^([a-z]+)\((.*)\)$/);
+  if (fnMatch) {
+    const args = fnMatch[2];
+    const alphaMatch = args.match(/\/\s*([\d.]+%?)\s*$/);
+    if (alphaMatch) {
+      const raw = alphaMatch[1];
+      return raw.endsWith('%') ? Number(raw.slice(0, -1)) / 100 : Number(raw);
+    }
+    // Legacy comma syntax for rgba/hsla: rgba(r, g, b, a)
+    const legacyAlpha = args.match(/,\s*([\d.]+%?)\s*$/);
+    if (legacyAlpha && /^(rgba|hsla)$/.test(fnMatch[1]) && args.split(',').length === 4) {
+      const raw = legacyAlpha[1];
+      return raw.endsWith('%') ? Number(raw.slice(0, -1)) / 100 : Number(raw);
+    }
+    return 1; // function-form with no alpha tail is opaque
   }
   return null;
 }
 
 /**
  * One pass over a theme. Returns a result envelope:
- *   { theme, skipped: 'no-backend' | 'no-sessions' | null, errors: string[], info: {...} }
+ *   { theme, skipped: 'no-frontend' | 'no-sessions' | null, errors: string[], info: {...} }
+ *
+ * 'no-frontend' fires when the Vite dev server at :5174 is not reachable.
+ * The backend can be independently up or down; that surfaces as failed peek
+ * calls inside a normal run, not as a skip.
  */
 async function runTheme(browser, theme) {
   const result = { theme, skipped: null, errors: [], info: {} };
@@ -78,7 +100,7 @@ async function runTheme(browser, theme) {
       await page.goto(`${BASE}/agents`, { waitUntil: 'domcontentloaded', timeout: 5_000 });
     } catch (err) {
       if (String(err).includes('ERR_CONNECTION_REFUSED') || String(err).includes('net::ERR') || String(err).includes('NS_ERROR')) {
-        result.skipped = 'no-backend';
+        result.skipped = 'no-frontend';
         return result;
       }
       throw err;
@@ -99,18 +121,23 @@ async function runTheme(browser, theme) {
 
     // Wait for the modal to appear, then for the peek response to settle.
     const dialog = page.locator('div[role="dialog"][aria-modal="true"]');
+    let modalOpened = false;
     try {
       await dialog.waitFor({ state: 'visible', timeout: 3_000 });
+      modalOpened = true;
     } catch {
       result.errors.push('modal did not appear after clicking Peek');
     }
 
-    // Give the POST /peek a chance to round-trip.
-    await page.waitForTimeout(1500);
+    // Only run the downstream assertions if the modal actually opened. When it
+    // doesn't, the panel and network assertions are guaranteed to fail too and
+    // would just duplicate the root-cause error.
+    if (modalOpened) {
+      // Give the POST /peek a chance to round-trip.
+      await page.waitForTimeout(1500);
 
-    // Read computed background-color on the inner panel (first child of dialog).
-    // The outer dialog div is the scrim (bg-fg/30); the inner div is bg-surface.
-    if (await dialog.count() > 0) {
+      // Read computed background-color on the inner panel (first child of dialog).
+      // The outer dialog div is the scrim (bg-fg/30); the inner div is bg-surface.
       const panelBg = await dialog.evaluate((node) => {
         const inner = node.firstElementChild;
         if (!(inner instanceof HTMLElement)) return null;
@@ -124,18 +151,18 @@ async function runTheme(browser, theme) {
       } else if (alpha < 0.99) {
         result.errors.push(`modal panel not opaque: alpha=${alpha} (background=${panelBg})`);
       }
-    }
 
-    // Assertion: at least one POST /peek returned 200.
-    const peekCalls = apiCalls.filter(
-      (c) => c.method === 'POST' && /\/api\/sessions\/[^/]+\/peek$/.test(c.url),
-    );
-    result.info.peekCalls = peekCalls;
-    if (peekCalls.length === 0) {
-      result.errors.push('no POST /api/sessions/<id>/peek was observed');
-    } else if (!peekCalls.some((c) => c.status === 200)) {
-      const summary = peekCalls.map((c) => `${c.status} ${c.url}`).join('; ');
-      result.errors.push(`no successful (200) /peek response. Saw: ${summary}`);
+      // Assertion: at least one POST /peek returned 200.
+      const peekCalls = apiCalls.filter(
+        (c) => c.method === 'POST' && /\/api\/sessions\/[^/]+\/peek$/.test(c.url),
+      );
+      result.info.peekCalls = peekCalls;
+      if (peekCalls.length === 0) {
+        result.errors.push('no POST /api/sessions/<id>/peek was observed');
+      } else if (!peekCalls.some((c) => c.status === 200)) {
+        const summary = peekCalls.map((c) => `${c.status} ${c.url}`).join('; ');
+        result.errors.push(`no successful (200) /peek response. Saw: ${summary}`);
+      }
     }
 
     const snapPath = `${OUT}/${theme}-agents-peek.png`;
@@ -162,8 +189,8 @@ try {
 // Report.
 let hadErrors = false;
 for (const r of results) {
-  if (r.skipped === 'no-backend') {
-    console.log(`[${r.theme}] SKIP — frontend not reachable at ${BASE}`);
+  if (r.skipped === 'no-frontend') {
+    console.log(`[${r.theme}] SKIP, frontend not reachable at ${BASE}`);
     continue;
   }
   if (r.skipped === 'no-sessions') {
@@ -196,7 +223,7 @@ if (TEST_MODE) {
   }
   const ranAny = results.some((r) => r.skipped === null);
   if (!ranAny) {
-    const reason = results.every((r) => r.skipped === 'no-backend')
+    const reason = results.every((r) => r.skipped === 'no-frontend')
       ? 'no live frontend'
       : 'no active sessions to peek';
     console.log(`peek regression: SKIPPED (${reason})`);
