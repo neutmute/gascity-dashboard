@@ -91,10 +91,14 @@ export function useListFilters<T>({
     loadCollapsed(viewKey),
   );
 
-  // Reload persisted collapse when the view key itself changes (rare
-  // — view keys are usually module constants — but cheap to support).
+  // When the view key changes (e.g. Mail switching inbox <-> sent),
+  // reload persisted collapse AND reset ephemeral search/chip state.
+  // Without the reset, an "unread" chip activated in inbox would
+  // silently filter Sent (all read), making the box appear empty.
   useEffect(() => {
     setCollapsed(loadCollapsed(viewKey));
+    setSearch('');
+    setActiveChipIds(new Set());
   }, [viewKey]);
 
   const toggleChip = useCallback((id: string) => {

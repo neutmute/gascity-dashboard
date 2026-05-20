@@ -30,7 +30,7 @@ export default defineConfig({
         // this code path doesn't apply (gascity-dashboard-oi7).
         configure(proxy) {
           proxy.on('proxyReq', (proxyReq) => {
-            if (proxyReq.getHeader('origin')) {
+            if (proxyReq.hasHeader('origin')) {
               proxyReq.setHeader('Origin', BACKEND_TARGET);
             }
           });

@@ -175,4 +175,25 @@ describe('useListFilters', () => {
     const gcGroup = result.current.groups.find((g) => g.project === 'gc');
     expect(gcGroup?.rows.map((r) => r.id)).toEqual(['gc-1', 'gc-2']);
   });
+
+  it('resets ephemeral search and chip state when viewKey changes (Mail inbox <-> sent)', () => {
+    let viewKey = 'mail:inbox';
+    const { result, rerender } = renderHook(() =>
+      useListFilters({ viewKey, rows, projectOf, searchOf, chips }),
+    );
+
+    act(() => {
+      result.current.setSearch('peek');
+      result.current.toggleChip('open');
+    });
+    expect(result.current.search).toBe('peek');
+    expect(result.current.activeChipIds.has('open')).toBe(true);
+
+    viewKey = 'mail:sent';
+    rerender();
+
+    expect(result.current.search).toBe('');
+    expect(result.current.activeChipIds.size).toBe(0);
+    expect(result.current.totalMatches).toBe(5);
+  });
 });
