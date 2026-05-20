@@ -1,0 +1,285 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import type { KanbanCard, KanbanColumn, KanbanResponse } from 'gas-city-dashboard-shared';
+import { KANBAN_COLUMNS } from 'gas-city-dashboard-shared';
+import { api } from '../api/client';
+import { Button } from '../components/Button';
+import { PageHeader } from '../components/PageHeader';
+import { StatusBadge } from '../components/StatusBadge';
+import { useGcEventRefresh } from '../hooks/useGcEvents';
+
+// Read-only Kanban view (gascity-dashboard-dh6). Ported from
+// Wldc4rd/citadel; visual register rebuilt to pass the Flat Page Rule.
+// No bordered card columns; columns are typographic swimlanes with a
+// tracked label head and a vertical rhythm of rows. The Greyscale
+// Test still reads: column heads are labels, blocker/priority signals
+// carry a glyph + word, freshness is shown by text staleness.
+//
+// READ-ONLY: no drag-drop, no inline edits. Cards link into /beads;
+// the quick-detail modal (cd-ykl9 upstream) and move-activity feed
+// (cd-6w92 upstream) are deferred. 30s refresh + SSE-on-bead-or-session
+// kept.
+
+const REFRESH_INTERVAL_MS = 30_000;
+const TICK_MS = 5_000;
+const STALE_AMBER_MS = 30_000;
+const STALE_RED_MS = 120_000;
+
+const COLUMN_LABELS: Record<KanbanColumn, string> = {
+  mayor_plate: 'Mayor plate',
+  in_flight: 'In flight',
+  stalled: 'Stalled',
+  blocked_real: 'Blocked, real',
+  blocked_stale: 'Blocked, stale',
+  in_review: 'In review',
+  needs_changes: 'Needs changes',
+  approved: 'Approved',
+  closed_24h: 'Closed, 24h',
+};
+
+const COLUMN_HELP: Record<KanbanColumn, string> = {
+  mayor_plate: 'Open, no in-flight signal. Routing and pickup live here.',
+  in_flight: 'Claimed; assignee session active within the last hour.',
+  stalled: 'Claimed but session inactive over an hour, or asleep.',
+  blocked_real: 'Blocked label with at least one open dependency.',
+  blocked_stale: 'Blocked label, all dependencies resolved. Needs unblock.',
+  in_review: 'Implementer done; reviewer audits.',
+  needs_changes: 'Reviewer bounced. Back to the implementer.',
+  approved: 'Reviewer approved. Ready to land.',
+  closed_24h: 'Closed within the last twenty-four hours.',
+};
+
+export function KanbanPage() {
+  const [data, setData] = useState<KanbanResponse | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await api.kanban();
+      setData(d);
+      setFetchedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'kanban fetch failed');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, REFRESH_INTERVAL_MS);
+    return () => clearInterval(tick);
+  }, [refresh]);
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, TICK_MS);
+    return () => clearInterval(tick);
+  }, []);
+
+  useGcEventRefresh(['bead.', 'session.'], () => void refresh());
+
+  const staleness =
+    fetchedAt === null
+      ? 'down'
+      : now - fetchedAt < STALE_AMBER_MS
+        ? 'fresh'
+        : now - fetchedAt < STALE_RED_MS
+          ? 'amber'
+          : 'red';
+
+  const synopsis = data
+    ? `${data.total} engineering bead${data.total === 1 ? '' : 's'} classified across nine ownership columns. Read-only. Auto-refreshes on the half-minute and on the gc event stream.`
+    : 'Loading the classifier.';
+
+  return (
+    <section>
+      <PageHeader
+        title="Kanban"
+        synopsis={synopsis}
+        meta={
+          <>
+            {error && (
+              <span className="normal-case text-body text-accent" role="alert">
+                {error}
+              </span>
+            )}
+            {fetchedAt !== null && (
+              <span
+                className={`tnum ${
+                  staleness === 'fresh'
+                    ? 'text-fg-faint'
+                    : staleness === 'amber'
+                      ? 'text-warn'
+                      : 'text-accent'
+                }`}
+                title={new Date(fetchedAt).toLocaleString()}
+              >
+                {Math.max(0, Math.round((now - fetchedAt) / 1_000))}s ago
+              </span>
+            )}
+            <Button size="sm" onClick={() => void refresh()} disabled={loading}>
+              {loading ? 'Refreshing' : 'Refresh'}
+            </Button>
+          </>
+        }
+      />
+
+      {data === null && !error && (
+        <p className="text-body text-fg-muted italic">Loading kanban.</p>
+      )}
+
+      {data !== null && (
+        <div className="flex gap-10 overflow-x-auto pb-4 -mx-2 px-2">
+          {KANBAN_COLUMNS.map((col) => (
+            <Column key={col} col={col} cards={data.columns[col]} now={now} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Column({
+  col,
+  cards,
+  now,
+}: {
+  col: KanbanColumn;
+  cards: ReadonlyArray<KanbanCard>;
+  now: number;
+}) {
+  return (
+    <section className="shrink-0 w-64 space-y-3">
+      <header className="space-y-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-label uppercase tracking-wider text-fg">
+            {COLUMN_LABELS[col]}
+          </h2>
+          <span className="text-label uppercase tracking-wider text-fg-faint tnum">
+            {cards.length}
+          </span>
+        </div>
+        <p className="text-label normal-case tracking-normal text-fg-faint italic leading-snug">
+          {COLUMN_HELP[col]}
+        </p>
+      </header>
+
+      {cards.length === 0 ? (
+        <p className="text-label normal-case tracking-normal text-fg-faint italic">
+          empty
+        </p>
+      ) : (
+        <ul className="divide-y divide-rule">
+          {cards.map((c) => (
+            <Card key={c.id} card={c} column={col} now={now} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function Card({
+  card,
+  column,
+  now,
+}: {
+  card: KanbanCard;
+  column: KanbanColumn;
+  now: number;
+}) {
+  // Two-line typographic row: title + id on the first line, meta on
+  // the second. Hover surface is a subtle tint, not a border-box —
+  // hierarchy is carried by space and weight, the way the page does
+  // it everywhere else.
+  return (
+    <li className="py-2 hover:bg-surface-tint -mx-2 px-2 rounded-sm transition-colors duration-150 ease-out-quart">
+      <Link
+        to="/beads"
+        className="block focus-mark rounded-sm"
+        title={`Open the bead list and find ${card.id}`}
+      >
+        <div className="flex items-baseline gap-2">
+          <PriorityMark priority={card.priority} />
+          <p className="text-body text-fg leading-snug line-clamp-2 min-w-0 flex-1">
+            {card.title || '(untitled)'}
+          </p>
+        </div>
+        <div className="mt-1 flex items-baseline justify-between gap-2 text-label uppercase tracking-wider">
+          <span className="text-fg-faint tnum truncate" title={card.id}>
+            {card.id}
+          </span>
+          <div className="flex items-baseline gap-3 shrink-0">
+            {card.open_blocker_count > 0 && (
+              <StatusBadge
+                tone="warn"
+                label={`${card.open_blocker_count} blocked by`}
+                className="text-label normal-case tracking-wider"
+              />
+            )}
+            <span className="text-fg-muted truncate max-w-[6rem]" title={card.assignee || 'unassigned'}>
+              {card.assignee || '·'}
+            </span>
+            <span className="text-fg-faint tnum tabular-nums whitespace-nowrap">
+              {formatRelativeNow(card.last_active, now, column === 'closed_24h')}
+            </span>
+          </div>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+function PriorityMark({ priority }: { priority: number }) {
+  // Priority carries with text + color; P0 is the single loud signal,
+  // P1 warm warn, P2+ quiet. Always paired with the literal "P{n}" so
+  // the page still reads in greyscale.
+  const tone =
+    priority === 0
+      ? 'text-accent'
+      : priority === 1
+        ? 'text-warn'
+        : 'text-fg-faint';
+  return (
+    <span
+      className={`text-label uppercase tracking-wider tnum shrink-0 ${tone}`}
+      aria-label={`Priority ${priority}`}
+    >
+      P{priority}
+    </span>
+  );
+}
+
+function formatRelativeNow(
+  iso: string | null,
+  now: number,
+  preferAbsolute: boolean,
+): string {
+  if (!iso) return '·';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '·';
+  const diffSec = Math.max(0, Math.round((now - ms) / 1_000));
+  if (preferAbsolute && diffSec >= 3600) {
+    return new Date(ms).toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+  if (diffSec < 5) return 'now';
+  if (diffSec < 60) return `${diffSec}s`;
+  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m`;
+  if (diffSec < 86_400) return `${Math.round(diffSec / 3600)}h`;
+  return `${Math.round(diffSec / 86_400)}d`;
+}
