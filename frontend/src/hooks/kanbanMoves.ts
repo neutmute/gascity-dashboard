@@ -57,7 +57,13 @@ function indexById(snapshot: KanbanResponse): Map<string, CardLocation> {
   const map = new Map<string, CardLocation>();
   for (const [col, cards] of Object.entries(snapshot.columns)) {
     for (const c of cards) {
-      map.set(c.id, { column: col as KanbanColumn, title: c.title });
+      // First-wins guard. The gc supervisor's classifier is contracted to
+      // place each bead in exactly one column, but if a malformed snapshot
+      // ever emits the same id in two columns we want a deterministic
+      // result instead of last-write-wins dependent on map insertion order.
+      if (!map.has(c.id)) {
+        map.set(c.id, { column: col as KanbanColumn, title: c.title });
+      }
     }
   }
   return map;
