@@ -6,13 +6,14 @@
  * internally) lets a parent component drive the tick via `useState(Date.now())`
  * so every relative timestamp in a render is consistent with every other.
  *
- * Output grammar:
- *   '·'    — invalid / missing input (interpunct sentinel; see DESIGN.md)
- *   'now'  — diff < 5 seconds (or future timestamps, clamped to 0)
- *   'Ns'   — diff in [5s, 60s)
- *   'Nm'   — diff in [1m, 1h)
- *   'Nh'   — diff in [1h, 24h)
- *   'Nd'   — diff ≥ 24h
+ * Output grammar (diffs are rounded to the nearest second before bucketing,
+ * so e.g. 4.5s renders as '5s', not 'now'):
+ *   '·'    — invalid / missing / null input (interpunct sentinel; see DESIGN.md)
+ *   'now'  — rounded diff < 5 seconds (future timestamps clamp to 0)
+ *   'Ns'   — rounded diff in [5s, 60s)
+ *   'Nm'   — rounded diff in [1m, 1h)
+ *   'Nh'   — rounded diff in [1h, 24h)
+ *   'Nd'   — rounded diff ≥ 24h
  */
 export function formatRelative(
   ts: string | number | Date | undefined | null,

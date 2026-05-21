@@ -12,6 +12,14 @@ describe('formatRelative', () => {
     expect(formatRelative(undefined, NOW)).toBe('·');
   });
 
+  it('returns the interpunct sentinel for null input', () => {
+    // The signature accepts null and the guard handles it; this test
+    // pins the behavior so a future tightening of the guard can't
+    // silently start returning 'now' (Date.parse(null) NaN path) or
+    // throwing.
+    expect(formatRelative(null, NOW)).toBe('·');
+  });
+
   it('returns the interpunct sentinel for unparseable input', () => {
     expect(formatRelative('not-a-date', NOW)).toBe('·');
     expect(formatRelative('', NOW)).toBe('·');

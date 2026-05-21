@@ -7,7 +7,7 @@ import { GcClient } from '../src/gc-client.js';
 import { sessionsRouter } from '../src/routes/sessions.js';
 import { beadsRouter } from '../src/routes/beads.js';
 import { mailRouter } from '../src/routes/mail.js';
-import { healthRouter } from '../src/routes/health.js';
+import { healthRouter, resolveHealthTimeoutMs } from '../src/routes/health.js';
 
 // End-to-end test that the timeout-aware GcClient + the routes' 504
 // translation produce the right wire response when the upstream supervisor
@@ -253,5 +253,35 @@ describe('routes: upstream timeout -> HTTP 504', () => {
     } finally {
       await close();
     }
+  });
+});
+
+describe('resolveHealthTimeoutMs', () => {
+  const ORIGINAL = process.env.GC_HEALTH_TIMEOUT_MS;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.GC_HEALTH_TIMEOUT_MS;
+    else process.env.GC_HEALTH_TIMEOUT_MS = ORIGINAL;
+  });
+
+  test('falls back to 2500ms when env var is unset', () => {
+    delete process.env.GC_HEALTH_TIMEOUT_MS;
+    assert.equal(resolveHealthTimeoutMs(), 2_500);
+  });
+
+  test('honors a positive integer env var', () => {
+    process.env.GC_HEALTH_TIMEOUT_MS = '7500';
+    assert.equal(resolveHealthTimeoutMs(), 7_500);
+  });
+
+  test('falls back when env var is non-numeric', () => {
+    process.env.GC_HEALTH_TIMEOUT_MS = 'not-a-number';
+    assert.equal(resolveHealthTimeoutMs(), 2_500);
+  });
+
+  test('falls back when env var is zero or negative (typo guard)', () => {
+    process.env.GC_HEALTH_TIMEOUT_MS = '0';
+    assert.equal(resolveHealthTimeoutMs(), 2_500);
+    process.env.GC_HEALTH_TIMEOUT_MS = '-1';
+    assert.equal(resolveHealthTimeoutMs(), 2_500);
   });
 });
