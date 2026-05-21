@@ -7,16 +7,31 @@ import { recordAudit } from '../audit.js';
 // Health uses a tighter window than the global GcClient timeout (5s default)
 // because /v0/city/{name}/health is a cheap localhost ping. 2.5s is plenty
 // to distinguish "supervisor hung" from "supervisor slow under real load".
+// Operators can override via GC_HEALTH_TIMEOUT_MS (mirrors the
+// GC_CLIENT_TIMEOUT_MS knob on GcClient — same shape, narrower scope).
 const SUPERVISOR_HEALTH_TIMEOUT_MS = 2_500;
 
+/**
+ * Resolves the supervisor health timeout from the GC_HEALTH_TIMEOUT_MS env
+ * var, falling back to SUPERVISOR_HEALTH_TIMEOUT_MS. Invalid or non-positive
+ * values fall back too — silent fallback matches the gc-client pattern and
+ * keeps a typo from accidentally setting a 0ms timeout.
+ */
+export function resolveHealthTimeoutMs(): number {
+  const raw = process.env.GC_HEALTH_TIMEOUT_MS;
+  if (typeof raw !== 'string') return SUPERVISOR_HEALTH_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : SUPERVISOR_HEALTH_TIMEOUT_MS;
+}
+
 export interface HealthRouterOptions {
-  /** Per-request timeout for the supervisor /health probe. Defaults to 2500ms. */
+  /** Per-request timeout for the supervisor /health probe. Defaults to GC_HEALTH_TIMEOUT_MS env, then 2500ms. */
   supervisorTimeoutMs?: number;
 }
 
 export function healthRouter(gc: GcClient, opts: HealthRouterOptions = {}): Router {
   const router = Router();
-  const supervisorTimeoutMs = opts.supervisorTimeoutMs ?? SUPERVISOR_HEALTH_TIMEOUT_MS;
+  const supervisorTimeoutMs = opts.supervisorTimeoutMs ?? resolveHealthTimeoutMs();
 
   router.get('/system', async (_req, res) => {
     const mem = process.memoryUsage();

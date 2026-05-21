@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DeployRecord, GitCommit, GitView } from 'gas-city-dashboard-shared';
 import { api } from '../api/client';
 import { Button } from '../components/Button';
@@ -17,6 +17,18 @@ const VIEW_OPTIONS: ReadonlyArray<{ value: GitView; label: string }> = [
 
 export function ActivityPage() {
   const [view, setView] = useState<GitView>('recent-main');
+  // Tick state so relative timestamps refresh between data fetches. Mirrors
+  // the Agents.tsx pattern: 15s interval (formatRelative's smallest unit is
+  // seconds in [5,60); 1s would be gratuitous re-render), visibility-aware
+  // so background tabs don't churn.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, 15_000);
+    return () => clearInterval(tick);
+  }, []);
 
   const {
     data: commitsData,
@@ -75,11 +87,11 @@ export function ActivityPage() {
       label: 'When',
       sortable: true,
       sortValue: (r) => r.date,
-      render: (r) => <span className="tnum text-fg-muted">{formatRelative(r.date, Date.now())}</span>,
+      render: (r) => <span className="tnum text-fg-muted">{formatRelative(r.date, now)}</span>,
       className: 'w-20',
       align: 'right',
     },
-  ], []);
+  ], [now]);
 
   const deployColumns = useMemo<ReadonlyArray<TableColumn<DeployRecord>>>(() => [
     {
@@ -87,7 +99,7 @@ export function ActivityPage() {
       label: 'When',
       sortable: true,
       sortValue: (r) => r.at,
-      render: (r) => <span className="tnum text-fg-muted">{formatRelative(r.at, Date.now())}</span>,
+      render: (r) => <span className="tnum text-fg-muted">{formatRelative(r.at, now)}</span>,
       className: 'w-24',
     },
     {
@@ -105,9 +117,9 @@ export function ActivityPage() {
         </pre>
       ),
     },
-  ], []);
+  ], [now]);
 
-  const synopsis = useMemo(() => buildSynopsis(commits, deploys), [commits, deploys]);
+  const synopsis = useMemo(() => buildSynopsis(commits, deploys, now), [commits, deploys, now]);
 
   return (
     <section>
@@ -197,17 +209,21 @@ function deployTone(status: string): StatusTone {
   }
 }
 
-function buildSynopsis(commits: ReadonlyArray<GitCommit>, deploys: ReadonlyArray<DeployRecord>): string {
+function buildSynopsis(
+  commits: ReadonlyArray<GitCommit>,
+  deploys: ReadonlyArray<DeployRecord>,
+  now: number,
+): string {
   const parts: string[] = [];
   const latestCommit = commits[0];
   if (latestCommit) {
-    parts.push(`${commits.length} commits in view, latest ${formatRelative(latestCommit.date, Date.now())}`);
+    parts.push(`${commits.length} commits in view, latest ${formatRelative(latestCommit.date, now)}`);
   } else {
     parts.push('No commits in view');
   }
   const latestDeploy = deploys[0];
   if (latestDeploy) {
-    parts.push(`last deploy ${formatRelative(latestDeploy.at, Date.now())} (${latestDeploy.status})`);
+    parts.push(`last deploy ${formatRelative(latestDeploy.at, now)} (${latestDeploy.status})`);
   }
   return parts.join('; ') + '.';
 }

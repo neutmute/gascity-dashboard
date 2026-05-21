@@ -41,6 +41,17 @@ type MailBox = 'inbox' | 'sent';
 export function MailPage() {
   const { viewingAs, setAlias, resetToOperator } = useViewingAs();
   const [box, setBox] = useState<MailBox>('inbox');
+  // Tick state so relative timestamps refresh between data fetches. Mirrors
+  // the Agents.tsx pattern: 15s interval, visibility-aware so background
+  // tabs don't churn.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, 15_000);
+    return () => clearInterval(tick);
+  }, []);
   const { data: mailData, loading, error: mailError, refresh } = useCachedData(
     `mail:${box}:${viewingAs.alias}`,
     () => api.listMail(box, viewingAs.alias),
@@ -128,12 +139,12 @@ export function MailPage() {
       sortable: true,
       sortValue: (r) => r.created_at,
       render: (r) => (
-        <span className="tnum text-fg-muted">{formatRelative(r.created_at, Date.now())}</span>
+        <span className="tnum text-fg-muted">{formatRelative(r.created_at, now)}</span>
       ),
       className: 'w-24',
       align: 'right',
     },
-  ], []);
+  ], [now]);
 
   const synopsis = useMemo(() => {
     const noun = box === 'inbox' ? 'inbox' : 'sent';
