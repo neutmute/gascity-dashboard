@@ -66,6 +66,8 @@ describe('SESSION_CHIPS', () => {
     );
     expect(matchingIds).toContain('running');
     expect(matchingIds).toContain('detached');
+    // Bound the match set: only those two chips, no spurious third match.
+    expect(matchingIds).toHaveLength(2);
   });
 });
 

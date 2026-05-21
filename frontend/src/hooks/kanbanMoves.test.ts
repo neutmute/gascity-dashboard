@@ -137,11 +137,17 @@ describe('detectMoves', () => {
   // expected to place each bead in exactly one column, but if it ever
   // emits the same id in two columns we want a deterministic outcome
   // (first column wins) rather than map-insertion-order dependency.
+  // The "first column" both tests below refer to is the first appearance in
+  // `emptyColumns()` declaration order (in_flight before stalled). `indexById`
+  // iterates `Object.entries(snapshot.columns)`, which preserves the literal's
+  // insertion order under V8; if `emptyColumns()` is ever reordered, expected
+  // `from`/`to` values below shift accordingly. The point of these tests is
+  // determinism, not the specific column chosen.
   it('treats the first column as authoritative when the same id appears twice in next', () => {
     const prev = snapshot({ mayor_plate: [card('bead-1', { title: 'one' })] });
     // bead-1 appears in BOTH in_flight and stalled in the next snapshot.
-    // `in_flight` comes first in the empty-columns order, so first-wins
-    // should report the move as mayor_plate -> in_flight.
+    // `in_flight` comes first in emptyColumns() order, so first-wins should
+    // report the move as mayor_plate -> in_flight.
     const next = snapshot({
       in_flight: [card('bead-1', { title: 'one' })],
       stalled: [card('bead-1', { title: 'one' })],
@@ -156,8 +162,9 @@ describe('detectMoves', () => {
   });
 
   it('treats the first column as authoritative when the same id appears twice in prev', () => {
-    // Symmetric case: malformed prev snapshot. First-wins keeps `from`
-    // stable instead of depending on Map insertion order.
+    // Symmetric case: malformed prev snapshot. First-wins keeps `from` stable
+    // (anchored to emptyColumns() order) instead of depending on the order
+    // V8 happened to iterate Object.entries.
     const prev = snapshot({
       in_flight: [card('bead-1', { title: 'one' })],
       stalled: [card('bead-1', { title: 'one' })],
