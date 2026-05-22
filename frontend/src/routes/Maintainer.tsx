@@ -22,6 +22,56 @@ import { useCachedData } from '../hooks/useCachedData';
 // (contributor trust + ratios), and 98h (semantic weak ties).
 
 const CACHE_KEY = 'maintainer-triage';
+const COLLAPSE_KEY = 'maintainer:collapsed';
+const FOCUS_KEY = 'maintainer:focusBreaking';
+
+// Persists which tier / cluster headings the operator has collapsed.
+// Set of ids; default empty (all expanded). LocalStorage-backed so the
+// preference holds across the page being open in an ambient tab.
+function useCollapseState() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      return new Set(Array.isArray(parsed) ? (parsed as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  const persist = useCallback((next: Set<string>) => {
+    try {
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(next)));
+    } catch {
+      /* quota / disabled storage — fine to skip */
+    }
+  }, []);
+
+  const toggle = useCallback(
+    (id: string) => {
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        persist(next);
+        return next;
+      });
+    },
+    [persist],
+  );
+
+  const setExact = useCallback(
+    (ids: Iterable<string>) => {
+      const next = new Set(ids);
+      persist(next);
+      setCollapsed(next);
+    },
+    [persist],
+  );
+
+  return { isCollapsed: (id: string) => collapsed.has(id), toggle, setExact };
+}
 
 export function MaintainerPage() {
   const { data, loading, error, refresh } = useCachedData<MaintainerTriage>(
@@ -31,6 +81,25 @@ export function MaintainerPage() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const collapse = useCollapseState();
+  const [focusBreaking, setFocusBreaking] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(FOCUS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleFocus = useCallback(() => {
+    setFocusBreaking((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(FOCUS_KEY, next ? '1' : '0');
+      } catch {
+        /* skip */
+      }
+      return next;
+    });
+  }, []);
 
   // Live updates: subscribe to /api/maintainer/events. Whenever the
   // nightly worker (or anyone else's manual refresh) rewrites the
@@ -79,6 +148,9 @@ export function MaintainerPage() {
                 {refreshError ?? error}
               </span>
             )}
+            <Button size="sm" onClick={toggleFocus}>
+              {focusBreaking ? 'Show all tiers' : 'Breaking only'}
+            </Button>
             <Button size="sm" onClick={() => void handleRefresh()} disabled={refreshing}>
               {refreshing ? 'Refreshing' : 'Refresh from gh'}
             </Button>
@@ -92,9 +164,18 @@ export function MaintainerPage() {
       {data ? (
         <>
           <div className="space-y-14">
-            {data.tiers.map((tier) => (
-              <TierSection key={tier.tier} section={tier} />
-            ))}
+            {data.tiers
+              .filter((tier) => !focusBreaking || tier.tier === 'regression_breaking')
+              .map((tier) => (
+                <TierSection
+                  key={tier.tier}
+                  section={tier}
+                  collapsed={collapse.isCollapsed(`tier:${tier.tier}`)}
+                  onToggle={() => collapse.toggle(`tier:${tier.tier}`)}
+                  isCollapsed={collapse.isCollapsed}
+                  toggleCluster={collapse.toggle}
+                />
+              ))}
           </div>
           <Footer computedAt={data.computed_at} />
         </>
@@ -109,34 +190,59 @@ export function MaintainerPage() {
   );
 }
 
-function TierSection({ section }: { section: TriageTierSection }) {
+function TierSection({
+  section,
+  collapsed,
+  onToggle,
+  isCollapsed,
+  toggleCluster,
+}: {
+  section: TriageTierSection;
+  collapsed: boolean;
+  onToggle: () => void;
+  isCollapsed: (id: string) => boolean;
+  toggleCluster: (id: string) => void;
+}) {
   const itemCount =
     section.clusters.reduce((n, c) => n + c.items.length, 0) +
     section.unclustered.length;
 
   return (
     <section>
-      <header className="flex items-baseline justify-between gap-4 mb-6 pb-2 border-b border-rule">
-        <h2
-          className={
-            section.tier === 'regression_breaking'
-              ? 'text-headline font-semibold uppercase tracking-wide text-fg'
-              : 'text-headline font-semibold uppercase tracking-wide text-fg-muted'
-          }
+      <header className="mb-6 pb-2 border-b border-rule">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="w-full flex items-baseline justify-between gap-4 focus-mark"
+          aria-expanded={!collapsed}
         >
-          {tierLabel(section.tier)}
-        </h2>
-        <span className="text-label uppercase tracking-wider text-fg-muted tnum">
-          {itemCount} {itemCount === 1 ? 'item' : 'items'}
-        </span>
+          <h2
+            className={
+              section.tier === 'regression_breaking'
+                ? 'text-headline font-semibold uppercase tracking-wide text-fg text-left'
+                : 'text-headline font-semibold uppercase tracking-wide text-fg-muted text-left'
+            }
+          >
+            <CollapseGlyph collapsed={collapsed} />
+            {tierLabel(section.tier)}
+          </h2>
+          <span className="text-label uppercase tracking-wider text-fg-muted tnum">
+            {itemCount} {itemCount === 1 ? 'item' : 'items'}
+          </span>
+        </button>
       </header>
 
-      {section.clusters.length === 0 && section.unclustered.length === 0 ? (
+      {collapsed ? null : section.clusters.length === 0 && section.unclustered.length === 0 ? (
         <p className="text-body text-fg-faint italic">No items in this tier.</p>
       ) : (
         <div className="space-y-10">
           {section.clusters.map((cluster) => (
-            <ClusterBlock key={cluster.cluster_id} cluster={cluster} />
+            <ClusterBlock
+              key={cluster.cluster_id}
+              cluster={cluster}
+              collapsed={isCollapsed(`cluster:${cluster.cluster_id}`)}
+              onToggle={() => toggleCluster(`cluster:${cluster.cluster_id}`)}
+            />
           ))}
 
           {section.unclustered.length > 0 && (
@@ -153,7 +259,27 @@ function TierSection({ section }: { section: TriageTierSection }) {
   );
 }
 
-function ClusterBlock({ cluster }: { cluster: TriageCluster }) {
+function CollapseGlyph({ collapsed }: { collapsed: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-block text-fg-faint mr-2 transition-transform duration-150 ease-out-quart"
+      style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+    >
+      ▾
+    </span>
+  );
+}
+
+function ClusterBlock({
+  cluster,
+  collapsed,
+  onToggle,
+}: {
+  cluster: TriageCluster;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const issues = cluster.items.filter((i) => i.kind === 'issue').length;
   const prs = cluster.items.filter((i) => i.kind === 'pr').length;
   const totals: string[] = [];
@@ -172,7 +298,12 @@ function ClusterBlock({ cluster }: { cluster: TriageCluster }) {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between gap-4">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        className="w-full flex items-baseline justify-between gap-4 focus-mark text-left"
+      >
         <div
           className={
             isTopic
@@ -180,6 +311,7 @@ function ClusterBlock({ cluster }: { cluster: TriageCluster }) {
               : 'text-title font-medium text-fg min-w-0 truncate'
           }
         >
+          <CollapseGlyph collapsed={collapsed} />
           {isTopic && (
             <span className="text-fg-faint mr-2" aria-hidden>·</span>
           )}
@@ -188,8 +320,8 @@ function ClusterBlock({ cluster }: { cluster: TriageCluster }) {
         <div className="text-body text-fg-muted tnum shrink-0">
           {totals.join(' · ')}
         </div>
-      </div>
-      <RowList items={cluster.items} />
+      </button>
+      {!collapsed && <RowList items={cluster.items} />}
     </div>
   );
 }
@@ -254,10 +386,11 @@ function IssueRow({
   // link and the label would be noise.
   const showAnchored = item.linked_numbers.length > 0 && !hasInListChildren;
   return (
-    <div className="grid grid-cols-[1.75em_1fr_auto] items-baseline gap-x-3 py-1.5">
+    <div className="grid grid-cols-[1.75em_2.25em_1fr_auto] items-baseline gap-x-3 py-1.5">
       <span aria-hidden className="text-accent text-[0.85em] leading-none translate-y-[1px]">
         {item.is_marked ? '●' : ''}
       </span>
+      <PriorityBadge labels={item.labels} />
       <div className="min-w-0">
         <span className="text-body text-fg">{item.title}</span>
         {item.weak_ties.length > 0 && (
@@ -298,9 +431,10 @@ function PrRow({ item, nested }: { item: TriageItem; nested: boolean }) {
 
   return (
     <div
-      className={`grid grid-cols-[1.75em_1fr_auto] items-baseline gap-x-3 py-1 ${nested ? 'pl-10' : ''}`}
+      className={`grid grid-cols-[1.75em_2.25em_1fr_auto] items-baseline gap-x-3 py-1 ${nested ? 'pl-10' : ''}`}
     >
       {leading}
+      <PriorityBadge labels={item.labels} />
       <div className="min-w-0">
         <span className={nested ? 'text-body text-fg-muted' : 'text-body text-fg'}>
           {item.title}
@@ -314,6 +448,27 @@ function PrRow({ item, nested }: { item: TriageItem; nested: boolean }) {
       <RowMeta item={item} extraStatus={item.status} />
     </div>
   );
+}
+
+function PriorityBadge({ labels }: { labels: string[] }) {
+  const p = extractPriorityLabel(labels);
+  if (p === null) return <span aria-hidden />;
+  return (
+    <span
+      className="text-label uppercase tracking-wider text-fg-muted tnum leading-none translate-y-[1px]"
+      title={`labeled severity: priority/${p.toLowerCase()}`}
+    >
+      {p}
+    </span>
+  );
+}
+
+function extractPriorityLabel(labels: string[]): string | null {
+  for (const l of labels) {
+    const m = /^priority\/(p[0-3])$/i.exec(l);
+    if (m && m[1] !== undefined) return m[1].toUpperCase();
+  }
+  return null;
 }
 
 function RowMeta({
@@ -333,6 +488,17 @@ function RowMeta({
       >
         #{item.number}
       </a>
+      {item.triage_score !== null && (
+        <>
+          <span aria-hidden>·</span>
+          <span
+            className="text-fg-faint"
+            title="triage score = severity_base + simplicity_bonus; higher = should land sooner"
+          >
+            t{item.triage_score}
+          </span>
+        </>
+      )}
       <span aria-hidden>·</span>
       <ContributorByline author={item.author} />
       <span aria-hidden>·</span>

@@ -17,49 +17,94 @@ import type { TriageCluster, TriageItem } from 'gas-city-dashboard-shared';
 // When another repo is added to the maintainer view (MAINTAINER_REPO env),
 // it'll need its own topics file or a discover-from-titles fallback.
 
-const GASCITY_TOPICS: ReadonlyArray<string> = [
+// Each topic has a canonical name (what shows in the cluster header)
+// and one or more patterns that match it. Aliasing lets `bd` and
+// `beads` (same subsystem, different surface form) cluster as one
+// rather than splitting traffic across two near-identical groups.
+// Same for `mol` / `molecule`.
+interface TopicDef {
+  canonical: string;
+  patterns: string[];
+}
+
+const GASCITY_TOPICS: ReadonlyArray<TopicDef> = [
   // Agent lifecycle
-  'session', 'agent', 'mayor', 'pool', 'rig',
+  { canonical: 'session', patterns: ['session'] },
+  { canonical: 'agent', patterns: ['agent'] },
+  { canonical: 'mayor', patterns: ['mayor'] },
+  { canonical: 'pool', patterns: ['pool'] },
+  { canonical: 'rig', patterns: ['rig'] },
   // Issue tracker / data
-  'bd', 'beads', 'dolt', 'noms', 'molecule', 'mol',
+  { canonical: 'beads', patterns: ['beads', 'bd'] },
+  { canonical: 'dolt', patterns: ['dolt'] },
+  { canonical: 'noms', patterns: ['noms'] },
+  { canonical: 'molecule', patterns: ['molecule', 'mol'] },
   // Project templates / packs / convention
-  'pack', 'gastown', 'formula', 'recipe', 'gear', 'examples', 'tutorial',
+  { canonical: 'pack', patterns: ['pack'] },
+  { canonical: 'gastown', patterns: ['gastown'] },
+  { canonical: 'formula', patterns: ['formula'] },
+  { canonical: 'recipe', patterns: ['recipe'] },
+  { canonical: 'gear', patterns: ['gear'] },
+  { canonical: 'examples', patterns: ['examples'] },
+  { canonical: 'tutorial', patterns: ['tutorial'] },
   // Orchestration
-  'supervisor', 'city', 'reconciler', 'scheduler', 'convoy', 'overseer',
+  { canonical: 'supervisor', patterns: ['supervisor'] },
+  { canonical: 'city', patterns: ['city'] },
+  { canonical: 'reconciler', patterns: ['reconciler'] },
+  { canonical: 'scheduler', patterns: ['scheduler'] },
+  { canonical: 'convoy', patterns: ['convoy'] },
+  { canonical: 'overseer', patterns: ['overseer'] },
   // Comms
-  'mail', 'message',
+  { canonical: 'mail', patterns: ['mail'] },
+  { canonical: 'message', patterns: ['message'] },
   // Health / maintenance
-  'doctor', 'health', 'watchdog', 'reaper', 'refinery', 'maintenance',
+  { canonical: 'doctor', patterns: ['doctor'] },
+  { canonical: 'health', patterns: ['health'] },
+  { canonical: 'watchdog', patterns: ['watchdog'] },
+  { canonical: 'reaper', patterns: ['reaper'] },
+  { canonical: 'refinery', patterns: ['refinery'] },
+  { canonical: 'maintenance', patterns: ['maintenance'] },
   // Infra
-  'exec', 'build', 'deploy', 'kanban',
+  { canonical: 'exec', patterns: ['exec'] },
+  { canonical: 'build', patterns: ['build'] },
+  { canonical: 'deploy', patterns: ['deploy'] },
+  { canonical: 'kanban', patterns: ['kanban'] },
   // Providers / integrations
-  'codex', 'claude', 'prompt', 'evals', 'sling',
+  { canonical: 'codex', patterns: ['codex'] },
+  { canonical: 'claude', patterns: ['claude'] },
+  { canonical: 'prompt', patterns: ['prompt'] },
+  { canonical: 'evals', patterns: ['evals'] },
+  { canonical: 'sling', patterns: ['sling'] },
   // Cross-cutting concerns
-  'docs', 'order-tracking',
+  { canonical: 'docs', patterns: ['docs'] },
+  { canonical: 'order-tracking', patterns: ['order-tracking'] },
 ];
 
-// Word-boundary regex per topic; case-insensitive. Trailing `s?` so the
-// singular form catches plurals too ('pack' matches 'pack' and 'packs',
-// 'session' matches 'session' and 'sessions'). Hyphenated topics use
-// their literal form. v1 dictionary is gastownhall/gascity-shaped.
-const TOPIC_REGEXES: ReadonlyArray<{ topic: string; re: RegExp }> = GASCITY_TOPICS.map(
-  (t) => ({ topic: t, re: new RegExp(`\\b${escapeRegex(t)}s?\\b`, 'i') }),
-);
+// Word-boundary regex per pattern; case-insensitive. Trailing `s?` so
+// the singular catches plurals too. Each pattern resolves to its
+// topic's canonical name, so aliased patterns cluster as one.
+const TOPIC_REGEXES: ReadonlyArray<{ canonical: string; re: RegExp }> =
+  GASCITY_TOPICS.flatMap((t) =>
+    t.patterns.map((p) => ({
+      canonical: t.canonical,
+      re: new RegExp(`\\b${escapeRegex(p)}s?\\b`, 'i'),
+    })),
+  );
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Returns the most-relevant topic for an item, or null if no topic
- * matches. Items with multiple matches resolve to the first hit in
- * GASCITY_TOPICS order — listed roughly most-specific to least so the
- * narrower subsystem wins over broader ones.
+ * Returns the canonical topic for an item, or null if no topic matches.
+ * Multiple matches resolve to the first hit in TOPIC_REGEXES order —
+ * dictionary is listed roughly most-specific to least so the narrower
+ * subsystem wins over broader ones.
  */
 export function deriveTopic(item: TriageItem): string | null {
   const haystack = item.title;
-  for (const { topic, re } of TOPIC_REGEXES) {
-    if (re.test(haystack)) return topic;
+  for (const { canonical, re } of TOPIC_REGEXES) {
+    if (re.test(haystack)) return canonical;
   }
   return null;
 }
