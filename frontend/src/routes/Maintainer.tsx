@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type {
   ContributorStat,
   ContributorTier,
@@ -31,6 +31,23 @@ export function MaintainerPage() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // Live updates: subscribe to /api/maintainer/events. Whenever the
+  // nightly worker (or anyone else's manual refresh) rewrites the
+  // cache, the server fires a 'refreshed' event and we refetch. The
+  // EventSource browser API auto-reconnects with backoff; only the
+  // mount/unmount lifecycle needs manual handling here.
+  useEffect(() => {
+    const es = new EventSource('/api/maintainer/events');
+    const onRefresh = () => {
+      void refresh();
+    };
+    es.addEventListener('refreshed', onRefresh);
+    return () => {
+      es.removeEventListener('refreshed', onRefresh);
+      es.close();
+    };
+  }, [refresh]);
 
   // POST /maintainer/refresh runs the full gh fetch on the host and
   // rewrites the JSON cache. This is the dev-time path; the nightly

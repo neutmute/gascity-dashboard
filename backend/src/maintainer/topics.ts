@@ -20,25 +20,30 @@ import type { TriageCluster, TriageItem } from 'gas-city-dashboard-shared';
 const GASCITY_TOPICS: ReadonlyArray<string> = [
   // Agent lifecycle
   'session', 'agent', 'mayor', 'pool', 'rig',
-  // Issue tracker
-  'bd', 'beads', 'dolt', 'noms',
-  // Project templates / packs
-  'pack', 'gastown', 'formula', 'mol', 'recipe', 'gear',
+  // Issue tracker / data
+  'bd', 'beads', 'dolt', 'noms', 'molecule', 'mol',
+  // Project templates / packs / convention
+  'pack', 'gastown', 'formula', 'recipe', 'gear', 'examples', 'tutorial',
   // Orchestration
-  'supervisor', 'city', 'reconciler', 'scheduler', 'convoy',
+  'supervisor', 'city', 'reconciler', 'scheduler', 'convoy', 'overseer',
   // Comms
   'mail', 'message',
   // Health / maintenance
   'doctor', 'health', 'watchdog', 'reaper', 'refinery', 'maintenance',
   // Infra
-  'exec', 'build', 'deploy', 'kanban', 'overseer',
+  'exec', 'build', 'deploy', 'kanban',
+  // Providers / integrations
+  'codex', 'claude', 'prompt', 'evals', 'sling',
+  // Cross-cutting concerns
+  'docs', 'order-tracking',
 ];
 
-// Word-boundary regex per topic; case-insensitive. Topics with hyphens
-// or multiple words would need a different pattern; v1 keeps the
-// dictionary single-word.
+// Word-boundary regex per topic; case-insensitive. Trailing `s?` so the
+// singular form catches plurals too ('pack' matches 'pack' and 'packs',
+// 'session' matches 'session' and 'sessions'). Hyphenated topics use
+// their literal form. v1 dictionary is gastownhall/gascity-shaped.
 const TOPIC_REGEXES: ReadonlyArray<{ topic: string; re: RegExp }> = GASCITY_TOPICS.map(
-  (t) => ({ topic: t, re: new RegExp(`\\b${escapeRegex(t)}\\b`, 'i') }),
+  (t) => ({ topic: t, re: new RegExp(`\\b${escapeRegex(t)}s?\\b`, 'i') }),
 );
 
 function escapeRegex(s: string): string {

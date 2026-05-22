@@ -23,6 +23,7 @@ import { doltRouter, startDoltNomsSampler } from './routes/dolt.js';
 import { adminRouter } from './routes/admin.js';
 import { eventsRouter } from './routes/events.js';
 import { maintainerRouter } from './routes/maintainer.js';
+import { startMaintainerRefresher } from './maintainer/worker.js';
 import { setAuditLogPath } from './audit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,6 +106,16 @@ function main(): void {
   // pending mechanic surgical-ask; the sampler is wired so the ring
   // buffer starts filling the moment the source lands.
   startDoltNomsSampler();
+
+  // Start the maintainer triage refresher (gascity-dashboard-ar9).
+  // Set MAINTAINER_REFRESH_INTERVAL_MS=0 to disable.
+  if (config.maintainerRefreshIntervalMs > 0) {
+    startMaintainerRefresher({
+      repo: config.maintainerRepo,
+      cachePath: config.maintainerCachePath,
+      intervalMs: config.maintainerRefreshIntervalMs,
+    });
+  }
 
   // ── Frontend static files (prod) ──────────────────────────────────────
   const distDir = path.resolve(__dirname, '..', config.frontendDistPath);

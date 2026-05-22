@@ -4,6 +4,7 @@ import { recordAudit } from '../audit.js';
 import { ExecError } from '../exec.js';
 import { fetchTriage } from '../maintainer/triage.js';
 import { readCache, writeCache } from '../maintainer/storage.js';
+import { addSseClient, notifyRefresh, removeSseClient } from '../maintainer/sse.js';
 
 const GH_LOGIN_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 
@@ -62,6 +63,7 @@ export function maintainerRouter({ repo, cachePath }: MaintainerRouterOptions): 
     try {
       const envelope = await fetchTriage(repo);
       await writeCache(cachePath, envelope);
+      notifyRefresh(envelope);
       void recordAudit({
         type: 'dashboard.fetch',
         endpoint: 'POST /api/maintainer/refresh',
@@ -84,6 +86,15 @@ export function maintainerRouter({ repo, cachePath }: MaintainerRouterOptions): 
         .status(502)
         .json({ error: 'failed to refresh maintainer triage', kind: 'upstream', details: { message: msg } });
     }
+  });
+
+  router.get('/events', (req, res) => {
+    // SSE stream — fires a 'refreshed' event each time the cache is
+    // rewritten (manual button or nightly worker). Frontend refetches
+    // /triage on receipt. csrfValidate exempts GET, so this still
+    // lives in the same writeRouter as the rest of /api/maintainer.
+    addSseClient(res);
+    req.on('close', () => removeSseClient(res));
   });
 
   router.get('/contributor/:login', async (req, res) => {

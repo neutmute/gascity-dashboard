@@ -43,6 +43,15 @@ export interface AdminConfig {
    * state with a warning logged).
    */
   maintainerCachePath: string;
+  /**
+   * How often the in-process worker re-runs the triage refresh
+   * (full gh fetch + classify + cluster). Env:
+   * MAINTAINER_REFRESH_INTERVAL_MS. Default: 6 hours.
+   * The frontend gets pushed an SSE 'refreshed' event after each
+   * successful run so open tabs refetch without manual interaction.
+   * 0 disables the worker (manual refresh only).
+   */
+  maintainerRefreshIntervalMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
@@ -72,5 +81,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
       (env.HOME
         ? `${env.HOME}/.gascity-dashboard/maintainer-cache.json`
         : '.gascity-dashboard/maintainer-cache.json'),
+    maintainerRefreshIntervalMs: parseIntervalMs(
+      env.MAINTAINER_REFRESH_INTERVAL_MS,
+      6 * 60 * 60 * 1_000,
+    ),
   };
+}
+
+function parseIntervalMs(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.length === 0) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
 }
