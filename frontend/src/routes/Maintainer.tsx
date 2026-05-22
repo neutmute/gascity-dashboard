@@ -144,11 +144,29 @@ function ClusterBlock({ cluster }: { cluster: TriageCluster }) {
   if (prs > 0) totals.push(`${prs} ${prs === 1 ? 'PR' : 'PRs'}`);
   if (cluster.lines_pending > 0) totals.push(`${cluster.lines_pending} lines pending`);
 
+  // cluster.files entries prefixed with `@topic/` come from the
+  // keyword-clustering pass and read as a subsystem name, not a path.
+  // Render them as a small uppercase-tracked label so they don't
+  // pretend to be file paths.
+  const isTopic = cluster.files.every((f) => f.startsWith('@topic/'));
+  const headerLabel = isTopic
+    ? cluster.files.map((f) => f.replace(/^@topic\//, '')).join(', ')
+    : cluster.files.join(', ');
+
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-4">
-        <div className="text-title font-medium text-fg min-w-0 truncate">
-          {cluster.files.join(', ')}
+        <div
+          className={
+            isTopic
+              ? 'text-label uppercase tracking-wider font-medium text-fg-muted min-w-0 truncate'
+              : 'text-title font-medium text-fg min-w-0 truncate'
+          }
+        >
+          {isTopic && (
+            <span className="text-fg-faint mr-2" aria-hidden>·</span>
+          )}
+          {headerLabel}
         </div>
         <div className="text-body text-fg-muted tnum shrink-0">
           {totals.join(' · ')}

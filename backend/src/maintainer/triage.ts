@@ -10,6 +10,7 @@ import { execGhIssueList, execGhPrList, ExecError } from '../exec.js';
 import { classifyItem } from './classifier.js';
 import { computeContributorStats } from './contributor.js';
 import { buildClusters, inheritIssueFiles } from './blast-radius.js';
+import { buildTopicClusters } from './topics.js';
 
 // Compose a MaintainerTriage envelope from raw `gh` output.
 //
@@ -328,15 +329,24 @@ function composeEnvelope(repo: string, items: TriageItem[]): MaintainerTriage {
     list.sort((a, b) => (b.triage_score ?? 0) - (a.triage_score ?? 0));
   }
 
-  // Build file-overlap clusters within each tier (gascity-dashboard-gtr).
-  // Items sharing files form clusters; items with no co-touchers stay
-  // unclustered. Each item appears in at most one cluster.
+  // Two-pass clustering within each tier:
+  //   1. buildClusters (gascity-dashboard-gtr): file-overlap, authoritative
+  //      signal — items sharing real file paths cluster first.
+  //   2. buildTopicClusters (gascity-dashboard-98h): topic-keyword,
+  //      semantic-ish — picks up the unclustered residue by matching
+  //      repo-specific subsystem names in titles. Each item ends up in
+  //      at most one cluster across the two passes.
   const tiers: TriageTierSection[] = (
     ['regression_breaking', 'regression', 'stability'] as const
   ).map((tier) => {
     const tierItems = byTier.get(tier) ?? [];
-    const { clusters, unclustered } = buildClusters(tierItems);
-    return { tier, clusters, unclustered };
+    const fileResult = buildClusters(tierItems);
+    const topicResult = buildTopicClusters(fileResult.unclustered);
+    return {
+      tier,
+      clusters: [...fileResult.clusters, ...topicResult.clusters],
+      unclustered: topicResult.unclustered,
+    };
   });
 
   // computed_at marks the snapshot moment. Set once a classifier (or
