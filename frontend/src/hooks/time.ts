@@ -45,13 +45,12 @@ export function formatRelative(
 }
 
 /**
- * Render a timestamp as a 24-hour `HH:MM:SS` local clock string. Returns
+ * Render a timestamp as a 24-hour `HH:MM` local clock string. Returns
  * the `·` interpunct sentinel for missing or unparseable input (matches
  * the `formatRelative` sentinel convention; see DESIGN.md).
  *
- * Seconds precision is intentional: the SessionPeek modal sequences turns
- * within a single session, where two consecutive assistant messages can
- * land in the same minute and a minute-precision rendering would hide that.
+ * Seconds are truncated, not rounded — a turn at `HH:MM:59` renders as
+ * `HH:MM`, keeping minute boundaries stable across the rendering tick.
  */
 export function formatClockTime(
   ts: string | number | Date | undefined | null,
@@ -64,6 +63,32 @@ export function formatClockTime(
   const d = new Date(ms);
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
-  const ss = String(d.getSeconds()).padStart(2, '0');
-  return `${hh}:${mm}:${ss}`;
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Render a timestamp as a short date string in `Mon DD, YYYY` form
+ * (e.g. `May 20, 2026`). Returns the `·` interpunct sentinel for
+ * missing or unparseable input.
+ *
+ * The locale is pinned to `en-US` deliberately: the dashboard's UX copy
+ * is English-only, and a deterministic output keeps the rendered date
+ * consistent regardless of the host system's locale.
+ *
+ * Used as a once-per-modal "dateline" in the SessionPeek modal so the
+ * operator knows the calendar context without per-turn date duplication.
+ */
+export function formatShortDate(
+  ts: string | number | Date | undefined | null,
+): string {
+  if (ts === undefined || ts === null || ts === '') return '·';
+
+  const ms = toEpochMs(ts);
+  if (!Number.isFinite(ms)) return '·';
+
+  return new Date(ms).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }

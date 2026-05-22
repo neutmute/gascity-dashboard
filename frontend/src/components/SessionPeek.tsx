@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
 import type { TranscriptResult, TranscriptTurn } from 'gas-city-dashboard-shared';
-import { formatClockTime, formatRelative } from '../hooks/time';
+import { formatClockTime, formatRelative, formatShortDate } from '../hooks/time';
 
 // Render layer for a session's transcript snapshot. Used by:
 //   - Agents page peek modal (one-shot fetch)
@@ -78,6 +78,12 @@ export function SessionPeekContent({ loading, error, result }: SessionPeekConten
 
   return (
     <div className="space-y-6">
+      <p
+        className="text-label uppercase tracking-wider text-fg-faint tnum"
+        title={result.captured_at}
+      >
+        {formatShortDate(result.captured_at)}
+      </p>
       <p className="text-label uppercase tracking-wider text-warn">
         ▲ {PROMPT_INJECTION_NOTICE}
       </p>
