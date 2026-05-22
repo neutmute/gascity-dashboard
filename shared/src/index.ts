@@ -6,6 +6,8 @@
 // Comments mark fields that gc supervisor MAY omit; treat them as
 // optional and never assume presence in render code.
 
+export type * from './snapshot/types.js';
+
 export type IsoTimestamp = string;
 export type BeadId = string;
 export type SessionId = string;
