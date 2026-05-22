@@ -185,6 +185,8 @@ function mapIssue(it: GhIssue): TriageItem {
     linked_numbers: [],
     html_url: it.url,
     is_marked: false,
+    triaged: false,
+    triaged_at: null,
   };
 }
 
@@ -229,6 +231,8 @@ function mapPr(pr: GhPr): TriageItem {
     linked_numbers: extractLinkedIssueNumbers(pr.body),
     html_url: pr.url,
     is_marked: false,
+    triaged: false,
+    triaged_at: null,
   };
 }
 

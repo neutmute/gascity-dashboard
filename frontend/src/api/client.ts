@@ -175,4 +175,14 @@ export const api = {
   maintainerContributor(login: string): Promise<ContributorStat> {
     return request('GET', `/api/maintainer/contributor/${encodeURIComponent(login)}`);
   },
+  maintainerSetTriaged(
+    items: Array<{ kind: 'pr' | 'issue'; number: number }>,
+    triaged: boolean,
+  ): Promise<{
+    ok: true;
+    updated: Array<{ kind: 'pr' | 'issue'; number: number }>;
+    count: number;
+  }> {
+    return request('POST', '/api/maintainer/triaged', { items, triaged });
+  },
 };

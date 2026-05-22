@@ -136,6 +136,27 @@ export function MaintainerPage() {
     }
   }, [refresh]);
 
+  // Per-row toggle: flip the maintainer-vetted state for a single item.
+  // Server persists in a state file (gascity-dashboard-2ax) and fires an
+  // SSE 'refreshed' event so the page refetches and re-renders. The
+  // optimistic-update path is skipped on purpose; SSE round-trip is
+  // ~tens of ms locally and avoids any in-flight desync.
+  const toggleTriaged = useCallback(
+    (item: TriageItem) => {
+      void (async () => {
+        try {
+          await api.maintainerSetTriaged(
+            [{ kind: item.kind, number: item.number }],
+            !item.triaged,
+          );
+        } catch (err) {
+          setRefreshError(err instanceof Error ? err.message : 'mark triaged failed');
+        }
+      })();
+    },
+    [setRefreshError],
+  );
+
   return (
     <section>
       <PageHeader
@@ -174,6 +195,7 @@ export function MaintainerPage() {
                   onToggle={() => collapse.toggle(`tier:${tier.tier}`)}
                   isCollapsed={collapse.isCollapsed}
                   toggleCluster={collapse.toggle}
+                  onToggleTriaged={toggleTriaged}
                 />
               ))}
           </div>
@@ -196,12 +218,14 @@ function TierSection({
   onToggle,
   isCollapsed,
   toggleCluster,
+  onToggleTriaged,
 }: {
   section: TriageTierSection;
   collapsed: boolean;
   onToggle: () => void;
   isCollapsed: (id: string) => boolean;
   toggleCluster: (id: string) => void;
+  onToggleTriaged: (item: TriageItem) => void;
 }) {
   const itemCount =
     section.clusters.reduce((n, c) => n + c.items.length, 0) +
@@ -242,6 +266,7 @@ function TierSection({
               cluster={cluster}
               collapsed={isCollapsed(`cluster:${cluster.cluster_id}`)}
               onToggle={() => toggleCluster(`cluster:${cluster.cluster_id}`)}
+              onToggleTriaged={onToggleTriaged}
             />
           ))}
 
@@ -250,7 +275,7 @@ function TierSection({
               <div className="text-title font-medium text-fg-muted">
                 {section.clusters.length > 0 ? 'Unclustered' : 'Awaiting cluster enrichment'}
               </div>
-              <RowList items={section.unclustered} />
+              <RowList items={section.unclustered} onToggleTriaged={onToggleTriaged} />
             </div>
           )}
         </div>
@@ -275,10 +300,12 @@ function ClusterBlock({
   cluster,
   collapsed,
   onToggle,
+  onToggleTriaged,
 }: {
   cluster: TriageCluster;
   collapsed: boolean;
   onToggle: () => void;
+  onToggleTriaged: (item: TriageItem) => void;
 }) {
   const issues = cluster.items.filter((i) => i.kind === 'issue').length;
   const prs = cluster.items.filter((i) => i.kind === 'pr').length;
@@ -321,7 +348,7 @@ function ClusterBlock({
           {totals.join(' · ')}
         </div>
       </button>
-      {!collapsed && <RowList items={cluster.items} />}
+      {!collapsed && <RowList items={cluster.items} onToggleTriaged={onToggleTriaged} />}
     </div>
   );
 }
@@ -332,7 +359,13 @@ function ClusterBlock({
 // by a leading "PR" kind marker. The reverse-mapped issue.linked_numbers
 // (populated server-side in triage.ts) drives the "anchored" affordance
 // on issues.
-function RowList({ items }: { items: TriageItem[] }) {
+function RowList({
+  items,
+  onToggleTriaged,
+}: {
+  items: TriageItem[];
+  onToggleTriaged: (item: TriageItem) => void;
+}) {
   const issueNumbersInList = new Set<number>();
   for (const it of items) {
     if (it.kind === 'issue') issueNumbersInList.add(it.number);
@@ -360,12 +393,21 @@ function RowList({ items }: { items: TriageItem[] }) {
         return (
           <div key={rowKey(it)}>
             {it.kind === 'issue' ? (
-              <IssueRow item={it} hasInListChildren={children.length > 0} />
+              <IssueRow
+                item={it}
+                hasInListChildren={children.length > 0}
+                onToggleTriaged={onToggleTriaged}
+              />
             ) : (
-              <PrRow item={it} nested={false} />
+              <PrRow item={it} nested={false} onToggleTriaged={onToggleTriaged} />
             )}
             {children.map((child) => (
-              <PrRow key={rowKey(child)} item={child} nested={true} />
+              <PrRow
+                key={rowKey(child)}
+                item={child}
+                nested={true}
+                onToggleTriaged={onToggleTriaged}
+              />
             ))}
           </div>
         );
@@ -377,9 +419,11 @@ function RowList({ items }: { items: TriageItem[] }) {
 function IssueRow({
   item,
   hasInListChildren,
+  onToggleTriaged,
 }: {
   item: TriageItem;
   hasInListChildren: boolean;
+  onToggleTriaged: (item: TriageItem) => void;
 }) {
   // 'anchored' only lights up when the linked PR is NOT also in view —
   // when it IS in view, the visual nesting already communicates the
@@ -392,6 +436,7 @@ function IssueRow({
       </span>
       <PriorityBadge labels={item.labels} />
       <div className="min-w-0">
+        <UntriagedGlyph item={item} />
         <span className="text-body text-fg">{item.title}</span>
         {item.weak_ties.length > 0 && (
           <span className="ml-3 text-body text-fg-faint">
@@ -404,12 +449,20 @@ function IssueRow({
           </span>
         )}
       </div>
-      <RowMeta item={item} />
+      <RowMeta item={item} onToggleTriaged={onToggleTriaged} />
     </div>
   );
 }
 
-function PrRow({ item, nested }: { item: TriageItem; nested: boolean }) {
+function PrRow({
+  item,
+  nested,
+  onToggleTriaged,
+}: {
+  item: TriageItem;
+  nested: boolean;
+  onToggleTriaged: (item: TriageItem) => void;
+}) {
   // Three visual states:
   //   - Standalone PR, marked    → maroon ● in leading col (rare)
   //   - Standalone PR, unmarked  → "PR" label in leading col
@@ -436,6 +489,7 @@ function PrRow({ item, nested }: { item: TriageItem; nested: boolean }) {
       {leading}
       <PriorityBadge labels={item.labels} />
       <div className="min-w-0">
+        <UntriagedGlyph item={item} />
         <span className={nested ? 'text-body text-fg-muted' : 'text-body text-fg'}>
           {item.title}
         </span>
@@ -445,8 +499,29 @@ function PrRow({ item, nested }: { item: TriageItem; nested: boolean }) {
           </span>
         )}
       </div>
-      <RowMeta item={item} extraStatus={item.status} />
+      <RowMeta
+        item={item}
+        extraStatus={item.status}
+        onToggleTriaged={onToggleTriaged}
+      />
     </div>
+  );
+}
+
+// Leading '?' glyph for items the maintainer has NOT explicitly vetted
+// (triage_score remains a heuristic — the '?' marks "this number is a
+// guess, not your considered judgment"). Suppressed when is_marked is
+// true: the maroon ● already owns the row's attention channel under
+// the One Mark Rule.
+function UntriagedGlyph({ item }: { item: TriageItem }) {
+  if (item.triaged || item.is_marked) return null;
+  return (
+    <span
+      aria-label="not yet triaged by maintainer"
+      className="text-fg-faint mr-2"
+    >
+      ?
+    </span>
   );
 }
 
@@ -474,9 +549,11 @@ function extractPriorityLabel(labels: string[]): string | null {
 function RowMeta({
   item,
   extraStatus,
+  onToggleTriaged,
 }: {
   item: TriageItem;
   extraStatus?: TriageItemStatus;
+  onToggleTriaged: (item: TriageItem) => void;
 }) {
   return (
     <div className="flex items-baseline gap-3 text-body text-fg-muted shrink-0 tnum">
@@ -509,6 +586,19 @@ function RowMeta({
           <PrStatus status={extraStatus} />
         </>
       )}
+      <span aria-hidden>·</span>
+      <button
+        type="button"
+        onClick={() => onToggleTriaged(item)}
+        className="text-label uppercase tracking-wider text-fg-faint hover:text-fg focus-mark"
+        title={
+          item.triaged
+            ? 'unmark — re-flag as not yet vetted'
+            : 'mark as vetted by maintainer'
+        }
+      >
+        {item.triaged ? 'untriage' : 'mark triaged'}
+      </button>
     </div>
   );
 }

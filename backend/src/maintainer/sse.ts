@@ -30,10 +30,10 @@ export function removeSseClient(res: Response): void {
   clients.delete(res);
 }
 
-export function notifyRefresh(envelope: MaintainerTriage): void {
+export function notifyRefresh(meta: Pick<MaintainerTriage, 'computed_at' | 'repo'>): void {
   const payload = `event: refreshed\ndata: ${JSON.stringify({
-    computed_at: envelope.computed_at,
-    repo: envelope.repo,
+    computed_at: meta.computed_at,
+    repo: meta.repo,
   })}\n\n`;
   for (const res of clients) {
     try {

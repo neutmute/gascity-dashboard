@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import type { ContributorStat, MaintainerTriage } from 'gas-city-dashboard-shared';
+import type {
+  ContributorStat,
+  MaintainerTriage,
+} from 'gas-city-dashboard-shared';
 import { recordAudit } from '../audit.js';
 import {
   AGENT_ALIAS_RE,
@@ -10,11 +13,19 @@ import type { ExecResult } from '../exec.js';
 import { fetchTriage } from '../maintainer/triage.js';
 import { readCache, writeCache } from '../maintainer/storage.js';
 import { addSseClient, notifyRefresh, removeSseClient } from '../maintainer/sse.js';
+import {
+  applyTriagedState,
+  loadTriagedState,
+  setTriaged,
+  type TriagedKey,
+} from '../maintainer/triaged-state.js';
 
 const GH_LOGIN_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const GH_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(issues|pull)\/\d+$/;
 const MAX_URL_LEN = 2_048;
 const BEAD_ID_RE = /\b(td-wisp-[a-z0-9]{3,12})\b/;
+/** Cap on a single POST /triaged batch. Headroom for whole-tier select. */
+const MAX_TRIAGED_BATCH = 1_000;
 
 type SlingIntent = 'review' | 'draft' | 'triage';
 type SlingKind = 'pr' | 'issue';
@@ -29,6 +40,12 @@ interface MaintainerRouterOptions {
   /** Default `gc sling` target when the request omits one. From config. */
   slingTarget: string;
   /**
+   * Absolute path to the per-item triaged-state JSON file
+   * (gascity-dashboard-2ax). Spliced onto envelopes at read time so the
+   * cache file stays free of mutable per-item state.
+   */
+  triagedStatePath: string;
+  /**
    * Injected `gc sling` runner. Defaults to the real exec wrapper; tests
    * pass a stub. This DI is the new pattern for write-exec routers
    * (mailSendRouter is a candidate for the same retrofit later).
@@ -40,6 +57,7 @@ export function maintainerRouter({
   repo,
   cachePath,
   slingTarget,
+  triagedStatePath,
   execGcSling = defaultExecGcSling,
 }: MaintainerRouterOptions): Router {
   const router = Router();
@@ -47,6 +65,7 @@ export function maintainerRouter({
   router.get('/triage', async (_req, res) => {
     const cached = await readCache(cachePath);
     if (cached !== null) {
+      await spliceTriagedState(cached, triagedStatePath);
       void recordAudit({
         type: 'dashboard.fetch',
         endpoint: 'GET /api/maintainer/triage',
@@ -87,6 +106,9 @@ export function maintainerRouter({
     try {
       const envelope = await fetchTriage(repo);
       await writeCache(cachePath, envelope);
+      // Splice AFTER writeCache so the cache file stays free of mutable
+      // per-item state; the response carries the read-time view.
+      await spliceTriagedState(envelope, triagedStatePath);
       notifyRefresh(envelope);
       void recordAudit({
         type: 'dashboard.fetch',
@@ -119,6 +141,69 @@ export function maintainerRouter({
     // lives in the same writeRouter as the rest of /api/maintainer.
     addSseClient(res);
     req.on('close', () => removeSseClient(res));
+  });
+
+  router.post('/triaged', async (req, res) => {
+    const body = req.body as {
+      items?: unknown;
+      triaged?: unknown;
+    };
+    if (typeof body.triaged !== 'boolean') {
+      res.status(400).json({ error: 'invalid triaged (boolean required)', kind: 'validation' });
+      return;
+    }
+    if (!Array.isArray(body.items) || body.items.length === 0) {
+      res.status(400).json({ error: 'items must be a non-empty array', kind: 'validation' });
+      return;
+    }
+    if (body.items.length > MAX_TRIAGED_BATCH) {
+      res
+        .status(400)
+        .json({ error: `items array exceeds ${MAX_TRIAGED_BATCH}`, kind: 'validation' });
+      return;
+    }
+    const keys: TriagedKey[] = [];
+    for (const raw of body.items) {
+      if (typeof raw !== 'object' || raw === null) {
+        res.status(400).json({ error: 'invalid item shape', kind: 'validation' });
+        return;
+      }
+      const candidate = raw as { kind?: unknown; number?: unknown };
+      if (candidate.kind !== 'pr' && candidate.kind !== 'issue') {
+        res.status(400).json({ error: 'invalid item.kind (pr|issue)', kind: 'validation' });
+        return;
+      }
+      if (
+        typeof candidate.number !== 'number' ||
+        !Number.isInteger(candidate.number) ||
+        candidate.number < 1
+      ) {
+        res.status(400).json({ error: 'invalid item.number', kind: 'validation' });
+        return;
+      }
+      keys.push({ kind: candidate.kind, number: candidate.number });
+    }
+
+    try {
+      const result = await setTriaged(triagedStatePath, keys, body.triaged);
+      // Notify any open EventSource listeners so other tabs refetch.
+      // notifyRefresh only carries {computed_at, repo}; if no cache
+      // exists yet, computed_at is null and the client still refetches.
+      const cached = await readCache(cachePath);
+      notifyRefresh({ computed_at: cached?.computed_at ?? null, repo });
+      void recordAudit({
+        type: 'dashboard.maintainer.triaged',
+        endpoint: 'POST /api/maintainer/triaged',
+        parsed_args: {
+          count: String(result.updated.length),
+          triaged: String(body.triaged),
+        },
+        duration_ms: 0,
+      });
+      res.json({ ok: true, updated: result.updated, count: result.updated.length });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message, kind: 'internal' });
+    }
   });
 
   router.post('/sling', async (req, res) => {
@@ -284,4 +369,23 @@ function countItems(envelope: MaintainerTriage): number {
       tier.clusters.reduce((m, c) => m + c.items.length, 0),
     0,
   );
+}
+
+// Mutates the envelope in place so every TriageItem.triaged /
+// triaged_at reflects the state file. Called at read time; the cache
+// file on disk is left untouched. This is the architectural choice
+// that lets POST /triaged write only the state file and never the
+// cache — closing the race between maintainer toggles and the nightly
+// worker rewriting the cache.
+async function spliceTriagedState(
+  envelope: MaintainerTriage,
+  statePath: string,
+): Promise<void> {
+  const state = await loadTriagedState(statePath);
+  for (const tier of envelope.tiers) {
+    applyTriagedState(tier.unclustered, state);
+    for (const cluster of tier.clusters) {
+      applyTriagedState(cluster.items, state);
+    }
+  }
 }

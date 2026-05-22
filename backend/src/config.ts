@@ -62,6 +62,15 @@ export interface AdminConfig {
    * dashboard. The exec wrapper re-validates target at request time.
    */
   maintainerSlingTarget: string;
+  /**
+   * Absolute path to the per-item triaged-state JSON file
+   * (gascity-dashboard-2ax). Persists which triage items the
+   * maintainer has explicitly vetted, separate from the heuristic
+   * cache so it survives nightly cache rewrites.
+   * Env: MAINTAINER_TRIAGED_STATE_PATH.
+   * Default: $HOME/.gascity-dashboard/maintainer-triaged-state.json.
+   */
+  maintainerTriagedStatePath: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
@@ -96,6 +105,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
       6 * 60 * 60 * 1_000,
     ),
     maintainerSlingTarget: parseSlingTarget(env.MAINTAINER_SLING_TARGET, 'mayor'),
+    maintainerTriagedStatePath:
+      env.MAINTAINER_TRIAGED_STATE_PATH ??
+      (env.HOME
+        ? `${env.HOME}/.gascity-dashboard/maintainer-triaged-state.json`
+        : '.gascity-dashboard/maintainer-triaged-state.json'),
   };
 }
 

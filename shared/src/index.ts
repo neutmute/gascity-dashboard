@@ -500,6 +500,21 @@ export interface TriageItem {
   html_url: string;
   /** True when bug + breaking + actively shipping. Drives the maroon mark (One Mark Rule). */
   is_marked: boolean;
+  /**
+   * True when the maintainer has explicitly vetted this item — distinct from
+   * the heuristic `triage_score` which is mechanically derived. Default
+   * `false` for any item the maintainer hasn't acked yet. Persisted
+   * server-side in a state file that survives nightly cache rewrites
+   * (gascity-dashboard-2ax).
+   *
+   * Future bead `are` (agent-vetted assessment) is a SEPARATE field on its
+   * own; `triaged` remains exclusively the maintainer's manual ack signal.
+   */
+  triaged: boolean;
+  /** ISO of the most recent flip to `triaged=true`. `null` when never vetted
+   *  or after a flip back to `triaged=false`. Anchored to maintainer ack
+   *  time only — NOT overloaded with agent assessment timestamps. */
+  triaged_at: IsoTimestamp | null;
 }
 
 export interface TriageCluster {

@@ -64,6 +64,7 @@ async function buildApp(opts: BuildOpts = {}): Promise<AppHandle> {
       repo: 'gastownhall/gascity',
       cachePath: path.join(tmpDir, 'cache.json'),
       slingTarget: opts.slingTarget ?? 'mayor',
+      triagedStatePath: path.join(tmpDir, 'triaged-state.json'),
       execGcSling: sling,
     }),
   );
