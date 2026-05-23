@@ -203,6 +203,26 @@ export function maintainerRouter({
       const idMatch = BEAD_ID_RE.exec(result.stdout);
       res.json({ ok: true, bead_id: idMatch?.[1] });
     } catch (err) {
+      // gascity-dashboard-ur0: thrown errors must also leave an audit row.
+      // Timeouts in particular are operationally significant — the
+      // success-path + non-zero-exit branches already audit, so failing
+      // to audit throws would create an asymmetric forensic record where
+      // the most-interesting failure mode (the supervisor hung) is the
+      // one that leaves no trace in events.jsonl. Mirrors the pattern in
+      // routes/agents.ts (GET /api/agents/:alias/prime).
+      const errorKind = err instanceof ExecError ? err.kind : 'unknown';
+      void recordAudit({
+        type: 'dashboard.sling',
+        endpoint: 'POST /api/maintainer/sling',
+        parsed_args: {
+          kind: body.kind,
+          number: String(body.number),
+          intent: body.intent,
+          target,
+          text_len: String(beadText.length),
+          error_kind: errorKind,
+        },
+      });
       if (err instanceof ExecError) {
         const status =
           err.kind === 'validation' ? 400 : err.kind === 'timeout' ? 504 : 502;

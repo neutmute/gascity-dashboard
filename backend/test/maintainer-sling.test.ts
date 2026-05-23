@@ -378,6 +378,21 @@ describe('POST /api/maintainer/sling', { concurrency: false }, () => {
     assert.equal(res.body.kind, 'validation');
     // Came from exec, not from body validation — wrapper recorded the call.
     assert.equal(h.calls.length, 1);
+
+    // gascity-dashboard-ur0: thrown ExecError still emits an audit row
+    // so the forensic record is symmetric across success / non-zero / throw.
+    const rows = await readAudit(h.auditPath);
+    assert.equal(rows.length, 1);
+    const row = rows[0]!;
+    assert.equal(row.type, 'dashboard.sling');
+    assert.equal(row.endpoint, 'POST /api/maintainer/sling');
+    assert.equal(row.actor, 'stephanie');
+    assert.equal(row.exit_code, undefined);
+    const parsed = row.parsed_args as Record<string, string>;
+    assert.equal(parsed.error_kind, 'validation');
+    assert.equal(parsed.kind, 'pr');
+    assert.equal(parsed.intent, 'review');
+    assert.equal(parsed.target, 'mayor');
   });
 
   test('ExecError timeout surfaces as 504', async () => {
@@ -395,6 +410,16 @@ describe('POST /api/maintainer/sling', { concurrency: false }, () => {
     assert.equal(res.status, 504);
     assert.equal(res.body.kind, 'timeout');
     assert.equal(h.calls.length, 1);
+
+    // gascity-dashboard-ur0: timeouts are operationally significant — must
+    // leave an audit trail so the operator can diagnose silent-failure
+    // patterns from events.jsonl alone.
+    const rows = await readAudit(h.auditPath);
+    assert.equal(rows.length, 1);
+    const row = rows[0]!;
+    assert.equal(row.type, 'dashboard.sling');
+    const parsed = row.parsed_args as Record<string, string>;
+    assert.equal(parsed.error_kind, 'timeout');
   });
 
   test('ExecError spawn surfaces as 502', async () => {
@@ -412,6 +437,39 @@ describe('POST /api/maintainer/sling', { concurrency: false }, () => {
     assert.equal(res.status, 502);
     assert.equal(res.body.kind, 'spawn');
     assert.equal(h.calls.length, 1);
+
+    // gascity-dashboard-ur0.
+    const rows = await readAudit(h.auditPath);
+    assert.equal(rows.length, 1);
+    const parsed = rows[0]!.parsed_args as Record<string, string>;
+    assert.equal(parsed.error_kind, 'spawn');
+  });
+
+  test('non-ExecError throw (unknown) still audits with error_kind=unknown', async () => {
+    // gascity-dashboard-ur0: cover the catch-all branch — any unexpected
+    // throw from execGcSling should still leave a forensic row, mirroring
+    // the agents.ts (GET /api/agents/:alias/prime) precedent.
+    h = await buildApp({
+      sling: async () => {
+        throw new Error('boom');
+      },
+    });
+    const res = await postJson(`${h.url}/api/maintainer/sling`, {
+      kind: 'pr',
+      number: 1,
+      html_url: 'https://github.com/gastownhall/gascity/pull/1',
+      intent: 'review',
+    });
+    assert.equal(res.status, 500);
+    assert.equal(res.body.kind, 'internal');
+
+    const rows = await readAudit(h.auditPath);
+    assert.equal(rows.length, 1);
+    const row = rows[0]!;
+    assert.equal(row.type, 'dashboard.sling');
+    const parsed = row.parsed_args as Record<string, string>;
+    assert.equal(parsed.error_kind, 'unknown');
+    assert.equal(parsed.target, 'mayor');
   });
 
   test('stdout without bead-id still returns 200 with bead_id omitted', async () => {
