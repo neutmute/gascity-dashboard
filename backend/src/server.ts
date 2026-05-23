@@ -23,7 +23,9 @@ import { doltRouter, startDoltNomsSampler } from './routes/dolt.js';
 import { adminRouter } from './routes/admin.js';
 import { eventsRouter } from './routes/events.js';
 import { maintainerRouter } from './routes/maintainer.js';
+import { snapshotRouter } from './routes/snapshot.js';
 import { startMaintainerRefresher } from './maintainer/worker.js';
+import { createSnapshotService } from './snapshot/service.js';
 import { setAuditLogPath } from './audit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -92,6 +94,20 @@ function main(): void {
       slingTarget: config.maintainerSlingTarget,
     }),
   );
+
+  // Aggregate snapshot route (gascity-dashboard-8nj). Single SnapshotService
+  // instance at server level — never per-request — so SourceCache TTLs +
+  // single-flight + fixture state survive across requests.
+  const snapshotService = createSnapshotService({
+    gc,
+    config: {
+      cityRoot: config.cityPath,
+      githubRepo: config.maintainerRepo,
+      useFixtures: config.useFixtures,
+    },
+    cityPath: config.cityPath,
+  });
+  writeRouter.use('/snapshot', snapshotRouter(snapshotService));
 
   app.use('/api', writeRouter);
 
