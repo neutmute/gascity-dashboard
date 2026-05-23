@@ -25,7 +25,13 @@ const MAX_URL_LEN = 2_048;
 // anchored on "created bead <id>", a shape gc sling no longer emits, so
 // the silent-omission bead-id failure was back. Anchoring on ^Slung with
 // the multiline flag picks the routing summary deterministically.
-const BEAD_ID_RE = /^Slung ([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\b/m;
+//
+// Delimiter: `(?!\S)` (next char is whitespace or EOL), not `\b`. The id
+// alphabet [A-Za-z0-9_.-] permits trailing `.` or `-` (both non-word),
+// which would silently truncate the captured id by one char if `\b` were
+// used: between two non-word chars `\b` doesn't assert, so the engine
+// backtracks one position. `(?!\S)` is delimiter-agnostic.
+const BEAD_ID_RE = /^Slung ([A-Za-z0-9][A-Za-z0-9_.-]{0,63})(?!\S)/m;
 
 type SlingIntent = 'review' | 'draft' | 'triage';
 type SlingKind = 'pr' | 'issue';

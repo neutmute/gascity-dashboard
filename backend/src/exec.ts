@@ -39,6 +39,13 @@ function cleanEnv(): NodeJS.ProcessEnv {
     PATH: path,
     HOME: home,
     LANG: 'C.UTF-8',
+    // Force color-off on every spawned subprocess. Belt-and-suspenders for
+    // line-anchored stdout parsing (e.g. BEAD_ID_RE on `gc sling` output):
+    // a future gc release that forces ANSI even when stdout isn't a TTY
+    // would otherwise prefix the "Slung <id>" line with an SGR escape and
+    // break the `^Slung` match silently. NO_COLOR is the cross-tool
+    // standard (https://no-color.org); gc/gh/git all honour it.
+    NO_COLOR: '1',
   };
   // gh CLI's active auth method on this host is GITHUB_TOKEN (per `gh
   // auth status`). Pass it through so execGhIssueList / execGhPrList

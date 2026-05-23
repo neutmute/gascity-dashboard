@@ -349,6 +349,48 @@ describe('SourceCache error sanitization (gascity-dashboard-fhj)', () => {
     assert.equal(state.error, 'gc supervisor returned 503');
   });
 
+  test('onError observer fires with raw error BEFORE sanitization, so server-side logs keep fidelity', async () => {
+    // The opt-in pair (sanitizeErrorMessage + onError) is meant to give
+    // local-IO collectors the path-leak protection on the wire AND the
+    // raw-error fidelity in server logs. A future refactor that reversed
+    // the call order (sanitize first, then fire onError with the already-
+    // sanitized string) would silently degrade debugging — this test
+    // pins the contract.
+    const observed: Array<{ source: string; phase: string; raw: string }> = [];
+    const rawMessage =
+      'ENOENT: no such file or directory, open /proc/meminfo';
+
+    const cache = new SourceCache({
+      source: 'resources',
+      ttlMs: 1_000,
+      load: async () => {
+        throw new Error(rawMessage);
+      },
+      sanitizeErrorMessage: () => 'resource collection failed',
+      onError: (source, phase, err) => {
+        observed.push({
+          source,
+          phase,
+          raw: err instanceof Error ? err.message : String(err),
+        });
+      },
+    });
+
+    const state = await cache.get();
+
+    // Wire-shape stays sanitized.
+    assert.equal(state.error, 'resource collection failed');
+
+    // onError fired exactly once for the 'load' phase, with the RAW
+    // pre-sanitization message — that's the server-side fidelity guarantee.
+    assert.equal(observed.length, 1);
+    const [first] = observed;
+    assert.ok(first, 'onError should have been invoked');
+    assert.equal(first.source, 'resources');
+    assert.equal(first.phase, 'load');
+    assert.equal(first.raw, rawMessage);
+  });
+
   test('sanitizeErrorMessage also covers the fixture-failure concat path', async () => {
     // When the primary load() fails AND the fixture loader fails, the
     // cache concatenates both messages. A local-source collector that

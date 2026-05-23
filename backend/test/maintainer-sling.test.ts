@@ -629,6 +629,36 @@ describe('POST /api/maintainer/sling', { concurrency: false }, () => {
     assert.equal(res.body.bead_id, undefined);
   });
 
+  test('id ending in a non-word char (-/.) is captured in full, not truncated', async () => {
+    // Regression guard against the `\b` word-boundary edge case. The bd id
+    // alphabet permits `.` and `-` as trailing characters. With `\b` the
+    // regex would backtrack and drop the trailing non-word char silently;
+    // `(?!\S)` keeps it. Live IDs today end in alphanumerics, so this is
+    // forward-coverage against any future id-shape change upstream.
+    h = await buildApp({
+      sling: async () => ({
+        exitCode: 0,
+        stdout: [
+          'Created gc-foo-bar- — "Please review PR ..."',
+          'Slung gc-foo-bar- (with default formula "mol-focus-review") → oversight-rig.chief-of-staff',
+          '',
+        ].join('\n'),
+        stderr: '',
+        truncated: false,
+        durationMs: 10,
+      }),
+    });
+    const res = await postJson(`${h.url}/api/maintainer/sling`, {
+      kind: 'pr',
+      number: 1,
+      html_url: 'https://github.com/gastownhall/gascity/pull/1',
+      intent: 'review',
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.bead_id, 'gc-foo-bar-');
+  });
+
   test('stdout with only Created/Attached lines (no Slung) returns bead_id omitted', async () => {
     // gascity-dashboard-wds negative case: confirms we don't fall back to
     // "Created" lines, which appear multiple times in the modern envelope
