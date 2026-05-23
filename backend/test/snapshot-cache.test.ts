@@ -301,3 +301,125 @@ describe('errorMessage', () => {
     assert.equal(errorMessage(null), 'null');
   });
 });
+
+describe('SourceCache error sanitization (gascity-dashboard-fhj)', () => {
+  // The wire-shape SourceState.error is served to the browser via
+  // GET /api/snapshot. For collectors that hit local OS resources
+  // (e.g. /proc/meminfo), the raw Error.message will include the
+  // OS-internal path, which is a topology leak. Collectors that own
+  // local IO opt in via the sanitizeErrorMessage option; upstream
+  // sources whose errors are already sanitized (city via GcClient,
+  // 'gc supervisor returned NNN') pass through unchanged.
+
+  test('sanitizeErrorMessage collapses raw OS path leak to generic message', async () => {
+    const cache = new SourceCache({
+      source: 'resources',
+      ttlMs: 1_000,
+      load: async () => {
+        // The exact shape of a Node fs readFile failure on a missing
+        // /proc/meminfo: the absolute path is embedded in the message.
+        throw new Error('ENOENT: no such file or directory, open /proc/meminfo');
+      },
+      sanitizeErrorMessage: () => 'resource collection failed',
+    });
+
+    const state = await cache.get();
+    assert.equal(state.status, 'error');
+    assert.equal(state.data, null);
+    assert.equal(state.error, 'resource collection failed');
+    // Regression guard: the OS path must never appear in the wire shape.
+    assert.ok(!state.error?.includes('/proc/meminfo'));
+    assert.ok(!state.error?.includes('ENOENT'));
+  });
+
+  test('without sanitizeErrorMessage, pre-sanitized upstream errors pass through unchanged', async () => {
+    // Mirrors the city-source contract: GcClient.fetchOnce already
+    // throws `gc supervisor returned ${status}` and the cache should
+    // not double-sanitize that.
+    const cache = new SourceCache({
+      source: 'city',
+      ttlMs: 1_000,
+      load: async () => {
+        throw new Error('gc supervisor returned 503');
+      },
+    });
+
+    const state = await cache.get();
+    assert.equal(state.status, 'error');
+    assert.equal(state.error, 'gc supervisor returned 503');
+  });
+
+  test('onError observer fires with raw error BEFORE sanitization, so server-side logs keep fidelity', async () => {
+    // The opt-in pair (sanitizeErrorMessage + onError) is meant to give
+    // local-IO collectors the path-leak protection on the wire AND the
+    // raw-error fidelity in server logs. A future refactor that reversed
+    // the call order (sanitize first, then fire onError with the already-
+    // sanitized string) would silently degrade debugging — this test
+    // pins the contract.
+    const observed: Array<{ source: string; phase: string; raw: string }> = [];
+    const rawMessage =
+      'ENOENT: no such file or directory, open /proc/meminfo';
+
+    const cache = new SourceCache({
+      source: 'resources',
+      ttlMs: 1_000,
+      load: async () => {
+        throw new Error(rawMessage);
+      },
+      sanitizeErrorMessage: () => 'resource collection failed',
+      onError: (source, phase, err) => {
+        observed.push({
+          source,
+          phase,
+          raw: err instanceof Error ? err.message : String(err),
+        });
+      },
+    });
+
+    const state = await cache.get();
+
+    // Wire-shape stays sanitized.
+    assert.equal(state.error, 'resource collection failed');
+
+    // onError fired exactly once for the 'load' phase, with the RAW
+    // pre-sanitization message — that's the server-side fidelity guarantee.
+    assert.equal(observed.length, 1);
+    const [first] = observed;
+    assert.ok(first, 'onError should have been invoked');
+    assert.equal(first.source, 'resources');
+    assert.equal(first.phase, 'load');
+    assert.equal(first.raw, rawMessage);
+  });
+
+  test('sanitizeErrorMessage also covers the fixture-failure concat path', async () => {
+    // When the primary load() fails AND the fixture loader fails, the
+    // cache concatenates both messages. A local-source collector that
+    // ships fixtures from disk could leak a path through the fixture
+    // error — sanitize that side too.
+    const cache = new SourceCache({
+      source: 'resources',
+      ttlMs: 1_000,
+      useFixture: true,
+      load: async () => {
+        throw new Error('ENOENT: open /proc/meminfo');
+      },
+      loadFixture: async () => {
+        throw new Error(
+          'ENOENT: no such file or directory, open /var/lib/dashboard/fixtures/resources.json',
+        );
+      },
+      sanitizeErrorMessage: () => 'resource collection failed',
+    });
+
+    const state = await cache.get();
+    assert.equal(state.status, 'error');
+    assert.ok(!state.error?.includes('/proc/'));
+    assert.ok(!state.error?.includes('/var/lib'));
+    assert.ok(!state.error?.includes('ENOENT'));
+    // The sanitized message appears for both halves; cache uses the
+    // same sanitizer on each side so the concat result is two copies
+    // of the generic string. Exact shape is an internal detail; the
+    // contract is: no raw path leaked.
+    assert.ok(state.error?.includes('resource collection failed'));
+  });
+});
