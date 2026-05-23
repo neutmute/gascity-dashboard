@@ -18,9 +18,13 @@ Stack: Node 20 + Express + TS (backend), React 18 + Vite + Tailwind + Inter Vari
 
 `stephanie` — hardcoded in `frontend/src/contexts/ViewingAsContext.tsx` and `backend/src/audit.ts`. Any "Reading as <X>" state where `X !== stephanie` is impersonation: read-only for mail, no send. The `OPERATOR_ALIAS` constant + `ViewingAs.isOperator` field are the source of truth.
 
-## Standalone repo, no upstream
+## Provenance and remote
 
-This codebase was extracted from [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) for the project shape (security model, wire-shape contract, the systemd-separated-from-supervisor decision). The visual register was rebuilt from scratch via [impeccable](https://impeccable.style/). **There is no upstream to track** — the `origin` remote was removed deliberately. Charlie Coutts's MIT copyright is preserved in `LICENSE` (required); the codebase is otherwise ours.
+This codebase was extracted from [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) for the project shape (security model, wire-shape contract, the systemd-separated-from-supervisor decision). The visual register was rebuilt from scratch via [impeccable](https://impeccable.style/). The original `origin` was removed deliberately; **there is no citadel upstream to track**. Charlie Coutts's MIT copyright is preserved in `LICENSE` (required); the codebase is otherwise ours.
+
+Published at **https://github.com/sjarmak/gascity-dashboard**. The remote is named `gascity-dashboard` (not `origin`); `main` is configured to track `gascity-dashboard/main`, so `git push` from `main` resolves the remote automatically. Explicit pushes on other branches: `git push gascity-dashboard <branch>`.
+
+The `bd` Dolt store at `.beads/` has **no Dolt remote configured yet** — bead state is local-only until `bd dolt remote add` is run. Code lives on GitHub; beads do not (yet).
 
 ## Quick start (dev)
 
@@ -125,7 +129,5 @@ When wrapping up a session:
 1. **File follow-ups.** Anything you noticed but didn't finish goes into a bead via `bd create`.
 2. **Run quality gates** if code changed — `npm --workspace frontend run typecheck`, `npm --workspace backend run typecheck`, and a `node scripts/snap.mjs` pass for any view you touched.
 3. **Update bead status.** Close what's done, set `--status=in_progress` on what's claimed but ongoing.
-4. **Commit locally.** This is a standalone repo with no remote at present, so the bar is "commit, don't strand work in the working tree." `git status` should be clean before you stop.
+4. **Commit and push.** `git status` should be clean before you stop. `main` is tracked against `gascity-dashboard/main` on GitHub, so a session that lands work on `main` should run `git push` before wrapping up — work stranded on local `main` is invisible to anyone else, and to a fresh Claude that clones from GitHub. (Once a Dolt remote is added to `.beads/`, `bd dolt push` joins the close-out checklist; until then beads are local-only.)
 5. **Hand off.** If the next session is a fresh Claude, leave a `bd remember` note or a short paragraph in your reply describing where things stand.
-
-If a GitHub remote is added later, that's when the bd-default `git push` / `bd dolt push` workflow becomes relevant. Until then, local commits are the contract.
