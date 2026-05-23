@@ -43,7 +43,7 @@ curl -sX POST http://127.0.0.1:8081/api/sessions/td-foo/peek -H 'Host: 127.0.0.1
 
 Every privileged invocation routes through `backend/src/exec.ts`. **No general-purpose exec helper exists.**
 
-- **Enum whitelist** of allowed commands: `gc bd update <id> --status=... --assignee=...`, `gc bd close <id> [--reason=...]`, `gc agents nudge <alias>`.
+- **Enum whitelist** of allowed commands: `gc bd update <id> --status=... --assignee=...`, `gc bd close <id> [--reason=...]`, `gc bd nudge <id> [--reason=...]`.
 
   *Peek is no longer in this list:* architect addendum td-wisp-ijk7g (mechanic td-wisp-e1v14) confirmed peek is served by gc supervisor's `GET /v0/city/{name}/session/{id}/transcript` HTTP endpoint as structured turns. The dashboard fetches the transcript via `GcClient.fetchTranscript` and sanitises text fields server-side with the same `sanitiseTerminalOutput` it would have applied to shell output. No `subprocess.spawn` involved — one less attack surface in the privileged-exec path.
 

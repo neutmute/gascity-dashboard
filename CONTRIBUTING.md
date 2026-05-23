@@ -44,11 +44,10 @@ forward port 5174 from the host:
 ssh -L 5174:127.0.0.1:5174 user@host
 ```
 
-The full env-knob reference lives in
-[`README.md`](README.md#configuration) and is generated from
-[`backend/src/config.ts`](backend/src/config.ts).
-[`.env.example`](.env.example) at the repo root has every key with a comment
-and the default value commented out.
+[`.env.example`](.env.example) at the repo root is the authoritative list:
+every env key from [`backend/src/config.ts`](backend/src/config.ts), with a
+comment and the default value commented out. [`README.md`](README.md#configuration)
+has a shorter summary of the commonly-tweaked subset.
 
 ## Quality gates
 
@@ -56,7 +55,7 @@ Every PR runs the gates in [`.github/workflows/ci.yml`](.github/workflows/ci.yml
 Run them locally before pushing. The full sequence:
 
 ```bash
-npm install
+npm ci
 npm run build:shared
 npm run typecheck                              # shared + backend + frontend src
 npm --workspace backend run typecheck:test     # test files type-check too
