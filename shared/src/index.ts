@@ -41,6 +41,16 @@ export interface GcSession {
   context_window?: number;
   /** Coarse activity hint: 'idle' | 'thinking' | 'tool_use' | ... */
   activity?: string;
+  /**
+   * Session provider (e.g. 'codex', 'claude', 'gemini'). Supervisor
+   * already has `provider_kind` in session metadata and should populate
+   * this field for all sessions; absence is a transitional gap pending
+   * an upstream fix to gastownhall/gascity. Consumers MUST tolerate
+   * undefined (treat the session as "unknown provider") rather than
+   * inferring from title text — title-parsing is a brittle heuristic
+   * and a violation of ZFC; sessionsByProvider aggregation just
+   * undercounts until upstream lands the fix (dkb Q4).
+   */
   provider?: string;
 }
 
