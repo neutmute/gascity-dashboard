@@ -43,9 +43,9 @@ jobs:
     name: typecheck + tests (node 20)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # '20.x' rolls minor/patch updates within Node 20 — the engines
           # field requires '>=20.0.0'. Pin to '20.18.0' (or use .nvmrc
