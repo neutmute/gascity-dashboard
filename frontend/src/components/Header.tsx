@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { useViewingAs, OPERATOR_ALIAS } from '../contexts/ViewingAsContext';
 import { displayLabel } from '../hooks/aliasPriority';
@@ -20,6 +20,11 @@ const ROUTES: { to: string; label: string }[] = [
 export function Header() {
   const { resolved, toggle } = useTheme();
   const { viewingAs } = useViewingAs();
+  const { pathname } = useLocation();
+  // "Reading as" is a Mail-only concept — the value persists across views
+  // (for Maintainer's impersonation guard + AgentDetail's chat filter) but
+  // the header indicator only makes sense inside the mail surface.
+  const showReadingAs = !viewingAs.isOperator && pathname.startsWith('/mail');
 
   return (
     <header className="border-b border-rule">
@@ -32,7 +37,7 @@ export function Header() {
           <span className="text-label uppercase tracking-wider text-fg-muted">
             ds-research
           </span>
-          {!viewingAs.isOperator && (
+          {showReadingAs && (
             <span className="text-label uppercase tracking-wider text-accent ml-3">
               · reading as {displayLabel(viewingAs.alias, OPERATOR_ALIAS)}
             </span>
