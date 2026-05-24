@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { GcMailItem, GcSession } from 'gas-city-dashboard-shared';
+import type { GcMailItem } from 'gas-city-dashboard-shared';
 import { api, ApiClientError } from '../api/client';
 import { useCachedData } from '../hooks/useCachedData';
 import { Button } from '../components/Button';
@@ -11,6 +11,11 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { type TableColumn } from '../components/Table';
 import { useViewingAs, OPERATOR_ALIAS } from '../contexts/ViewingAsContext';
+import {
+  displayLabel,
+  tierLabel,
+  type AliasBucket,
+} from '../hooks/aliasPriority';
 import { useListFilters, type FilterChip } from '../hooks/useListFilters';
 import { mailProject } from '../hooks/projectOf';
 import { formatRelative } from '../hooks/time';
@@ -39,8 +44,16 @@ const PROMPT_INJECTION_NOTICE =
 type MailBox = 'inbox' | 'sent';
 
 export function MailPage() {
-  const { viewingAs, setAlias, resetToOperator } = useViewingAs();
+  const { viewingAs, setAlias, resetToOperator, aliasBuckets, aliasesLoading, loadAliases } =
+    useViewingAs();
   const [box, setBox] = useState<MailBox>('inbox');
+
+  // Lazy alias prefetch — Mail is the only consumer of the dropdown, so
+  // non-Mail routes don't pay the cost (code-reviewer HIGH-1). Idempotent
+  // on the context side, so re-entries are no-ops.
+  useEffect(() => {
+    loadAliases();
+  }, [loadAliases]);
   // Tick state so relative timestamps refresh between data fetches. Mirrors
   // the Agents.tsx pattern: 15s interval, visibility-aware so background
   // tabs don't churn.
@@ -64,32 +77,12 @@ export function MailPage() {
   useEffect(() => {
     if (mailError) setError(mailError);
   }, [mailError]);
-  const [agentOptions, setAgentOptions] = useState<string[]>([OPERATOR_ALIAS]);
 
   const [threadFor, setThreadFor] = useState<GcMailItem | null>(null);
   const [threadItems, setThreadItems] = useState<GcMailItem[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
 
   const [composing, setComposing] = useState(false);
-
-  // Pull the agent list from /api/sessions once so the identity dropdown
-  // shows real aliases rather than a free-form input.
-  useEffect(() => {
-    void (async () => {
-      try {
-        const { items: sessions } = await api.listSessions();
-        const aliases = new Set<string>([OPERATOR_ALIAS]);
-        for (const s of sessions as GcSession[]) {
-          if (s.alias && /^[a-z][a-z0-9_./-]{1,63}$/i.test(s.alias)) {
-            aliases.add(s.alias);
-          }
-        }
-        setAgentOptions(Array.from(aliases).sort());
-      } catch {
-        /* fall back to the single operator option already set */
-      }
-    })();
-  }, []);
 
   const openThread = useCallback(
     async (mail: GcMailItem) => {
@@ -147,13 +140,18 @@ export function MailPage() {
     },
   ], [now]);
 
+  const aliasLabel = useMemo(
+    () => displayLabel(viewingAs.alias, OPERATOR_ALIAS),
+    [viewingAs.alias],
+  );
+
   const synopsis = useMemo(() => {
     const noun = box === 'inbox' ? 'inbox' : 'sent';
-    if (items.length === 0) return `${capitalize(noun)} empty for ${viewingAs.alias}.`;
+    if (items.length === 0) return `${capitalize(noun)} empty for ${aliasLabel}.`;
     const unread = box === 'inbox' ? items.filter((m) => !m.read).length : 0;
     if (unread > 0) return `${items.length} in ${noun}, ${unread} unread.`;
     return `${items.length} in ${noun}.`;
-  }, [box, items, viewingAs.alias]);
+  }, [box, items, aliasLabel]);
 
   // Mail view key includes box so collapsed-project state is independent
   // between inbox and sent (different mental models).
@@ -202,7 +200,8 @@ export function MailPage() {
 
       <div className="mb-8 space-y-4">
         <IdentitySwitcher
-          options={agentOptions}
+          buckets={aliasBuckets}
+          loading={aliasesLoading}
           value={viewingAs.alias}
           onChange={setAlias}
           onReset={resetToOperator}
@@ -239,7 +238,7 @@ export function MailPage() {
         emptyMessage={
           filters.search.length > 0 || filters.activeChipIds.size > 0
             ? 'No messages match the current search or filter.'
-            : `${box === 'inbox' ? 'Inbox' : 'Sent'} empty for ${viewingAs.alias}.`
+            : `${box === 'inbox' ? 'Inbox' : 'Sent'} empty for ${aliasLabel}.`
         }
         perProjectEmpty="No messages in this project."
         initialSort={{ key: 'created_at', dir: 'desc' }}
@@ -249,7 +248,7 @@ export function MailPage() {
         open={threadFor !== null}
         onClose={() => setThreadFor(null)}
         title={threadFor?.subject ?? 'Thread'}
-        caption={`Reading as ${viewingAs.alias}, ${threadItems.length} message(s)`}
+        caption={`Reading as ${aliasLabel}, ${threadItems.length} message(s)`}
         widthClass="max-w-3xl"
       >
         {threadLoading ? (
@@ -280,13 +279,15 @@ export function MailPage() {
 }
 
 function IdentitySwitcher({
-  options,
+  buckets,
+  loading,
   value,
   onChange,
   onReset,
   isOperator,
 }: {
-  options: string[];
+  buckets: ReadonlyArray<AliasBucket>;
+  loading: boolean;
   value: string;
   onChange: (v: string) => void;
   onReset: () => void;
@@ -295,6 +296,10 @@ function IdentitySwitcher({
   // Persistent identity strip per shape brief. When impersonating, the
   // state is loud (accent maroon); when the operator is herself, it's
   // quiet but still present so impersonation is one click away.
+  //
+  // While the alias list is in-flight, render the current value as plain
+  // text instead of a one-item dropdown — clicking a dropdown only to
+  // watch it grow is the bug e85 fixes.
   return (
     <div className="flex items-baseline gap-4 flex-wrap pb-4 border-b border-rule">
       <span className="text-label uppercase tracking-wider text-fg-muted">
@@ -302,19 +307,32 @@ function IdentitySwitcher({
           <span className="text-accent">▲ Reading as</span>
         )}
       </span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`bg-transparent text-body focus-mark rounded-sm border-0 border-b border-rule pb-0.5 hover:border-fg focus:border-accent transition-colors ${
-          isOperator ? 'text-fg' : 'text-accent font-medium'
-        }`}
-      >
-        {options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
-        ))}
-      </select>
+      {loading ? (
+        <span className="text-body text-fg-muted italic">
+          {displayLabel(value, OPERATOR_ALIAS)}{' '}
+          <span className="text-label uppercase tracking-wider text-fg-faint not-italic ml-1">
+            loading aliases
+          </span>
+        </span>
+      ) : (
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`bg-transparent text-body focus-mark rounded-sm border-0 border-b border-rule pb-0.5 hover:border-fg focus:border-accent transition-colors ${
+            isOperator ? 'text-fg' : 'text-accent font-medium'
+          }`}
+        >
+          {buckets.map((bucket) => (
+            <optgroup key={bucket.tier} label={tierLabel(bucket.tier)}>
+              {bucket.aliases.map((alias) => (
+                <option key={alias} value={alias}>
+                  {displayLabel(alias, OPERATOR_ALIAS)}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      )}
       {!isOperator && (
         <>
           <button
@@ -444,7 +462,11 @@ function ComposeModal({
         <Field label="From">
           <input
             type="text"
-            value={viewingAs.isOperator ? OPERATOR_ALIAS : `${OPERATOR_ALIAS} (reading-as does not change sender)`}
+            value={
+              viewingAs.isOperator
+                ? displayLabel(OPERATOR_ALIAS, OPERATOR_ALIAS)
+                : `${displayLabel(OPERATOR_ALIAS, OPERATOR_ALIAS)} (reading-as does not change sender)`
+            }
             disabled
             className="w-full bg-transparent border-0 border-b border-rule pb-1 text-body text-fg-muted italic"
           />
@@ -480,7 +502,7 @@ function ComposeModal({
         {!viewingAs.isOperator && (
           <StatusBadge
             tone="warn"
-            label={`Reading as ${viewingAs.alias}. Sends from this modal are structurally locked to the operator regardless.`}
+            label={`Reading as ${displayLabel(viewingAs.alias, OPERATOR_ALIAS)}. Sends from this modal are structurally locked to the operator regardless.`}
           />
         )}
         {error && (

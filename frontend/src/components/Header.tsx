@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
-import { useViewingAs } from '../contexts/ViewingAsContext';
+import { useViewingAs, OPERATOR_ALIAS } from '../contexts/ViewingAsContext';
+import { displayLabel } from '../hooks/aliasPriority';
 
 const ROUTES: { to: string; label: string }[] = [
   { to: '/agents', label: 'Agents' },
@@ -33,7 +34,7 @@ export function Header() {
           </span>
           {!viewingAs.isOperator && (
             <span className="text-label uppercase tracking-wider text-accent ml-3">
-              · reading as {viewingAs.alias}
+              · reading as {displayLabel(viewingAs.alias, OPERATOR_ALIAS)}
             </span>
           )}
         </div>
