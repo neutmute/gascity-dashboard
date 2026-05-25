@@ -8,6 +8,17 @@ interface UseCachedDataResult<T> {
   refresh: () => Promise<void>;
 }
 
+export interface UseCachedDataOptions<T> {
+  /**
+   * When provided, explicit refresh() calls route through this fetcher
+   * instead of the primary one. The mount-effect always uses the
+   * primary `fetcher` so initial paint stays cache-warm. Useful when
+   * the same source has a cheap GET and a TTL-bypassing POST: pass
+   * the GET as `fetcher` and the POST as `refreshFetcher`.
+   */
+  refreshFetcher?: () => Promise<T>;
+}
+
 /**
  * Stale-while-revalidate fetch hook. On mount:
  *   - If the cache has the key: seed state with cached data and
@@ -22,34 +33,47 @@ interface UseCachedDataResult<T> {
 export function useCachedData<T>(
   key: string,
   fetcher: () => Promise<T>,
+  options?: UseCachedDataOptions<T>,
 ): UseCachedDataResult<T> {
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const refreshFetcherRef = useRef(options?.refreshFetcher);
+  refreshFetcherRef.current = options?.refreshFetcher;
 
   const [data, setData] = useState<T | undefined>(() => getCached<T>(key));
   const [loading, setLoading] = useState<boolean>(() => getCached<T>(key) === undefined);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const fresh = await fetcherRef.current();
-      setCached(key, fresh);
-      setData(fresh);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed to load');
-    } finally {
-      setLoading(false);
-    }
-  }, [key]);
+  const runFetcher = useCallback(
+    async (fetch: () => Promise<T>) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const fresh = await fetch();
+        setCached(key, fresh);
+        setData(fresh);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'failed to load');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [key],
+  );
+
+  // Explicit refresh prefers the bypass fetcher when configured;
+  // mount-effect always uses the cheap primary fetcher.
+  const refresh = useCallback(
+    () => runFetcher(refreshFetcherRef.current ?? fetcherRef.current),
+    [runFetcher],
+  );
 
   useEffect(() => {
     const cached = getCached<T>(key);
     setData(cached);
     setLoading(cached === undefined);
-    void refresh();
-  }, [key, refresh]);
+    void runFetcher(fetcherRef.current);
+  }, [key, runFetcher]);
 
   return { data, loading, error, refresh };
 }

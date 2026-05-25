@@ -14,6 +14,7 @@ import type {
   ContributorStat,
   ApiError,
   DashboardSnapshot,
+  SourceName,
 } from 'gas-city-dashboard-shared';
 
 // Typed fetch client for the admin backend's /api/*. Shares types with
@@ -165,6 +166,19 @@ export const api = {
   },
   snapshot(): Promise<DashboardSnapshot> {
     return request('GET', '/api/snapshot');
+  },
+  // Bypasses the backend's per-source TTL — POSTs through
+  // SnapshotService.refresh which forces a fresh upstream load on the
+  // listed sources (or all sources when `sources` is omitted). Used by
+  // the /workflows live-updates path so SSE-triggered re-fetches see
+  // genuinely fresh data (gascity-dashboard-bqn).
+  snapshotRefresh(sources?: readonly SourceName[]): Promise<DashboardSnapshot> {
+    // Backend rejects [] explicitly (snapshot.ts:83 — "sources must not
+    // be empty; omit the field to refresh all"). Guard here so callers
+    // get a TypeScript-side no-op rather than a 400 from a stray empty
+    // array. Pass undefined / non-empty arrays through.
+    const body = sources && sources.length > 0 ? { sources } : {};
+    return request('POST', '/api/snapshot/refresh', body);
   },
   maintainerTriage(): Promise<MaintainerTriage> {
     return request('GET', '/api/maintainer/triage');
