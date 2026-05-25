@@ -140,7 +140,6 @@ function TurnBlock({
       </header>
       <pre
         className="text-body whitespace-pre-wrap leading-relaxed overflow-x-auto text-fg"
-        // eslint-disable-next-line react/no-danger -- html is ansi_up output of server-sanitised text; see SECURITY.md
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </li>

@@ -13,8 +13,10 @@ import {
 import { csrfIssueCookie, csrfValidate, getCsrfToken } from './middleware/csrf.js';
 import { GcClient } from './gc-client.js';
 import { sessionsRouter, raceWithTimeout } from './routes/sessions.js';
+import { sessionStreamRouter } from './routes/session-stream.js';
 import { agentsRouter } from './routes/agents.js';
 import { beadsRouter } from './routes/beads.js';
+import { workflowsRouter } from './routes/workflows.js';
 import { mailRouter } from './routes/mail.js';
 import { mailSendRouter } from './routes/mail-send.js';
 import { gitRouter } from './routes/git.js';
@@ -80,6 +82,7 @@ function main(): void {
     res.json(dashboardConfig);
   });
   writeRouter.use('/sessions', sessionsRouter(gc));
+  writeRouter.use('/workflows', workflowsRouter(gc, { rigRoot: config.cityPath }));
   writeRouter.use('/agents', agentsRouter(config.cityPath));
   writeRouter.use('/beads', beadsRouter(gc, config.cityPath));
   writeRouter.use('/mail', mailRouter(gc));
@@ -133,6 +136,13 @@ function main(): void {
     cityPath: config.cityPath,
   });
   writeRouter.use('/snapshot', snapshotRouter(snapshotService));
+
+  // Session SSE is mounted before the csrf-protected API router. It is a
+  // GET-only same-origin stream, and EventSource cannot attach CSRF headers.
+  app.use('/api/sessions', sessionStreamRouter({
+    supervisorUrl: config.gcSupervisorUrl,
+    cityName: config.cityName,
+  }));
 
   app.use('/api', writeRouter);
 

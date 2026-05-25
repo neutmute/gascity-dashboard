@@ -12,6 +12,7 @@ export {
   matchesSessionTarget,
   lastSegment,
 } from './session-resolve.js';
+export type * from './workflow-detail.js';
 
 export type IsoTimestamp = string;
 export type BeadId = string;

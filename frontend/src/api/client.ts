@@ -16,6 +16,8 @@ import type {
   DashboardSnapshot,
   SourceName,
   DashboardRuntimeConfig,
+  WorkflowDiffResponse,
+  WorkflowRunDetail,
 } from 'gas-city-dashboard-shared';
 
 // Typed fetch client for the admin backend's /api/*. Shares types with
@@ -184,6 +186,23 @@ export const api = {
     const body = sources && sources.length > 0 ? { sources } : {};
     return request('POST', '/api/snapshot/refresh', body);
   },
+  workflowRun(
+    workflowId: string,
+    params?: { scopeKind?: 'city' | 'rig'; scopeRef?: string },
+  ): Promise<WorkflowRunDetail> {
+    const qs = workflowQuery(params);
+    return request('GET', `/api/workflows/${encodeURIComponent(workflowId)}${qs}`);
+  },
+  workflowDiff(
+    workflowId: string,
+    params?: { scopeKind?: 'city' | 'rig'; scopeRef?: string },
+  ): Promise<WorkflowDiffResponse> {
+    const qs = workflowQuery(params);
+    return request('GET', `/api/workflows/${encodeURIComponent(workflowId)}/diff${qs}`);
+  },
+  sessionStreamUrl(id: string): string {
+    return `/api/sessions/${encodeURIComponent(id)}/stream`;
+  },
   maintainerTriage(): Promise<MaintainerTriage> {
     return request('GET', '/api/maintainer/triage');
   },
@@ -206,3 +225,11 @@ export const api = {
     return request('POST', '/api/maintainer/sling', payload);
   },
 };
+
+function workflowQuery(params?: { scopeKind?: 'city' | 'rig'; scopeRef?: string }): string {
+  const search = new URLSearchParams();
+  if (params?.scopeKind) search.set('scope_kind', params.scopeKind);
+  if (params?.scopeRef) search.set('scope_ref', params.scopeRef);
+  const qs = search.toString();
+  return qs.length > 0 ? `?${qs}` : '';
+}

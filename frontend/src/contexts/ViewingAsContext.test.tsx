@@ -28,7 +28,6 @@ vi.mock('../api/client', () => ({
 }));
 
 // Import the mocked module after the mock so we get the vi.fn() references.
-// eslint-disable-next-line import/first
 import { api } from '../api/client';
 
 const mockListSessions = api.listSessions as Mock;

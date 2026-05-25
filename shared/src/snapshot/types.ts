@@ -276,6 +276,9 @@ export interface WorkflowLane {
   id: string;
   title: string;
   formula: string | null;
+  scopeKind?: 'city' | 'rig' | null;
+  scopeRef?: string | null;
+  rootStoreRef?: string | null;
   externalUrl: string | null;
   externalLabel: string | null;
   phase: WorkflowPhase;

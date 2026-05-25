@@ -37,15 +37,10 @@ vi.mock('../api/client', () => ({
   ApiClientError: class extends Error {},
 }));
 
-// eslint-disable-next-line import/first
 import { api } from '../api/client';
-// eslint-disable-next-line import/first
 import { invalidateKey } from '../api/cache';
-// eslint-disable-next-line import/first
 import { MaintainerPage } from './Maintainer';
-// eslint-disable-next-line import/first
 import { ViewingAsProvider } from '../contexts/ViewingAsContext';
-// eslint-disable-next-line import/first
 import type { MaintainerTriage } from 'gas-city-dashboard-shared';
 
 const mockTriage = api.maintainerTriage as Mock;
@@ -153,7 +148,7 @@ afterEach(() => {
 
 function mount() {
   return render(
-    <MemoryRouter>
+    <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
       <ViewingAsProvider>
         <MaintainerPage />
       </ViewingAsProvider>
