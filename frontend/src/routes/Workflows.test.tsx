@@ -180,6 +180,38 @@ describe('WorkflowsPage — SSE wiring (gascity-dashboard-bqn)', () => {
     expect(mockSnapshotRefresh.mock.calls.length).toBe(1);
   });
 
+  it('fires a second snapshotRefresh once the debounce window elapses', async () => {
+    // Pins the trailing edge of the in-component debounce. The burst
+    // test above proves we collapse a flurry to one POST; this test
+    // proves we DON'T accidentally latch the gate shut forever. If a
+    // future refactor drops the `lastRefreshAtRef.current = Date.now()`
+    // reset (or fails to clear it on error), the second event would be
+    // silently swallowed and the page would stop receiving live updates
+    // until full reload. Catch that loudly here.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mount();
+    await waitForMount();
+    mockSnapshotRefresh.mockClear();
+
+    // Leading edge: one event, one POST.
+    await act(async () => {
+      lastHookCall.onMatch?.();
+    });
+    expect(mockSnapshotRefresh.mock.calls.length).toBe(1);
+
+    // Advance past the 10s debounce floor (REFRESH_DEBOUNCE_MS = 10_000
+    // in Workflows.tsx; +100ms cushion so we're unambiguously past it).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_100);
+    });
+
+    // Second event after the window must fire a second POST.
+    await act(async () => {
+      lastHookCall.onMatch?.();
+    });
+    expect(mockSnapshotRefresh.mock.calls.length).toBe(2);
+  });
+
   it('SSE callback no-ops when workflows source status is not fresh', async () => {
     // First load returns a fixture-status envelope (gc supervisor is
     // down, snapshot is serving committed fixtures). SSE-driven force
