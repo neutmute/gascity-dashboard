@@ -11,6 +11,7 @@ import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
 import { SessionPeekContent, formatPeekChars } from '../components/SessionPeek';
 import { SortToggle } from '../components/SortToggle';
+import { SseIndicator } from '../components/SseIndicator';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
 import { type TableColumn } from '../components/Table';
 import { useCachedData } from '../hooks/useCachedData';
@@ -354,13 +355,6 @@ export function AgentsPage() {
       </Modal>
     </section>
   );
-}
-
-function SseIndicator({ state }: { state: 'connecting' | 'open' | 'closed' }) {
-  const tone: StatusTone =
-    state === 'open' ? 'ok' : state === 'connecting' ? 'warn' : 'stuck';
-  const label = state === 'open' ? 'live' : state === 'connecting' ? 'connecting' : 'offline';
-  return <StatusBadge tone={tone} label={label} title={`SSE stream: ${state}`} />;
 }
 
 // Single source of truth for state → tone mapping. Aligned with how
