@@ -267,6 +267,11 @@ describe('SlungLink — inline workflow link for slung items', () => {
     // No link — a '/' in the slug is rejected at the rendering boundary.
     expect(container.querySelector('a')).toBeNull();
     expect(container.textContent).toMatch(/no session for chief-of-staff/i);
+    // The accessible label (which differs from the visible text) must still
+    // name the role and reassure that the sling itself succeeded.
+    expect(
+      container.querySelector('[aria-label]')?.getAttribute('aria-label'),
+    ).toBe('no session for role chief-of-staff; sling itself succeeded');
   });
 
   // ── gascity-dashboard-55b: no-session error path ──────────────────
