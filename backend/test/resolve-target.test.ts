@@ -174,6 +174,34 @@ describe('resolveTargetToSession', () => {
     );
   });
 
+  test('active session wins even when a non-active matches an earlier strategy', () => {
+    // MEDIUM-3 regression guard (gascity-dashboard-tko). The active-first
+    // contract must hold ACROSS strategies, not just within one: a non-active
+    // session matching a stronger strategy (exact alias) must NOT beat an
+    // active session that only matches a weaker strategy (alias last-segment).
+    // The active-pass runs to completion before the full-array fallback, so
+    // any matching active session is returned before iteration order in the
+    // fallback can surface the non-active one.
+    const nonActiveExactAlias = session({
+      id: 'gc-na',
+      alias: 'chief-of-staff', // strategy 1: exact alias
+      session_name: 'nonactive-cos',
+      state: 'asleep',
+    });
+    const activeLastSegment = session({
+      id: 'gc-ac',
+      alias: 'oversight-rig.chief-of-staff', // strategy 3: alias last-segment only
+      session_name: 'active-cos',
+      state: 'active',
+    });
+    // Non-active is first in the list AND matches the strongest strategy;
+    // the active session still wins because active outranks non-active.
+    assert.equal(
+      resolveTargetToSession('chief-of-staff', [nonActiveExactAlias, activeLastSegment]),
+      'active-cos',
+    );
+  });
+
   test('handles real-world chief-of-staff fixture from live supervisor', () => {
     // Verbatim shape from /v0/city/ds-research/sessions:
     //   { id: 'gc-255180', alias: 'oversight-rig.chief-of-staff',
