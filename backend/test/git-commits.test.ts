@@ -8,6 +8,7 @@ import express from 'express';
 import type { ExecResult } from '../src/exec.js';
 import { ExecError } from '../src/exec.js';
 import { gitRouter } from '../src/routes/git.js';
+import type { GitRouterOptions } from '../src/routes/git.js';
 import { setAuditLogPath } from '../src/audit.js';
 
 // Regression coverage for GET /api/git/commits catch-arm err.message
@@ -23,7 +24,10 @@ import { setAuditLogPath } from '../src/audit.js';
 // agents-prime.test.ts: the route accepts execGitLog via DI so tests can
 // stub a throwing runner without module mocking.
 
-type GitLogStub = (view: string) => Promise<ExecResult>;
+// Derived from the route's exported option type so a signature drift in
+// gitRouter's injected runner becomes a compile error here (the whole
+// point of this regression harness).
+type GitLogStub = NonNullable<GitRouterOptions['execGitLog']>;
 
 interface AppHandle {
   url: string;
@@ -115,7 +119,7 @@ describe('GET /api/git/commits — catch-arm err.message redaction', { concurren
         throw new ExecError('git log timed out', 'timeout');
       },
     });
-    const res = await getJson(`${h.url}/api/git/commits`);
+    const res = await getJson(`${h.url}/api/git/commits?view=recent-main`);
     assert.equal(res.status, 504);
     assert.equal(res.body.kind, 'timeout');
   });

@@ -489,10 +489,9 @@ describe('POST /api/maintainer/sling', { concurrency: false }, () => {
     });
     assert.equal(res.status, 502);
     assert.equal(res.body.kind, 'upstream');
-    // The fixed redaction shape: name only, no stderr key.
+    // The fixed redaction shape: name only, no stderr key. deepEqual pins
+    // the entire object, so a stray stderr key cannot slip through.
     assert.deepEqual(res.body.details, { name: 'NonZeroExit' });
-    const details = res.body.details as { stderr?: string };
-    assert.equal(details.stderr, undefined, 'response leaked stderr');
     // No fragment of the raw stderr (incl. the host path) may appear anywhere
     // in the serialised wire body.
     const serialised = JSON.stringify(res.body);

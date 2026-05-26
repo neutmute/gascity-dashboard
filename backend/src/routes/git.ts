@@ -17,7 +17,7 @@ const VIEWS: ReadonlySet<GitView> = new Set([
 
 const PRETTY_FORMAT = '%H%x09%h%x09%an%x09%aI%x09%D%x09%s';
 
-interface GitRouterOptions {
+export interface GitRouterOptions {
   /**
    * Injected `git log` runner. Defaults to the real exec wrapper; tests
    * pass a stub that throws so the catch-arm redaction contract
