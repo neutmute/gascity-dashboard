@@ -119,3 +119,12 @@ echo "prune-dead-worktrees ($mode): dead=$dead alive=$alive skipped=$skipped err
 if [[ "$APPLY" -eq 0 && "$dead" -gt 0 ]]; then
   echo "re-run with --apply to remove the $dead dead-pid worktree(s)."
 fi
+
+# Exit non-zero on a partial-failure --apply run so CI/wrappers can tell a
+# clean run from one where some unlock/remove ops failed. Any non-zero is
+# equivalent for shell callers; cap at 1 to avoid exit codes wrapping past
+# 255. Dry-run attempts no destructive ops, so it always exits 0.
+if [[ "$APPLY" -eq 1 && "$errors" -gt 0 ]]; then
+  exit 1
+fi
+exit 0
