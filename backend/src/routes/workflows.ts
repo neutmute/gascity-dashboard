@@ -1,19 +1,19 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import type {
+  GcBead,
   GcSession,
   GcFormulaDetail,
   GcWorkflowSnapshot,
   WorkflowScopeKind,
 } from 'gas-city-dashboard-shared';
+import { SCOPE_REF_RE } from 'gas-city-dashboard-shared';
 import { GcClient } from '../gc-client.js';
 import { BEAD_ID_RE } from '../lib/beadId.js';
 import { meta, nonEmpty } from '../workflows/bead-fields.js';
 import { enrichWorkflowRun, UnsupportedWorkflowError } from '../workflows/enrich.js';
 import { readWorkflowGitDiff } from '../workflows/diff.js';
 import { mergeWorkflowRuntimeState } from '../workflows/runtime-state.js';
-
-const SCOPE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
 
 export interface WorkflowsRouterOptions {
   rigRoot?: string;
@@ -32,7 +32,7 @@ export function workflowsRouter(
       return;
     }
     try {
-      const raw = await getWorkflowWithRuntimeState(
+      const { raw } = await getWorkflowWithRuntimeState(
         gc,
         parsed.workflowId,
         parsed.scope ?? defaultWorkflowScope(gc.cityName),
@@ -54,12 +54,12 @@ export function workflowsRouter(
       return;
     }
     try {
-      const raw = await getWorkflowWithRuntimeState(
+      const { raw, partial: runtimePartial } = await getWorkflowWithRuntimeState(
         gc,
         parsed.workflowId,
         parsed.scope ?? defaultWorkflowScope(gc.cityName),
       );
-      const { sessions, partial } = await getWorkflowSessions(gc);
+      const { sessions, partial: sessionsPartial } = await getWorkflowSessions(gc);
       const formulaDetail = await getWorkflowFormulaDetail(
         gc,
         raw,
@@ -70,6 +70,14 @@ export function workflowsRouter(
         sessions,
         formulaDetail,
       });
+      // Top-level `partial` is the authoritative "this view is degraded" signal:
+      // it unions supervisor-snapshot incompleteness (detail.progress.partial)
+      // with dashboard-side enrichment gaps (failed runtime bead reads or a
+      // failed sessions fetch). Unioning progress.partial here guarantees the
+      // two flags never disagree in the dangerous direction (top=false while
+      // progress=true).
+      const partial =
+        runtimePartial || sessionsPartial || detail.progress.partial;
       res.json(partial ? { ...detail, partial: true } : detail);
     } catch (err) {
       writeWorkflowError(res, err, 'failed to fetch workflow');
@@ -114,10 +122,26 @@ async function getWorkflowWithRuntimeState(
   gc: GcClient,
   workflowId: string,
   scope: { scopeKind: WorkflowScopeKind; scopeRef: string },
-): Promise<GcWorkflowSnapshot> {
+): Promise<{ raw: GcWorkflowSnapshot; partial: boolean }> {
   const raw = await gc.getWorkflow(workflowId, undefined, scope);
-  const runtime = await Promise.all(workflowBeadIds(raw).map((id) => gc.getBead(id)));
-  return mergeWorkflowRuntimeState(raw, runtime);
+  const ids = workflowBeadIds(raw);
+  // Fan out runtime bead reads with allSettled, NOT Promise.all: a single
+  // failed /bead/:id read (transient timeout, 404, etc.) must not collapse the
+  // whole workflow-detail request to a 502. Keep every bead we did get and flag
+  // the response partial so the UI can show a degraded badge.
+  const results = await Promise.allSettled(ids.map((id) => gc.getBead(id)));
+  const runtime: GcBead[] = [];
+  let failed = 0;
+  for (const result of results) {
+    if (result.status === 'fulfilled') runtime.push(result.value);
+    else failed += 1;
+  }
+  if (failed > 0) {
+    console.warn(
+      `[workflows] ${failed}/${ids.length} runtime bead reads failed for ${workflowId}; serving partial runtime state`,
+    );
+  }
+  return { raw: mergeWorkflowRuntimeState(raw, runtime), partial: failed > 0 };
 }
 
 function workflowBeadIds(raw: GcWorkflowSnapshot): string[] {

@@ -152,15 +152,15 @@ describe('WorkflowRunDetailPage', () => {
     await screen.findByText(/checking graph\.v2 node grouping/i);
   });
 
-  it('omits incomplete scope query params when loading detail and diff', async () => {
+  it('rejects a half-specified scope query without loading the workflow', async () => {
+    // Only scope_kind, no scope_ref. The backend rejects this as a 400, so the
+    // frontend must fail closed too — silently dropping the scope would load the
+    // WRONG (default city) run for a truncated deep link.
     renderPage('/workflows/gc-adopt-pr-active?scope_kind=city');
-    await screen.findByRole('heading', { name: /adopt pr #42/i });
 
-    const workflowUrls = fetchUrls.filter((url) => url.startsWith('/api/workflows/'));
-    expect(workflowUrls).toContain('/api/workflows/gc-adopt-pr-active');
-    expect(workflowUrls).toContain('/api/workflows/gc-adopt-pr-active/diff');
-    expect(workflowUrls.some((url) => url.includes('scope_kind'))).toBe(false);
-    expect(workflowUrls.some((url) => url.includes('scope_ref'))).toBe(false);
+    await screen.findByRole('alert');
+    expect(screen.getByText(/invalid workflow scope query/i)).toBeTruthy();
+    expect(fetchUrls.some((url) => url.startsWith('/api/workflows/'))).toBe(false);
   });
 
   it('passes complete scope query params when loading detail and diff', async () => {

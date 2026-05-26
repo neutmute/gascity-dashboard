@@ -11,7 +11,6 @@ describe('SESSION_ID_RE', () => {
       'th-abc-123',
       'fddc-g3v',
       'fddc-pe6',
-      'GC-SESSION-B',
     ]) {
       assert.equal(SESSION_ID_RE.test(id), true, id);
     }
@@ -21,6 +20,11 @@ describe('SESSION_ID_RE', () => {
     for (const id of [
       '',
       'gc-',
+      // Mixed-case look-alikes: supervisor handles are lowercase by convention
+      // (every fixture in this repo is lowercase), so the gate is case-sensitive
+      // — no /i — to avoid widening the allow-list to upper/mixed-case variants.
+      'GC-SESSION-B',
+      'TD-7T24I6',
       'agent-diagnostics-y84',
       'gc/session',
       'gc.session',

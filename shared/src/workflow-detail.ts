@@ -1,5 +1,13 @@
 export type WorkflowScopeKind = 'city' | 'rig';
 
+/**
+ * Validation pattern for a workflow `scope_ref` query value. Lives in shared so
+ * the backend route guard and the frontend deep-link parser validate against
+ * one source of truth — a wire rule that crosses the boundary must not be
+ * copy-pasted on each side (they would silently drift).
+ */
+export const SCOPE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
+
 export type WorkflowNodeStatus =
   | 'pending'
   | 'ready'

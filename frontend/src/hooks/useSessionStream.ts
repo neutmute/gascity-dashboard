@@ -105,14 +105,18 @@ export function useSessionStream(
 }
 
 function parseStreamTurn(data: string): TranscriptTurn | null {
+  // Fail closed on anything that isn't a well-formed turn frame. A non-JSON
+  // payload (e.g. an upstream "[DONE]"/keepalive sentinel) must NOT be rendered
+  // as assistant transcript text — drop it rather than fabricate a turn.
+  let parsed: Partial<TranscriptTurn>;
   try {
-    const parsed = JSON.parse(data) as Partial<TranscriptTurn>;
-    if (typeof parsed.text !== 'string') return null;
-    return {
-      role: typeof parsed.role === 'string' ? parsed.role : 'assistant',
-      text: parsed.text,
-    };
+    parsed = JSON.parse(data) as Partial<TranscriptTurn>;
   } catch {
-    return { role: 'assistant', text: data };
+    return null;
   }
+  if (typeof parsed.text !== 'string') return null;
+  return {
+    role: typeof parsed.role === 'string' ? parsed.role : 'assistant',
+    text: parsed.text,
+  };
 }

@@ -49,7 +49,7 @@ Every privileged invocation routes through `backend/src/exec.ts`. **No general-p
 
 - **Param schemas** enforced before any privileged call:
   - Bead id: `^(td|th|jt)-[a-z0-9-]{3,32}$`
-  - Session id: `^(td|th)-[a-z0-9]{3,12}$` (validated in `routes/sessions.ts` before the gc HTTP call)
+  - Session id: `^(gc|td|th|[a-z]{4})-[a-z0-9-]{1,32}$` (case-sensitive, no `/i`; validated via the shared `SESSION_ID_RE` in `lib/sessionId.ts`, used by both the peek and stream routes before the gc HTTP call). The `[a-z]{4}` alternation admits city-scoped prefixes (e.g. `fddc-*`) whose codes are derived per-deployment and can't be enumerated here; the lowercase-only, hyphen-and-alphanumeric body keeps the gate strict.
   - Agent alias: `^[a-z][a-z0-9_./-]{1,63}$`
 - **Spawn options**:
   - `shell: false` — non-negotiable. No `sh -c`, no command injection vectors.

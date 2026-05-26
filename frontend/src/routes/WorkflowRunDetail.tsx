@@ -1,4 +1,5 @@
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { SCOPE_REF_RE } from 'gas-city-dashboard-shared';
 import type {
   WorkflowRunDetail as WorkflowRunDetailData,
   WorkflowRunProgress,
@@ -134,8 +135,6 @@ function snapshotLabel(
     : `v${detail.snapshotVersion}`;
 }
 
-const SCOPE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
-
 type ScopeParseResult =
   | { ok: true; scope?: { scopeKind: WorkflowScopeKind; scopeRef: string } }
   | { ok: false; error: string };
@@ -151,8 +150,12 @@ function parseScope(search: URLSearchParams): ScopeParseResult {
   const rawRef = rawRefs[0];
   if (rawKind === undefined && rawRef === undefined) return { ok: true };
 
+  // Reject a half-specified scope (one of kind/ref present) rather than
+  // silently dropping it — the backend rejects the same input as a 400, so
+  // failing closed here keeps a truncated deep link from loading the WRONG
+  // (default city) run instead of erroring.
   if (rawKind === undefined || rawRef === undefined) {
-    return { ok: true };
+    return { ok: false, error: 'Invalid workflow scope query.' };
   }
 
   if (rawKind !== 'city' && rawKind !== 'rig') {
