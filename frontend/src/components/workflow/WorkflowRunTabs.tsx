@@ -10,6 +10,8 @@ interface WorkflowRunTabsProps {
 
 export function WorkflowRunTabs({ diff, selectedNode }: WorkflowRunTabsProps) {
   const [tab, setTab] = useState<'diff' | 'session'>('diff');
+  const sessionDisabled = selectedNode !== null && !nodeHasSession(selectedNode);
+  const activeTabId = `workflow-evidence-tab-${tab}`;
 
   useEffect(() => {
     if (selectedNode) setTab('session');
@@ -18,17 +20,33 @@ export function WorkflowRunTabs({ diff, selectedNode }: WorkflowRunTabsProps) {
   return (
     <section aria-label="Workflow evidence">
       <div className="flex items-baseline gap-2 text-label" role="tablist" aria-label="Workflow evidence views">
-        <TabButton active={tab === 'diff'} onClick={() => setTab('diff')}>
+        <TabButton
+          id="workflow-evidence-tab-diff"
+          controls="workflow-evidence-panel"
+          active={tab === 'diff'}
+          onClick={() => setTab('diff')}
+        >
           Diff
         </TabButton>
         <span aria-hidden className="text-fg-faint">
           ·
         </span>
-        <TabButton active={tab === 'session'} onClick={() => setTab('session')}>
+        <TabButton
+          id="workflow-evidence-tab-session"
+          controls="workflow-evidence-panel"
+          active={tab === 'session'}
+          disabled={sessionDisabled}
+          onClick={() => setTab('session')}
+        >
           Session
         </TabButton>
       </div>
-      <div className="pt-5">
+      <div
+        id="workflow-evidence-panel"
+        role="tabpanel"
+        aria-labelledby={activeTabId}
+        className="pt-5"
+      >
         <WorkflowNodeEvidencePanel tab={tab} diff={diff} selectedNode={selectedNode} />
       </div>
     </section>
@@ -36,27 +54,43 @@ export function WorkflowRunTabs({ diff, selectedNode }: WorkflowRunTabsProps) {
 }
 
 function TabButton({
+  id,
+  controls,
   active,
+  disabled = false,
   onClick,
   children,
 }: {
+  id: string;
+  controls: string;
   active: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
     <button
+      id={id}
       type="button"
       role="tab"
       aria-selected={active}
+      aria-controls={controls}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
       className={`focus-mark rounded-sm px-0.5 uppercase tracking-wider ${
-        active
-          ? 'text-fg font-semibold underline decoration-fg underline-offset-4'
-          : 'text-fg-muted hover:text-fg'
+        disabled
+          ? 'cursor-not-allowed text-fg-faint'
+          : active
+            ? 'text-fg font-semibold underline decoration-fg underline-offset-4'
+            : 'text-fg-muted hover:text-fg'
       }`}
       onClick={onClick}
     >
       {children}
     </button>
   );
+}
+
+function nodeHasSession(node: WorkflowDisplayNode): boolean {
+  return node.executionInstances.some((instance) => instance.sessionLink);
 }

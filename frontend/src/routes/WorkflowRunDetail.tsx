@@ -1,48 +1,45 @@
-import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import type { WorkflowDisplayNode, WorkflowScopeKind } from 'gas-city-dashboard-shared';
+import type {
+  WorkflowRunDetail as WorkflowRunDetailData,
+  WorkflowRunProgress,
+  WorkflowNodeStatus,
+  WorkflowScopeKind,
+} from 'gas-city-dashboard-shared';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { WorkflowRunDiagram } from '../components/workflow/WorkflowRunDiagram';
 import { WorkflowRunTabs } from '../components/workflow/WorkflowRunTabs';
+import { useWorkflowNodeSelection } from '../hooks/useWorkflowNodeSelection';
 import { useWorkflowRunDetail } from '../hooks/useWorkflowRunDetail';
 
 export function WorkflowRunDetailPage() {
   const { workflowId } = useParams<{ workflowId: string }>();
   const [search] = useSearchParams();
-  const scopeKind = parseScopeKind(search.get('scope_kind'));
-  const scopeRef = search.get('scope_ref') ?? undefined;
+  const parsedScope = parseScope(search);
+  const scope = parsedScope.ok ? parsedScope.scope : undefined;
+  const routeError = parsedScope.ok ? null : parsedScope.error;
   const initialNodeId = search.get('node');
+  const routeSelectionKey = [
+    workflowId ?? '',
+    scope?.scopeKind ?? '',
+    scope?.scopeRef ?? '',
+    initialNodeId ?? '',
+  ].join('\u0000');
   const { detail, diff, loading, error, refresh } = useWorkflowRunDetail(
-    workflowId,
-    scopeKind,
-    scopeRef,
+    routeError ? undefined : workflowId,
+    scope?.scopeKind,
+    scope?.scopeRef,
   );
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!detail || !initialNodeId) return;
-    if (detail.nodes.some((node) => node.id === initialNodeId)) {
-      setSelectedNodeId(initialNodeId);
-    }
-  }, [detail, initialNodeId]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedNodeId(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  const selectedNode = useMemo<WorkflowDisplayNode | null>(
-    () => detail?.nodes.find((node) => node.id === selectedNodeId) ?? null,
-    [detail, selectedNodeId],
+  const pageError = routeError ?? error;
+  const { selectedNodeId, selectedNode, toggleNode } = useWorkflowNodeSelection(
+    detail,
+    initialNodeId,
+    routeSelectionKey,
   );
 
   const synopsis = detail
-    ? `${detail.nodes.length} nodes, ${detail.edges.length} edges. Current working tree diff is shown for the run execution folder.`
-    : loading
+    ? `${detail.progress.visibleNodeCount} nodes, ${detail.progress.edgeCount} edges. ${summarizeNodeStatuses(detail.progress)}. Current working tree diff is shown for the run execution folder.`
+    : loading && !routeError
       ? 'Loading workflow run.'
       : 'Workflow run unavailable.';
 
@@ -59,37 +56,43 @@ export function WorkflowRunDetailPage() {
             >
               Workflows
             </Link>
-            {error && (
-              <span className="normal-case text-body text-accent" role="alert">
-                {error}
+            {pageError && detail && (
+              <span
+                className="normal-case text-body text-accent"
+                role="alert"
+              >
+                {pageError}
               </span>
             )}
             {detail && (
               <span className="text-label uppercase tracking-wider text-fg-faint tnum">
-                v{detail.snapshotVersion}
+                {snapshotLabel(detail)}
               </span>
             )}
-            <Button size="sm" onClick={() => void refresh()} disabled={loading}>
+            <Button size="sm" onClick={() => void refresh()} disabled={loading || Boolean(routeError)}>
               {loading ? 'Refreshing' : 'Refresh'}
             </Button>
           </>
         }
       />
 
-      {loading && !detail ? (
+      {loading && !routeError && !detail ? (
         <p className="text-body text-fg-muted italic">Loading workflow run.</p>
-      ) : error && !detail ? (
-        <p className="text-body text-accent" role="alert">{error}</p>
+      ) : pageError && !detail ? (
+        <p className="text-body text-accent" role="alert">{pageError}</p>
       ) : detail ? (
         <>
           <RunMetadata detail={detail} />
+          {detail.partial && (
+            <p className="mt-5 text-label uppercase tracking-wider text-warn" role="status">
+              Partial snapshot. Some workflow nodes or sessions may still be loading from the supervisor.
+            </p>
+          )}
           <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(22rem,1.05fr)]">
             <WorkflowRunDiagram
               detail={detail}
               selectedNodeId={selectedNodeId}
-              onToggleNode={(nodeId) =>
-                setSelectedNodeId((current) => (current === nodeId ? null : nodeId))
-              }
+              onToggleNode={toggleNode}
             />
             <WorkflowRunTabs diff={diff} selectedNode={selectedNode} />
           </div>
@@ -102,7 +105,7 @@ export function WorkflowRunDetailPage() {
 function RunMetadata({
   detail,
 }: {
-  detail: NonNullable<ReturnType<typeof useWorkflowRunDetail>['detail']>;
+  detail: WorkflowRunDetailData;
 }) {
   return (
     <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -123,6 +126,66 @@ function Meta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function parseScopeKind(value: string | null): WorkflowScopeKind | undefined {
-  return value === 'city' || value === 'rig' ? value : undefined;
+function snapshotLabel(
+  detail: WorkflowRunDetailData,
+): string {
+  return detail.snapshotEventSeq !== null && detail.snapshotEventSeq !== undefined
+    ? `v${detail.snapshotVersion} · seq ${detail.snapshotEventSeq}`
+    : `v${detail.snapshotVersion}`;
+}
+
+const SCOPE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
+
+type ScopeParseResult =
+  | { ok: true; scope?: { scopeKind: WorkflowScopeKind; scopeRef: string } }
+  | { ok: false; error: string };
+
+function parseScope(search: URLSearchParams): ScopeParseResult {
+  const rawKinds = search.getAll('scope_kind');
+  const rawRefs = search.getAll('scope_ref');
+  if (rawKinds.length > 1 || rawRefs.length > 1) {
+    return { ok: false, error: 'Invalid workflow scope query.' };
+  }
+
+  const rawKind = rawKinds[0];
+  const rawRef = rawRefs[0];
+  if (rawKind === undefined && rawRef === undefined) return { ok: true };
+
+  if (rawKind === undefined || rawRef === undefined) {
+    return { ok: true };
+  }
+
+  if (rawKind !== 'city' && rawKind !== 'rig') {
+    return { ok: false, error: 'Invalid workflow scope query.' };
+  }
+  if (!SCOPE_REF_RE.test(rawRef)) {
+    return { ok: false, error: 'Invalid workflow scope query.' };
+  }
+
+  return { ok: true, scope: { scopeKind: rawKind, scopeRef: rawRef } };
+}
+
+function summarizeNodeStatuses(progress: WorkflowRunProgress): string {
+  const parts = [
+    statusSummaryPart(progress, ['active', 'running'], 'running'),
+    statusSummaryPart(progress, ['completed', 'done'], 'done'),
+    statusSummaryPart(progress, 'ready', 'ready'),
+    statusSummaryPart(progress, 'blocked', 'blocked'),
+    statusSummaryPart(progress, 'failed', 'failed'),
+    statusSummaryPart(progress, 'skipped', 'skipped'),
+    statusSummaryPart(progress, 'pending', 'pending'),
+  ]
+    .filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(', ') : 'No node status yet';
+}
+
+function statusSummaryPart(
+  progress: WorkflowRunProgress,
+  statuses: WorkflowNodeStatus | readonly WorkflowNodeStatus[],
+  label: string,
+): string | null {
+  const keys: readonly WorkflowNodeStatus[] =
+    typeof statuses === 'string' ? [statuses] : statuses;
+  const count = keys.reduce((sum, status) => sum + (progress.statusCounts[status] ?? 0), 0);
+  return count > 0 ? `${count} ${label}` : null;
 }

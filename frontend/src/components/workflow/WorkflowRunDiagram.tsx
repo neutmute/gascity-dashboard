@@ -51,17 +51,5 @@ export function WorkflowRunDiagram({
 }
 
 function orderedNodes(detail: WorkflowRunDetail): WorkflowDisplayNode[] {
-  if (detail.lanes.length === 0) return detail.nodes;
-  const byId = new Map(detail.nodes.map((node) => [node.id, node]));
-  const ordered: WorkflowDisplayNode[] = [];
-  for (const lane of detail.lanes) {
-    for (const id of lane.nodeIds) {
-      const node = byId.get(id);
-      if (node && !ordered.includes(node)) ordered.push(node);
-    }
-  }
-  for (const node of detail.nodes) {
-    if (!ordered.includes(node)) ordered.push(node);
-  }
-  return ordered;
+  return detail.nodes.filter((node) => node.visibleInGraph !== false);
 }

@@ -1,14 +1,9 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type {
   WorkflowChangedFile,
   WorkflowChangedFileKind,
   WorkflowDiffResponse,
 } from 'gas-city-dashboard-shared';
-
-const execFileAsync = promisify(execFile);
-const GIT_TIMEOUT_MS = 5_000;
-const MAX_DIFF_BYTES = 512 * 1024;
+import { execWorkflowGit } from '../exec.js';
 
 export async function readWorkflowGitDiff(
   executionPath: string | null,
@@ -19,7 +14,7 @@ export async function readWorkflowGitDiff(
 
   let rootPath: string;
   try {
-    const result = await runGit(executionPath, ['rev-parse', '--show-toplevel']);
+    const result = await runWorkflowGit(executionPath, 'root');
     rootPath = result.stdout.trim();
     if (rootPath.length === 0) return emptyDiff('not_git', null);
   } catch {
@@ -28,9 +23,9 @@ export async function readWorkflowGitDiff(
 
   try {
     const [statusResult, unstagedResult, stagedResult] = await Promise.all([
-      runGit(executionPath, ['status', '--porcelain=v1']),
-      runGit(executionPath, ['diff', '--no-ext-diff', '--no-color'], true),
-      runGit(executionPath, ['diff', '--cached', '--no-ext-diff', '--no-color'], true),
+      runWorkflowGit(executionPath, 'status'),
+      runWorkflowGit(executionPath, 'diff'),
+      runWorkflowGit(executionPath, 'diff-cached'),
     ]);
     const status = statusResult.stdout
       .split('\n')
@@ -41,8 +36,8 @@ export async function readWorkflowGitDiff(
       rootPath,
       status,
       changedFiles: status.map(parseStatusLine).filter(isChangedFile),
-      unstagedDiff: cap(unstagedResult.stdout),
-      stagedDiff: cap(stagedResult.stdout),
+      unstagedDiff: unstagedResult.stdout,
+      stagedDiff: stagedResult.stdout,
       truncated:
         statusResult.truncated ||
         unstagedResult.truncated ||
@@ -71,43 +66,17 @@ function emptyDiff(
   };
 }
 
-async function runGit(
+async function runWorkflowGit(
   cwd: string,
-  args: string[],
-  allowLarge = false,
+  view: Parameters<typeof execWorkflowGit>[1],
 ): Promise<{ stdout: string; stderr: string; truncated: boolean }> {
-  try {
-    const result = await execFileAsync('git', ['-C', cwd, ...args], {
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: allowLarge ? MAX_DIFF_BYTES : 128 * 1024,
-      env: {
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        HOME: process.env.HOME ?? '/tmp',
-        LANG: 'C.UTF-8',
-        NO_COLOR: '1',
-      },
-    });
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      truncated: false,
-    };
-  } catch (err) {
-    const maybe = err as {
-      stdout?: string;
-      stderr?: string;
-      code?: string;
-      killed?: boolean;
-    };
-    if (allowLarge && typeof maybe.stdout === 'string' && maybe.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-      return {
-        stdout: maybe.stdout,
-        stderr: maybe.stderr ?? '',
-        truncated: true,
-      };
-    }
-    throw err;
+  const result = await execWorkflowGit(cwd, view);
+  const cappedDiff =
+    result.truncated && (view === 'diff' || view === 'diff-cached');
+  if (result.exitCode !== 0 && !cappedDiff) {
+    throw new Error(`git ${view} failed`);
   }
+  return result;
 }
 
 function parseStatusLine(line: string): WorkflowChangedFile | null {
@@ -164,10 +133,6 @@ function classifyChangedFile(filePath: string): WorkflowChangedFileKind {
     return 'code';
   }
   return 'other';
-}
-
-function cap(value: string): string {
-  return value.length > MAX_DIFF_BYTES ? value.slice(0, MAX_DIFF_BYTES) : value;
 }
 
 function isChangedFile(value: WorkflowChangedFile | null): value is WorkflowChangedFile {

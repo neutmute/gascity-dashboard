@@ -1,5 +1,9 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import type { DashboardSnapshot, SourceStatus } from 'gas-city-dashboard-shared';
+import { api } from '../api/client';
+import { invalidateKey } from '../api/cache';
+import { WorkflowsPage } from './Workflows';
 import { MemoryRouter } from 'react-router-dom';
 
 // gascity-dashboard-bqn: regression coverage for the live-updates wiring
@@ -43,11 +47,6 @@ vi.mock('../hooks/useGcEvents', () => ({
     return 'open' as const;
   }),
 }));
-
-import { api } from '../api/client';
-import { invalidateKey } from '../api/cache';
-import { WorkflowsPage } from './Workflows';
-import type { DashboardSnapshot, SourceStatus } from 'gas-city-dashboard-shared';
 
 const mockSnapshot = api.snapshot as Mock;
 const mockSnapshotRefresh = api.snapshotRefresh as Mock;

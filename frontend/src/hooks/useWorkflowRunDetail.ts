@@ -24,11 +24,11 @@ export function useWorkflowRunDetail(
   );
 
   return {
-    detail: data?.detail ?? null,
-    diff: data?.diff ?? null,
-    loading,
-    error,
-    refresh,
+    detail: workflowId ? data?.detail ?? null : null,
+    diff: workflowId ? data?.diff ?? null : null,
+    loading: workflowId ? loading : false,
+    error: workflowId ? error : null,
+    refresh: workflowId ? refresh : noopRefresh,
   };
 }
 
@@ -54,6 +54,8 @@ async function loadWorkflowRunDetail(
   ]);
   return { detail, diff };
 }
+
+async function noopRefresh(): Promise<void> {}
 
 function workflowRunDetailCacheKey(
   workflowId: string | undefined,

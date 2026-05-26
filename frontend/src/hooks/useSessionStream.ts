@@ -6,7 +6,10 @@ interface SessionStreamState {
   result: TranscriptResult | null;
   loading: boolean;
   error: string | null;
+  streamState: SessionStreamConnState;
 }
+
+export type SessionStreamConnState = 'idle' | 'connecting' | 'open' | 'closed';
 
 export function useSessionStream(
   sessionId: string | null,
@@ -16,26 +19,43 @@ export function useSessionStream(
     result: null,
     loading: false,
     error: null,
+    streamState: 'idle',
   });
 
   useEffect(() => {
     if (!sessionId) {
-      setState({ result: null, loading: false, error: null });
+      setState({ result: null, loading: false, error: null, streamState: 'idle' });
       return;
     }
     let cancelled = false;
     let source: EventSource | null = null;
-    setState({ result: null, loading: true, error: null });
+    const canStream = stream && typeof EventSource !== 'undefined';
+    setState({
+      result: null,
+      loading: true,
+      error: null,
+      streamState: canStream ? 'connecting' : 'idle',
+    });
 
     api.peekSession(sessionId).then(
       (result) => {
         if (cancelled) return;
-        setState({ result, loading: false, error: null });
-        if (stream && typeof EventSource !== 'undefined') {
+        setState({
+          result,
+          loading: false,
+          error: null,
+          streamState: canStream ? 'connecting' : 'idle',
+        });
+        if (canStream) {
           source = new EventSource(api.sessionStreamUrl(sessionId), {
             withCredentials: true,
           });
+          source.onopen = () => {
+            if (cancelled) return;
+            setState((current) => ({ ...current, streamState: 'open' }));
+          };
           const onTurn = (event: MessageEvent<string>) => {
+            if (cancelled) return;
             const turn = parseStreamTurn(event.data);
             if (!turn) return;
             setState((current) => {
@@ -49,13 +69,17 @@ export function useSessionStream(
                 },
                 loading: false,
                 error: null,
+                streamState: 'open',
               };
             });
           };
           source.onmessage = onTurn;
           source.addEventListener('turn', onTurn);
           source.onerror = () => {
-            source?.close();
+            if (cancelled) return;
+            const streamState =
+              source?.readyState === EventSource.CLOSED ? 'closed' : 'connecting';
+            setState((current) => ({ ...current, streamState }));
           };
         }
       },
@@ -65,6 +89,7 @@ export function useSessionStream(
             result: null,
             loading: false,
             error: err instanceof Error ? err.message : 'Failed to load session.',
+            streamState: 'idle',
           });
         }
       },

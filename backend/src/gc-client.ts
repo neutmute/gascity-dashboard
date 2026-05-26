@@ -4,6 +4,7 @@ import type {
   GcBeadList,
   GcMailList,
   GcEventList,
+  GcFormulaDetail,
   GcWorkflowSnapshot,
   TranscriptTurn,
   WorkflowScopeKind,
@@ -208,7 +209,7 @@ export class GcClient {
   async getWorkflow(
     workflowId: string,
     signal?: AbortSignal,
-    scope?: { scopeKind?: WorkflowScopeKind; scopeRef?: string },
+    scope?: { scopeKind: WorkflowScopeKind; scopeRef: string },
   ): Promise<GcWorkflowSnapshot> {
     const search = new URLSearchParams();
     if (scope?.scopeKind) search.set('scope_kind', scope.scopeKind);
@@ -216,6 +217,23 @@ export class GcClient {
     const qs = search.toString();
     return this.getJson<GcWorkflowSnapshot>(
       this.cityPath(`/workflow/${encodeURIComponent(workflowId)}${qs.length > 0 ? `?${qs}` : ''}`),
+      signal,
+    );
+  }
+
+  async getFormulaDetail(
+    formulaName: string,
+    scope: { scopeKind: WorkflowScopeKind; scopeRef: string },
+    target: string,
+    signal?: AbortSignal,
+  ): Promise<GcFormulaDetail> {
+    const search = new URLSearchParams({
+      scope_kind: scope.scopeKind,
+      scope_ref: scope.scopeRef,
+      target,
+    });
+    return this.getJson<GcFormulaDetail>(
+      this.cityPath(`/formulas/${encodeURIComponent(formulaName)}?${search.toString()}`),
       signal,
     );
   }

@@ -1,6 +1,11 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import type { MaintainerTriage } from 'gas-city-dashboard-shared';
+import { api } from '../api/client';
+import { invalidateKey } from '../api/cache';
+import { ViewingAsProvider } from '../contexts/ViewingAsContext';
+import { MaintainerPage } from './Maintainer';
 
 // gascity-dashboard-ppe: end-to-end pin of the dual-intent dispatch
 // contract on MaintainerPage. The bar-level unit tests in
@@ -36,12 +41,6 @@ vi.mock('../api/client', () => ({
   },
   ApiClientError: class extends Error {},
 }));
-
-import { api } from '../api/client';
-import { invalidateKey } from '../api/cache';
-import { MaintainerPage } from './Maintainer';
-import { ViewingAsProvider } from '../contexts/ViewingAsContext';
-import type { MaintainerTriage } from 'gas-city-dashboard-shared';
 
 const mockTriage = api.maintainerTriage as Mock;
 const mockSling = api.maintainerSling as Mock;

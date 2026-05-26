@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
+import { SESSION_ID_RE } from '../lib/sessionId.js';
 import { lastEventIdFor, proxySupervisorSse } from './sse-proxy.js';
 
-const SESSION_ID_RE = /^(gc|td|th)-[a-z0-9-]{1,32}$/i;
 const DEFAULT_HEARTBEAT_MS = 15_000;
 
 export interface SessionStreamRouterOptions {

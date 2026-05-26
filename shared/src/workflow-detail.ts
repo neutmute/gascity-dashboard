@@ -63,6 +63,10 @@ export interface WorkflowDisplayNode {
   currentBeadId?: string;
   scopeRef?: string;
   loopControlNodeId?: string;
+  /** False when this semantic node is transcript history only and should not render in the left graph. */
+  visibleInGraph?: boolean;
+  /** True when all execution instances are from older loop iterations or stale expansion output. */
+  historicalOnly?: boolean;
   visibleIteration?: number;
   iterationCount?: number;
   hasHistoricalIterations?: boolean;
@@ -86,6 +90,21 @@ export interface WorkflowDisplayLane {
   nodeIds: string[];
 }
 
+export interface WorkflowRunProgress {
+  snapshotVersion: number;
+  snapshotEventSeq?: number | null;
+  partial: boolean;
+  totalNodeCount: number;
+  visibleNodeCount: number;
+  edgeCount: number;
+  executionInstanceCount: number;
+  sessionLinkCount: number;
+  streamableSessionCount: number;
+  streamableSessionIds: string[];
+  statusCounts: Partial<Record<WorkflowNodeStatus, number>>;
+  allStatusCounts: Partial<Record<WorkflowNodeStatus, number>>;
+}
+
 export interface WorkflowRunDetail {
   workflowId: string;
   rootBeadId: string;
@@ -99,6 +118,7 @@ export interface WorkflowRunDetail {
   snapshotVersion: number;
   snapshotEventSeq?: number | null;
   partial: boolean;
+  progress: WorkflowRunProgress;
   nodes: WorkflowDisplayNode[];
   edges: WorkflowDisplayEdge[];
   lanes: WorkflowDisplayLane[];

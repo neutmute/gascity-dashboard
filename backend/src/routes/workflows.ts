@@ -1,10 +1,17 @@
 import { Router } from 'express';
 import type { Response } from 'express';
-import type { WorkflowScopeKind } from 'gas-city-dashboard-shared';
+import type {
+  GcSession,
+  GcFormulaDetail,
+  GcWorkflowSnapshot,
+  WorkflowScopeKind,
+} from 'gas-city-dashboard-shared';
 import { GcClient } from '../gc-client.js';
 import { BEAD_ID_RE } from '../lib/beadId.js';
+import { meta, nonEmpty } from '../workflows/bead-fields.js';
 import { enrichWorkflowRun, UnsupportedWorkflowError } from '../workflows/enrich.js';
 import { readWorkflowGitDiff } from '../workflows/diff.js';
+import { mergeWorkflowRuntimeState } from '../workflows/runtime-state.js';
 
 const SCOPE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
 
@@ -25,9 +32,12 @@ export function workflowsRouter(
       return;
     }
     try {
-      const raw = await gc.getWorkflow(parsed.workflowId, undefined, parsed.scope);
+      const raw = await getWorkflowWithRuntimeState(
+        gc,
+        parsed.workflowId,
+        parsed.scope ?? defaultWorkflowScope(gc.cityName),
+      );
       const detail = enrichWorkflowRun(raw, {
-        fallbackScopeRef: gc.cityName,
         rigRoot: opts.rigRoot,
       });
       const diff = await readWorkflowGitDiff(detail.executionPath);
@@ -44,12 +54,23 @@ export function workflowsRouter(
       return;
     }
     try {
-      const raw = await gc.getWorkflow(parsed.workflowId, undefined, parsed.scope);
+      const raw = await getWorkflowWithRuntimeState(
+        gc,
+        parsed.workflowId,
+        parsed.scope ?? defaultWorkflowScope(gc.cityName),
+      );
+      const { sessions, partial } = await getWorkflowSessions(gc);
+      const formulaDetail = await getWorkflowFormulaDetail(
+        gc,
+        raw,
+        parsed.scope ?? defaultWorkflowScope(gc.cityName),
+      );
       const detail = enrichWorkflowRun(raw, {
-        fallbackScopeRef: gc.cityName,
         rigRoot: opts.rigRoot,
+        sessions,
+        formulaDetail,
       });
-      res.json(detail);
+      res.json(partial ? { ...detail, partial: true } : detail);
     } catch (err) {
       writeWorkflowError(res, err, 'failed to fetch workflow');
     }
@@ -58,11 +79,60 @@ export function workflowsRouter(
   return router;
 }
 
+async function getWorkflowFormulaDetail(
+  gc: GcClient,
+  raw: GcWorkflowSnapshot,
+  scope: { scopeKind: WorkflowScopeKind; scopeRef: string },
+): Promise<GcFormulaDetail | null> {
+  const root = raw.beads?.find((bead) => nonEmpty(bead.id) === raw.root_bead_id);
+  const formula = root ? meta(root, 'gc.formula') : undefined;
+  const target = root
+    ? meta(root, 'gc.run_target') ?? meta(root, 'gc.routed_to') ?? nonEmpty(root.assignee)
+    : undefined;
+  if (!formula || !target) return null;
+  try {
+    return await gc.getFormulaDetail(formula, scope, target);
+  } catch (err) {
+    console.warn(`[workflows] failed to fetch formula detail for ${formula}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+async function getWorkflowSessions(
+  gc: GcClient,
+): Promise<{ sessions: readonly GcSession[]; partial: boolean }> {
+  try {
+    const list = await gc.listSessions();
+    return { sessions: Array.isArray(list.items) ? list.items : [], partial: false };
+  } catch (err) {
+    console.warn(`[workflows] failed to fetch sessions for workflow detail: ${(err as Error).message}`);
+    return { sessions: [], partial: true };
+  }
+}
+
+async function getWorkflowWithRuntimeState(
+  gc: GcClient,
+  workflowId: string,
+  scope: { scopeKind: WorkflowScopeKind; scopeRef: string },
+): Promise<GcWorkflowSnapshot> {
+  const raw = await gc.getWorkflow(workflowId, undefined, scope);
+  const runtime = await Promise.all(workflowBeadIds(raw).map((id) => gc.getBead(id)));
+  return mergeWorkflowRuntimeState(raw, runtime);
+}
+
+function workflowBeadIds(raw: GcWorkflowSnapshot): string[] {
+  const ids = new Set<string>();
+  for (const bead of raw.beads ?? []) {
+    if (BEAD_ID_RE.test(bead.id)) ids.add(bead.id);
+  }
+  return [...ids];
+}
+
 type ParseResult =
   | {
       ok: true;
       workflowId: string;
-      scope?: { scopeKind?: WorkflowScopeKind; scopeRef?: string };
+      scope?: { scopeKind: WorkflowScopeKind; scopeRef: string };
     }
   | { ok: false; error: string };
 
@@ -73,14 +143,19 @@ function parseWorkflowRequest(
   if (!BEAD_ID_RE.test(workflowId)) {
     return { ok: false, error: 'invalid workflow id' };
   }
-  const rawScopeKind = typeof query.scope_kind === 'string'
-    ? query.scope_kind
-    : undefined;
-  const rawScopeRef = typeof query.scope_ref === 'string'
-    ? query.scope_ref
-    : undefined;
+  if (query.scope_kind !== undefined && typeof query.scope_kind !== 'string') {
+    return { ok: false, error: 'invalid scope kind' };
+  }
+  if (query.scope_ref !== undefined && typeof query.scope_ref !== 'string') {
+    return { ok: false, error: 'invalid scope ref' };
+  }
+  const rawScopeKind = query.scope_kind;
+  const rawScopeRef = query.scope_ref;
   if (rawScopeKind !== undefined && rawScopeKind !== 'city' && rawScopeKind !== 'rig') {
     return { ok: false, error: 'invalid scope kind' };
+  }
+  if ((rawScopeKind === undefined) !== (rawScopeRef === undefined)) {
+    return { ok: false, error: 'scope kind and scope ref are required together' };
   }
   const scopeKind: WorkflowScopeKind | undefined =
     rawScopeKind === 'city' || rawScopeKind === 'rig' ? rawScopeKind : undefined;
@@ -88,13 +163,17 @@ function parseWorkflowRequest(
     return { ok: false, error: 'invalid scope ref' };
   }
   const scope =
-    rawScopeKind !== undefined || rawScopeRef !== undefined
+    scopeKind !== undefined && rawScopeRef !== undefined
       ? {
           scopeKind,
           scopeRef: rawScopeRef,
         }
       : undefined;
   return { ok: true, workflowId, scope };
+}
+
+function defaultWorkflowScope(cityName: string): { scopeKind: WorkflowScopeKind; scopeRef: string } {
+  return { scopeKind: 'city', scopeRef: cityName };
 }
 
 function writeWorkflowError(

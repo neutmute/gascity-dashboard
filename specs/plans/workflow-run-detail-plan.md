@@ -1,6 +1,8 @@
 # Workflow Run Detail Plan
 
-Status: proposed
+Status: first implementation slice shipped on `csells/workflows-formula-runs`; post-audit alignment passes added same-origin SSE docs, OpenAPI-shaped graph.v2 enrichment fixtures, failed-attempt transcript preservation, scoped summary-to-detail links, complete-scope-pair query handling, malformed scope-query rejection on both backend and frontend routes, workflow route validation/redaction coverage, distinct first-pass construct shape classes, status-summary header copy, latest-iteration loop visibility, historical-only transcript access, partial snapshot surfacing, staged/unstaged diff sections, a deterministic detail-route browser harness, focused backend workflow presentation modules, runtime `step_ref` suffix stripping for supervisor execution refs, strict positive-integer parsing for runtime attempt/iteration metadata, `gc.scope_ref` loop context and `gc.control_for` badge targeting for current `.run.N` paths, and red/green coverage that accepts only current supervisor workflow snapshot fields for graph.v2 roots, step refs, construct kinds, and session links.
+
+Latest alignment: the backend now builds a dedicated `RunningFormulaRun` projection before emitting browser data. The UI consumes `WorkflowRunDetail.progress` rather than recomputing aggregate node status from the raw node list. The grouping adapter now matches the Gasworks presentation rules that a check-loop control bead and its generated execution bead collapse into one display node when runtime metadata links them with `gc.logical_bead_id`, and that an `in_progress`/`active` bead is only displayed as running when it has a non-empty assignee. When a run root exposes `gc.formula` and a run target, the detail route fetches the supervisor formula detail/preview response and uses that compiled formula step order for the vertical graph; it still does not parse formula files locally. A live sample-city browser/API harness verifies the two planning runs present in `formula-detail-demo-city` and still fails explicitly because the expected todo and tic-tac-toe implementation runs are not present yet.
 Mockup: [assets/workflow-run-detail-graphv2-adopt-pr.svg](assets/workflow-run-detail-graphv2-adopt-pr.svg)
 
 ## Goal
@@ -39,8 +41,22 @@ Out of scope for this plan:
 Terminology rule:
 
 - The operator-facing UI must say `check loop`, `review loop`, or the formula's own step title.
-- Do not expose the internal implementation name `ralph` in UI copy, route labels, mockups, or operator-facing docs.
-- Backend enrichment may map internal `ralph` metadata to the external `check-loop` construct kind.
+- Do not expose implementation-private check-loop codenames in UI copy, route labels, mockups, or operator-facing docs.
+- Backend enrichment may map internal check-loop metadata to the external `check-loop` construct kind.
+
+Formula data-source rule:
+
+- The dashboard must not read or parse formula TOML files for run details.
+- Runtime detail pages consume supervisor API data: the workflow snapshot first, then any compiled formula detail/preview data exposed by the supervisor if the snapshot does not carry enough display metadata.
+- Gas City already parses formulas into `formula.Formula`, compiles them into `formula.Recipe`, and exposes recipe-derived order and preview data through its API. The stable source order lives in `Recipe.Steps`, surfaced through supervisor response data, not in dashboard-owned file parsing.
+
+Running formula projection rule:
+
+- The backend owns a single aggregate data structure for an in-flight formula run: `RunningFormulaRun` in `backend/src/workflows/formula-run.ts`.
+- `RunningFormulaRun` combines the supervisor workflow snapshot, runtime bead overlays, session summaries, semantic node groups, execution instances, hidden-control badges, display edges, lanes, execution folder, and progress summary.
+- React renders `WorkflowRunDetail`, which is a browser-safe projection of `RunningFormulaRun`. It should not infer run progress by walking raw beads, raw sessions, or ad hoc formula metadata.
+- `WorkflowRunDetail.progress` is the browser contract for aggregate progress: snapshot version/event cursor, partial flag, visible/all node counts, edge count, execution-instance count, session-link count, streamable session count, streamable session ids, visible status counts, and all-node status counts.
+- If the dashboard later needs richer event history, add it to `RunningFormulaRun` first, then expose only the browser-safe projection fields the UI needs.
 
 ## Repo Comparison
 
@@ -49,28 +65,61 @@ Terminology rule:
 Relevant files:
 
 - `frontend/src/routes/Workflows.tsx`
+- `frontend/src/routes/WorkflowRunDetail.tsx`
 - `frontend/src/components/workflow/WorkflowMap.tsx`
 - `frontend/src/components/workflow/LaneCard.tsx`
+- `frontend/src/components/workflow/WorkflowRunDiagram.tsx`
+- `frontend/src/components/workflow/WorkflowRunNode.tsx`
+- `frontend/src/components/workflow/WorkflowRunTabs.tsx`
+- `frontend/src/components/workflow/WorkflowDiffPanel.tsx`
+- `frontend/src/components/workflow/WorkflowNodeSessionPanel.tsx`
+- `frontend/src/hooks/useWorkflowNodeSelection.ts`
+- `frontend/src/hooks/useWorkflowRunDetail.ts`
+- `frontend/src/hooks/useSessionStream.ts`
 - `backend/src/snapshot/collectors/workflows.ts`
+- `backend/src/routes/workflows.ts`
+- `backend/src/routes/session-stream.ts`
+- `backend/src/routes/sse-proxy.ts`
+- `backend/src/workflows/bead-fields.ts`
+- `backend/src/workflows/formula-run.ts`
+- `backend/src/workflows/edges.ts`
+- `backend/src/workflows/execution-path.ts`
+- `backend/src/workflows/enrich.ts`
+- `backend/src/workflows/node-shape.ts`
+- `backend/src/workflows/session-link.ts`
+- `backend/src/workflows/status.ts`
+- `backend/src/workflows/diff.ts`
 - `shared/src/snapshot/types.ts`
+- `shared/src/workflow-detail.ts`
+- `shared/src/workflow-snapshot.ts`
 - `backend/src/gc-client.ts`
 - `backend/src/routes/sessions.ts`
 - `backend/src/routes/events.ts`
+- `backend/test/workflow-enrich.test.ts`
+- `frontend/src/test/fixtures/workflow-run-detail.json`
+- `scripts/snap-workflow-detail.mjs`
+- `scripts/e2e-sample-workflow-runs.mjs`
 
-Current behavior:
+Current behavior after this branch:
 
-- `/workflows` reads `/api/snapshot`.
+- `/workflows` reads `/api/snapshot` through `useCachedData`, with manual and SSE-driven refreshes routed through `/api/snapshot/refresh`.
 - The backend builds a `WorkflowSummary` from `GcClient.listBeads({ limit: 1000 })`.
-- The UI renders lane summaries only: title, formula, phase, active assignees, status counts, and a five-step stage strip.
-- `WorkflowLane.id` is the root workflow id, but rows are not links and no detail route exists.
-- Existing transcript support is session-centric:
+- `buildWorkflowSummary()` derives lane scope from workflow root metadata, and `LaneCard` links each lane to `/workflows/:workflowId` with the supervisor-required scope query params when available.
+- `/api/workflows/:workflowId` calls the gc supervisor workflow endpoint and enriches graph.v2 physical beads/deps into dashboard `WorkflowRunDetail`.
+- `enrichWorkflowRun()` now builds a `RunningFormulaRun` projection and returns a browser-safe `WorkflowRunDetail`; the detail page uses `detail.progress` for aggregate run status instead of deriving progress in React.
+- `/api/workflows/:workflowId/diff` resolves the execution folder from supervisor-owned run data and returns current git working-tree state when the folder is a git work tree.
+- `/api/sessions/:id/stream` is a same-origin SSE proxy for active selected-node sessions.
+- Transcript support remains session-centric and is reused for workflow nodes:
   - `GcClient.fetchTranscript(id)` calls `/v0/city/{city}/session/{id}/transcript`.
   - `POST /api/sessions/:id/peek` sanitizes and caps transcript output.
-- Existing SSE support proxies supervisor city events through `/api/events/stream`, but there is not yet a session stream proxy.
+- `SessionPeekContent` remains the canonical transcript renderer.
+- City events and session streams now share the same backend SSE proxy helper.
+- `scripts/snap-workflow-detail.mjs` uses deterministic summary, workflow detail, diff, transcript, and stream fixtures to click from `/workflows` into `/workflows/:workflowId` and snapshot the detail route without a live supervisor run.
+- `scripts/e2e-sample-workflow-runs.mjs` uses the running dashboard and live supervisor-backed APIs to require todo and tic-tac-toe planning and implementation runs. It verifies present runs are clickable from `/workflows`, render detail pages, expose backend-owned progress, support zero/one graph selection, show diff evidence, and handle session/no-session state.
 
 Takeaway:
 
-This repo has the right entry point and design language, but the workflow data shape is summary-only. It needs a run-detail API shape before the requested detail page can be real.
+This repo now has the first real run-detail slice plus testable route-level visual coverage. The remaining work is no longer "create the route"; it is to harden the local TypeScript presentation enrichment with captured supervisor data and keep the workflow-specific code within the dashboard's existing shared-type, route-factory, cached-data, and typographic UI patterns.
 
 ### `~/Code/gastownhall/demo-dash`
 
@@ -89,6 +138,11 @@ Current behavior:
 Takeaway:
 
 `demo-dash` is useful history for how workflow lanes got here, but it does not solve node-level run detail, construct-specific shapes, diff viewing, or session drill-in.
+
+Updated contrast after this branch:
+
+- The branch has moved beyond `demo-dash`; `demo-dash` remains a reference for summary-lane derivation only.
+- Do not copy more from `demo-dash` for run details. Its useful patterns are already present here through `SourceCache`, `WorkflowSummary`, phase mapping, and lane rendering.
 
 ### `~/Code/gascity/gasworks-gui`
 
@@ -136,17 +190,245 @@ Takeaway:
 
 This is the best implementation reference. The right move is to reuse the same conceptual contract (`WorkflowSnapshot` plus `display_graph`) and adapt the rendering to the dashboard's quieter vertical layout. The dashboard should not own all workflow grouping, retry aggregation, and scope collapsing logic if Gasworks already has it in one place.
 
+Updated contrast after this branch:
+
+- The branch borrows the right concepts from Gasworks: semantic display nodes, execution instances, control-badge collapse, session links, and display edges.
+- The branch intentionally does not copy Gasworks' interaction model: no broker watch runtime, no zoom/pan graph canvas, and no dense DAG layout. This matches the dashboard's page-level, typographic design language.
+- The main gap is fidelity. Gasworks has a dedicated Rust presentation layer with logical nodes, logical edges, scope groups, and `display_graph`; this branch currently has a local TypeScript approximation in `backend/src/workflows/enrich.ts`.
+- Until Gas City or a shared package owns presentation enrichment, the dashboard must protect that approximation with real graph.v2 fixture tests so it does not drift from Gasworks semantics.
+
+## Code Pattern Deep Dive: Branch Alignment
+
+This audit compares the codebase's established patterns with the workflow-run detail code currently on this branch.
+
+### Strong Existing Patterns
+
+1. Shared wire contracts live in the `shared` workspace.
+   - `shared/src/index.ts` owns gc supervisor-facing `Gc*` shapes.
+   - Domain-specific browser wire shapes can live in smaller shared modules and be re-exported from `index.ts`.
+   - Consumers import types from `gas-city-dashboard-shared`, not from backend/frontend internals.
+
+2. Supervisor reads go through `GcClient`.
+   - The client owns city URL construction, JSON fetches, default timeouts, and URL-keyed single-flight coalescing.
+   - Route handlers should not fetch supervisor URLs directly unless they are intentionally proxying a stream.
+   - Error messages thrown by `GcClient` are topology-safe.
+
+3. Backend route files are small router factories.
+   - Routes validate params before upstream calls.
+   - Timeout errors map to `504` with `kind: "upstream-timeout"`.
+   - Unknown upstream failures log the raw message server-side and return a generic browser-safe message with `details.name`.
+   - Write routes use DI for exec helpers; read routes use injected clients or narrow options.
+   - Tests exercise both success and failure through real Express apps plus narrow fake upstreams, including "no upstream call happened" assertions for validation failures.
+
+4. Expensive or shared dashboard summaries use cache layers.
+   - `SourceCache` owns TTL, stale-while-error, fixture fallback, and single-flight for aggregate snapshot sources.
+   - Page-level frontend data uses `useCachedData` for cache-warm initial paint and explicit refresh.
+   - Detail reads can be direct when they are route-specific, but they should still use the same hook/API shape on the frontend.
+
+5. The frontend is built from route pages plus quiet primitives.
+   - Route pages start with `PageHeader`.
+   - Manual refresh controls live in the header meta slot.
+   - Buttons are typographic controls from `Button.tsx`.
+   - Lists and panels are separated by whitespace, type, and hairlines rather than structural cards.
+   - Selection state must be accessible through `aria-*`, not color alone.
+
+6. Session transcript rendering is centralized.
+   - The backend sanitizes transcript text.
+   - `SessionPeekContent` is the canonical React renderer for turns.
+   - New session surfaces should reuse that renderer until a richer structured transcript renderer exists.
+
+7. Tests favor integration at the route and component boundary.
+   - Backend tests use `node:test`, `assert`, fake HTTP supervisors, and real Express apps.
+   - Frontend tests use Vitest, Testing Library, fake `fetch`, fake `EventSource`, and real router components.
+   - Console warnings and React Router future warnings are treated as test failures.
+
+### Where The Branch Now Matches
+
+| Area | Existing repo pattern | Branch fit |
+| --- | --- | --- |
+| Supervisor client | `GcClient` owns supervisor URL construction and typed reads | `getWorkflow()` was added to `GcClient`; workflow routes do not hand-build supervisor fetches. |
+| Shared contracts | Browser/backend wire shapes are exported from `gas-city-dashboard-shared` | Dashboard detail/diff shapes live in `shared/src/workflow-detail.ts`; raw supervisor workflow snapshot types live in `shared/src/workflow-snapshot.ts`; both are re-exported from the package root and now mirror the current OpenAPI `WorkflowSnapshotResponse`/`WorkflowBeadResponse`/`WorkflowDepResponse` fields instead of guessed legacy/camel variants. |
+| Running formula projection | Backend aggregates domain state before React renders it | `backend/src/workflows/formula-run.ts` owns the `RunningFormulaRun` projection. It builds nodes, edges, lanes, session context, execution path, and `WorkflowRunDetail.progress`; `WorkflowRunDetailPage` renders that progress contract instead of deriving aggregate status from `detail.nodes`. |
+| Summary-to-detail scope | Summary links preserve supervisor lookup context | `buildWorkflowSummary()` carries `gc.scope_kind`, `gc.scope_ref`, and `gc.root_store_ref` from workflow root metadata onto each lane, and `LaneCard` includes those as detail-route query params. |
+| Route structure | Express router factories with early validation and sanitized errors | `workflowsRouter()` follows the factory pattern, validates workflow id/scope, defaults unscoped direct detail URLs to the configured dashboard city scope, handles timeout/404/unsupported/upstream paths, logs raw details server-side only, and now has fake-supervisor tests for validation, default scope, and redaction paths. |
+| Stream proxying | Same-origin SSE routes keep CSP and browser behavior simple | `eventsRouter` and `sessionStreamRouter` now share `routes/sse-proxy.ts`, reducing duplicated streaming/backpressure code. |
+| Validator reuse | Route validators that cross surfaces live under `backend/src/lib` | `SESSION_ID_RE` now lives in `backend/src/lib/sessionId.ts` so transcript peek and session stream routes share the same session-id boundary. |
+| Subprocess boundaries | Every privileged command has a named wrapper in `backend/src/exec.ts` with clean env, timeout, output cap, and concurrency limits | Workflow run diffs now call `execWorkflowGit()` instead of invoking `child_process` directly from the diff reader. |
+| Execution paths | Filesystem path derivation stays server-side and directly tested | `resolveWorkflowExecutionPath()` owns cwd/work-dir/rig-root precedence, trims blanks, and returns `null` when no real execution path exists so the browser never supplies a local path. |
+| Display edges | Edge projection is separate from node ordering | `buildWorkflowDisplayEdges()` owns supervisor logical-edge preference, physical-dep fallback, visible-node filtering, duplicate/self-edge filtering, and externalized ids without reordering nodes. |
+| Frontend data | Route-specific hooks call `api` methods and expose loading/error/refresh | `useWorkflowRunDetail()` uses `useCachedData` and returns `{ detail, diff, loading, error, refresh }`. |
+| Page shell | Route pages use `PageHeader` and a meta refresh control | `WorkflowRunDetailPage` matches the page shell used by `WorkflowsPage`, `AgentsPage`, and `HealthPage`. |
+| Transcript UI | Reuse sanitized peek transcript renderer | Workflow node sessions use `SessionPeekContent`; streaming appends turns into the same `TranscriptResult` shape and surfaces live/connecting/offline state through the existing `StatusBadge` convention. |
+| Display graph ordering | Preserve compiled formula order from supervisor data | `enrichWorkflowRun()` keeps the supervisor bead/group order for the quiet vertical node list. Gas City compiles graph.v2 formulas into ordered `Recipe.Steps`, and the supervisor can expose that order through workflow snapshot and formula detail/preview response data. If the dashboard later needs source-order metadata beyond the workflow snapshot, fetch the supervisor's compiled formula detail/preview data; do not parse formula files locally. Logical/physical deps influence edges, not vertical order. |
+| Node shape | Construct/id/label projection has a narrow helper | `node-shape.ts` owns semantic id precedence, construct-kind mapping, hidden-control badge targets, external labels, loop parent ids, and display-title fallback, with direct tests ensuring implementation-private names do not leak. |
+| Node status | Status normalization is isolated and directly tested | `presentationStatus()` maps supervisor bead status plus `gc.outcome` to dashboard status, while `aggregateStatus()` keeps active attempts visible above terminal history. |
+| Session links | Transcript availability rules are separate from graph assembly | `workflowSessionLinkFor()` owns session id/name/assignee/rig extraction and suppresses links for pending/ready nodes while preserving completed/failed transcript access. |
+| Visual language | Typography, hairlines, and restrained controls instead of card grids | Workflow tabs and iteration/attempt controls now use typographic tab/radio affordances instead of boxed button strips. |
+| Route state | URL-derived state should not leak across route/query changes | `useWorkflowNodeSelection()` owns run detail selection semantics. Selection starts empty without `?node=`, applies a valid `?node=`, clears when the query is removed, preserves user selection inside the same route, and still applies the query target if a refreshed detail payload materializes it after a stale cache paint. |
+| Test style | Backend fake-supervisor route tests; pure semantic tests in focused files; frontend component tests with fake network | `backend/test/workflows.test.ts` stays focused on routes/SSE, `backend/test/workflow-enrich.test.ts` owns pure graph.v2 enrichment fixtures, `backend/test/workflow-bead-fields.test.ts` covers raw workflow bead field readers, `useWorkflowNodeSelection.test.tsx` covers selection state, and `WorkflowRunDetail.test.tsx` covers the browser route. |
+| Strict gates | Warnings should fail, lint/typecheck should be tight | `eslint.config.mjs`, root `lint`, root `typecheck`, and frontend test setup now enforce that posture. |
+
+### Remaining Pattern Mismatches
+
+1. `backend/src/workflows/enrich.ts` is carrying a full presentation layer locally.
+   - This is the highest-risk mismatch. It is a reasonable first slice, but it is not yet as defensible as Gasworks' dedicated presentation pipeline.
+   - Current state after the latest alignment pass: `enrich.ts` is now mostly orchestration. It validates graph.v2 snapshots, resolves root/scope metadata, dedupes supervisor beads, and delegates semantic grouping, execution-instance decoration, display edges, execution path resolution, and lane construction to focused modules with direct tests.
+   - Existing repo precedent allows large collectors (`snapshot/collectors/workflows.ts` is also large), but new semantic logic of this importance now has smaller focused tests in addition to golden fixture coverage.
+
+2. The display graph is still a quiet vertical list, not a full DAG renderer.
+   - This is acceptable for the dashboard's visual system and the requested left-panel vertical flow.
+   - The stable vertical order comes from supervisor-owned compiled formula data: currently the workflow snapshot's bead order. When more precise source-order metadata is required, use the supervisor's compiled formula response built from Gas City's `Recipe.Steps`.
+   - If a future live snapshot does not contain enough order metadata, the dashboard should ask the supervisor for the formula detail/preview response built from `Recipe.Steps`; it should still not read formula files.
+   - Supervisor `logical_edges` win when available for visible edge data, and physical deps are the fallback, but edges do not reorder nodes.
+   - It is still not equivalent to Gasworks' `display_graph`, zoom/pan layout, or scope-group presentation.
+   - The plan should continue to call this a dashboard display graph, not a full DAG renderer.
+
+3. Real graph.v2 fixture coverage is partially live-captured.
+   - This audit added OpenAPI-shaped active adopt-PR and completed bug-hunt fixtures under `backend/test/fixtures/workflow-snapshots.ts`, modeled on the production formula pack.
+   - Direct `enrichWorkflowRun()` tests now assert stable semantic node ids, current/latest iteration selection, hidden badge collapse, streamability, retry/fanout/condition handling, and no leaked internal check-loop terminology.
+   - Live evidence rechecked on May 25, 2026: the local racoon-city supervisor exposes formulas, but `/v0/city/racoon-city/formulas/feed?scope_kind=city&scope_ref=racoon-city` still returns an empty feed, the only matching formula with run text is `mol-dog-stale-db` with `run_count=0`, no bead advertises `gc.kind=workflow` or `gc.formula_contract=graph.v2`, and `/v0/city/racoon-city/workflow/rc-lkr9?scope_kind=city&scope_ref=racoon-city` returns 404.
+   - Live capture added after that audit: an isolated suspended rig produced a side-effect-free cooked graph.v2 smoke run whose supervisor snapshot has current OpenAPI fields, empty logical presentation fields, physical `tracks` containment deps, hidden `scope-check` controls, and a hidden `workflow-finalize` control. The captured shape now lives in `backend/test/fixtures/workflow-snapshots.ts` as `capturedDashboardGraphV2SmokeSnapshot`.
+   - Remaining gap: replace or augment the modeled active/completed fixtures with captured live supervisor snapshots once `/v0/city/{name}/workflow/{id}` can return known completed and active graph.v2 runs in the local environment.
+
+4. Session streaming is still transcript-shaped rather than agent-step-shaped.
+   - `useSessionStream()` fetches a sanitized transcript snapshot, opens the session SSE stream for active nodes, appends named `turn` events, and exposes visible connection state.
+   - It now keeps the EventSource listener alive across transient stream errors so browser-level reconnect can continue delivering turns.
+   - Remaining gap: it does not yet expose stream cursor state, event ids, or structured tool-call sections beyond what `TranscriptTurn` provides.
+   - This matches v1 scope, but richer coding-agent transcript rendering should be a separate follow-up rather than folded into the graph layout work.
+
+5. The diff is run-level, not node-level.
+   - This matches the user decision for v1.
+   - UI and docs must keep saying "current working tree" and "execution folder"; do not imply a selected node caused those changes until per-node baselines or commits exist.
+
+### Recommended Alignment Work
+
+1. Keep expanding the backend fixture corpus as live snapshots become available.
+   - Done in this pass: active adopt-PR and completed bug-hunt real-shaped fixtures cover check loops, historical iterations, retry attempts, failed-attempt sessions, fanout, skipped conditions, finalizer badges, and no-session nodes.
+   - This pass also checked the live racoon-city supervisor. It currently has graph.v2 formulas in the catalog but no graph.v2 runs in the run feed, so captured fixtures are not available from this environment yet.
+   - Latest live sample-city check: `formula-detail-demo-city` currently exposes two planning runs on `/workflows`, `todo-p25w` (`Plan Todo App demo`) and `ttt-uuum` (`Plan Tic Tac Toe demo`). Both planning detail pages load through the dashboard route with no unexpected API failures. The expected todo and tic-tac-toe implementation runs are not present, so the live e2e harness fails intentionally until those runs exist.
+   - Next evidence step: capture at least one real active graph.v2 run and one real completed graph.v2 run from the supervisor endpoint, then add them beside the modeled fixtures.
+
+2. Keep `enrich.ts` cohesive around presentation semantics, but move generic raw-field readers out as they become shared utility.
+   - Done in this pass: `backend/src/workflows/bead-fields.ts` owns metadata trimming, step-ref normalization, attempt/iteration extraction, and externalized ids.
+   - Done in the latest alignment pass: `backend/src/workflows/groups.ts` owns semantic grouping and hidden-control badge collapse, `backend/src/workflows/execution-instances.ts` owns execution-instance decoration and loop/retry presentation state, and `backend/src/workflows/lanes.ts` owns lane construction.
+   - `backend/src/workflows/enrich.ts` is intentionally left as the dashboard presentation adapter rather than split further until live captured snapshots reveal a stronger boundary.
+
+3. Keep `docs/ARCHITECTURE.md` in sync when stream behavior changes.
+   - The implementation now has one proxy helper for city events and session streams.
+   - The workflow detail frontend now follows the same visible SSE status pattern as the city event stream instead of hiding reconnect/error state.
+   - Any future direct-supervisor browser EventSource work should update both code and architecture docs in the same change.
+
+4. Keep the dashboard API shape stable while investigating upstream/shared enrichment.
+   - Short term: dashboard owns a minimal TypeScript presentation adapter.
+   - Medium term: move logical-node/display-graph enrichment into Gas City or a shared package so Gasworks and this dashboard do not fork semantics.
+
+5. Keep the detail-route visual harness close to the frontend fixture contract.
+   - Done in this pass: `scripts/snap-workflow-detail.mjs` snapshots workflow detail in both themes with deterministic workflow summary, workflow detail, diff, transcript, stream, app-shell config, snapshot, and SSE responses.
+   - The harness now exercises no initial selection, active selected-node transcript streaming, iteration tabs, selected-node toggle-off, and historical-only deep-link transcript access.
+   - `frontend/src/routes/WorkflowRunDetail.test.tsx` consumes the same `frontend/src/test/fixtures/workflow-run-detail.json` fixture so component behavior and visual harness data stay aligned.
+   - The harness installs context-level API routes before page creation and treats any `/api/*` request failure as a test failure, matching the repo's preference for visible browser automation regressions.
+   - Extend the fixture when the UI adds richer transcript sections or when live-captured supervisor snapshots replace the modeled active run.
+
+6. Keep a live sample-city harness separate from deterministic fixture screenshots.
+   - Added `scripts/e2e-sample-workflow-runs.mjs` for the real `formula-detail-demo-city` workflow route.
+   - The harness requires four sample runs: todo planning, todo implementation, tic-tac-toe planning, and tic-tac-toe implementation.
+   - The current live result is intentionally red: 2/4 expected runs exist. This is useful because it proves the dashboard no longer silently calls a fixture path or the wrong city when the sample data is incomplete.
+   - Do not mark the live sample-city e2e complete until both implementation runs are present and pass the same clickthrough/detail/selection/diff/session checks.
+
+7. Keep route error coverage explicit as new workflow endpoints appear.
+   - Done in this pass: workflow detail route tests now cover invalid workflow ids, invalid scope params, unsupported non-graph snapshots, upstream 404 mapping, and generic upstream failure redaction.
+   - The important pattern is not just the response status. Validation tests also assert that the supervisor was not called, and redaction tests assert that response bodies do not leak supervisor topology, local paths, or city-specific details.
+   - Session stream validation now uses the same shared `SESSION_ID_RE` as transcript peek and has route coverage for the no-upstream-call path.
+
+### Alignment Work Completed In This Pass
+
+- Added `backend/src/workflows/formula-run.ts` with the `RunningFormulaRun` projection so the backend aggregates supervisor workflow snapshots, runtime bead overlays, sessions, semantic node groups, display edges, lanes, execution path, and progress before the browser renders anything.
+- Added `WorkflowRunDetail.progress` to the shared browser contract and updated `WorkflowRunDetailPage` to render backend-owned aggregate progress rather than recomputing status summaries in React.
+- Added red/green coverage proving the backend emits progress and the frontend uses it even when the node array would produce a different derived summary.
+- Added `scripts/e2e-sample-workflow-runs.mjs` as a live sample-city browser/API check. The current run is intentionally red because only the planning runs exist in `formula-detail-demo-city`; the implementation runs are missing.
+- Added `backend/test/fixtures/workflow-snapshots.ts` with two OpenAPI-shaped graph.v2 runtime snapshots modeled on the production formula pack:
+  - active `mol-adopt-pr-v2`, including check-loop history, expansion, skipped condition, scope-check badge, finalizer badge, and streamable current iteration.
+  - completed `mol-bug-hunt-v2`, including retry attempts, a failed historical attempt, fanout, skipped condition, completed no-session node, and finalizer badge.
+- Added direct enrichment golden tests in `backend/test/workflow-enrich.test.ts`.
+- Tightened raw supervisor workflow snapshot types to the current OpenAPI shape, and removed guessed root/camel/dependency fallback fields from the dashboard enrichment path.
+- Tightened graph.v2 root detection and formula naming to current supervisor metadata only: `gc.formula_contract` identifies graph.v2 roots and `gc.formula` carries the formula name. Red tests first proved that `contract`, `formula_contract`, `gc.contract`, and plain `formula` aliases were still being accepted, then the enrichment path was narrowed and the backend suite passed.
+- Tightened root-bead resolution to the current supervisor contract. Red tests first proved that a snapshot whose `root_bead_id` did not match any emitted bead still enriched by falling back to the first bead; enrichment now rejects that snapshot as unsupported instead of guessing a root.
+- Tightened scope resolution to the current supervisor contract. Red tests first proved that missing `scope_ref` and unknown `scope_kind` still enriched by falling back to the configured city scope; enrichment now requires the supervisor snapshot to provide `scope_kind` as `city` or `rig` and a non-empty `scope_ref`. Direct unscoped browser requests are still handled at the route boundary by asking the supervisor for the configured city scope.
+- Tightened required snapshot metadata handling to the current supervisor contract. Red tests first proved that a malformed `snapshot_version` still enriched as `v0`; enrichment now requires a finite numeric `snapshot_version` from the supervisor response instead of inventing one.
+- Tightened required snapshot identity/store handling to the current supervisor contract. Red tests first proved that blank `workflow_id`, blank `root_store_ref`, blank `resolved_root_store`, and malformed `partial` values were still accepted; enrichment now rejects those malformed snapshots instead of falling back to root ids, empty store strings, or a synthesized non-partial state.
+- Tightened step-ref, construct-kind, and session-link derivation to current supervisor workflow snapshot fields only. Red tests first proved that plain `metadata.step_ref`, dashboard-invented `metadata.constructKind`, `gc.session_*`, camel-case session aliases, metadata `assignee`, and legacy `mc_rig_id` were still being accepted; the adapter now uses `metadata["gc.step_ref"]` plus top-level `step_ref`, `metadata["gc.kind"]`/`metadata["gc.original_kind"]` plus top-level `kind`, and `metadata.session_id`/`metadata.session_name` plus top-level `assignee`.
+- Tightened metadata value handling to the current supervisor/OpenAPI contract. Gas City's `WorkflowBeadResponse.Metadata` is `map[string]string`, so workflow presentation helpers now ignore malformed non-string metadata values instead of stringifying numbers or booleans. A red test first proved those malformed values were still accepted.
+- Tightened internal check-loop name externalization so implementation-private `ralph` segments are removed across hyphen, dot, and underscore separated ids without rewriting embedded words. A red test first proved `mol_ralph_review` still leaked; `externalizeId()` now treats any non-alphanumeric delimiter as a private-name boundary.
+- Tightened display-title projection so implementation-private check-loop names are scrubbed from operator-facing node titles, not just semantic ids and kinds. A red test first proved a supervisor title such as `Review ralph pass` would still leak; display titles now render that vocabulary as `check loop` while leaving embedded words untouched.
+- Added lane-level workflow scope derivation from `gc.scope_kind`, `gc.scope_ref`, and `gc.root_store_ref`, so summary links carry the supervisor-required lookup scope into the run detail route.
+- Tightened summary links, detail-route loading, and workflow API helpers so they send `scope_kind` and `scope_ref` only as a complete pair. If summary or route state has only half the scope, the frontend omits scope query params and lets the backend's default city-scope resolution handle the run. Red tests first proved partial scope pairs were being emitted; focused route/component tests and the browser clickthrough harness now cover omission and complete-pair preservation.
+- Added a route default for direct unscoped detail URLs: the dashboard asks the supervisor for the configured city scope instead of making an invalid unscoped workflow request.
+- Changed workflow enrichment so failed terminal attempts with attached sessions keep their transcript link while remaining non-streaming.
+- Added `frontend/src/test/fixtures/workflow-run-detail.json` as the deterministic frontend wire fixture for an active graph.v2 run detail.
+- Tightened `WorkflowRunDetailPage` selection state so URL-driven node selection clears when `?node=` is removed instead of leaking stale state across route changes, while preserving the URL target across stale-cache-to-fresh-detail refreshes.
+- Extracted run-detail node selection into `frontend/src/hooks/useWorkflowNodeSelection.ts`, with focused hook tests for route selection, user selection, query removal, refresh materialization, node toggling, and Escape clear.
+- Added `scripts/snap-workflow-detail.mjs`, a Playwright harness that clicks from the workflow summary into the run-detail split panel and snapshots it in light and dark themes without a live supervisor run.
+- Tightened `scripts/snap-workflow-detail.mjs` so app-shell API traffic is fixture-backed and request-level `/api/*` failures fail the harness across the full browser journey.
+- Expanded `backend/test/workflows.test.ts` route coverage for validation, unsupported non-graph snapshots, supervisor 404 mapping, and generic upstream error redaction.
+- Extracted shared `SESSION_ID_RE` validation under `backend/src/lib` and covered the stream route's invalid-id/no-upstream path.
+- Added session stream route coverage proving a client disconnect closes the upstream supervisor session stream, matching the shared `/api/events/stream` proxy cleanup contract.
+- Aligned workflow node session streaming with the repo's SSE status pattern: active transcript streams now show live/connecting/offline state with `StatusBadge`, and the component test proves a transient SSE error does not drop the named-turn listener.
+- Made the dashboard display graph preserve supervisor-emitted formula order without changing the quiet vertical UI. Enrichment keeps node order from supervisor workflow data, and when the run exposes `gc.formula` plus a run target it fetches the supervisor formula detail/preview response and ranks display groups by compiled formula step order. It still prefers supervisor `logical_edges` over physical deps for the edge list. Fixture and route tests cover formula-order preference, logical-edge preference, and physical-dep fallback without allowing edge sources to reorder nodes.
+- Tightened the React graph renderer so it also preserves the supervisor-emitted node order. Display lanes remain metadata for grouping/context, but they no longer reorder the vertical graph.
+- Moved workflow git diff subprocess calls behind `execWorkflowGit()` in `backend/src/exec.ts`, preserving the repo's whitelist/clean-env/timeout/output-cap/concurrency pattern for the new diff surface.
+- Split pure workflow presentation enrichment tests into `backend/test/workflow-enrich.test.ts`, leaving `backend/test/workflows.test.ts` focused on route and SSE behavior.
+- Extracted raw supervisor bead field readers to `backend/src/workflows/bead-fields.ts`, with direct unit coverage in `backend/test/workflow-bead-fields.test.ts`.
+- Moved raw supervisor workflow snapshot wire types out of the shared package root into `shared/src/workflow-snapshot.ts`, preserving root re-exports while keeping workflow-specific contracts near `shared/src/workflow-detail.ts`.
+- Extracted execution-folder resolution to `backend/src/workflows/execution-path.ts`, with direct coverage for root cwd, child/session work-dir metadata, supervisor rig root metadata, configured rig-root fallback, and blank-path handling.
+- Extracted display-edge projection to `backend/src/workflows/edges.ts`, with direct coverage for supervisor logical-edge preference, physical-dep fallback, hidden/duplicate/self/empty edge filtering, and externalized implementation-private ids.
+- Extracted node shape projection to `backend/src/workflows/node-shape.ts`, with direct coverage for semantic id precedence, construct-kind mapping, explicit construct metadata, hidden badge targets, external labels, loop parent ids, and title fallback.
+- Extracted status normalization to `backend/src/workflows/status.ts`, with direct coverage for closed outcomes, active statuses, terminal/waiting fallback, aggregate active precedence, and streamable-state detection.
+- Extracted session-link resolution to `backend/src/workflows/session-link.ts`, with direct coverage for missing sessions, pending/ready suppression, explicit supervisor session metadata, assignee fallback, and failed-attempt transcript preservation.
+- Added detail-page status-summary copy so the header includes the requested run-state rollup, not just node and edge counts.
+- Added detail-page snapshot metadata copy so the header shows both supervisor snapshot version and event sequence when the supervisor includes `snapshotEventSeq`.
+- Added detail-page partial snapshot copy so a `partial` supervisor snapshot is visible to the operator instead of being a hidden wire-field.
+- Split the Diff panel into explicit `Unstaged Diff` and `Staged Diff` sections, keeping prefix-based colorization and truncation copy. Route tests now cover staged diffs, server-owned path resolution, `path_unknown`, `not_git`, file classification, and backend truncation metadata.
+- Added stable, construct-specific frontend shape classes for first-pass graph.v2 constructs, with component tests proving workflow root, step, retry, check-loop, scope, condition, fanout, and expansion no longer collapse to shared visual treatments.
+- Aligned construct shape CSS with the dashboard's Flat Page Rule by avoiding at-rest shadow/elevation and side-stripe treatment while preserving distinct retry and scope shapes.
+- Added latest-loop-iteration visibility semantics: loop body nodes that only exist in older iterations are preserved for right-panel transcript access but excluded from the left graph.
+- Added an explicit `historical-only` label and route coverage proving a deep-linked historical-only semantic node can show its transcript without appearing as a selectable graph node.
+- Expanded the deterministic Playwright workflow-detail harness to exercise summary-lane clickthrough with preserved scope query params, exact staged/unstaged diff text and prefix classes, partial snapshot copy, no initial selection, mouse and keyboard node selection, Escape clearing, iteration tabs, active-session stream turns, historical iteration non-streaming, toggle-off clearing, no-session tab disabling, no-graph, no-git, path-unknown, clean-worktree, and historical-only transcript deep links.
+- Added browser clickthrough validation from the Workflows summary lane to the detail route with preserved `scope_kind` and `scope_ref`, plus browser validation for partial snapshot copy, snapshot version/event-sequence copy, staged/unstaged diff rendering, and full-journey `/api/*` failure detection.
+- Tightened the generic screenshot harness with `--test` mode so route snapshots can fail on `/api/*` failures instead of silently capturing a broken proxy/API state.
+- Tightened workflow detail/diff route query validation so malformed non-string `scope_kind` or `scope_ref` values, including duplicated query params, are rejected before any supervisor call. A red route test first proved the both-duplicated case fell through to an upstream lookup and returned 404; the parser now returns 400 validation and preserves the no-upstream-call contract.
+- Tightened frontend detail-route scope parsing so malformed or duplicated complete scope query params surface an immediate route validation error and do not trigger the default-city `/api/workflows/:id` request. Red route/component tests first proved the browser silently dropped malformed params and loaded the workflow.
+- Added frontend route/component tests for no-graph and selected-node-without-session empty states, retry attempt tabs, partial snapshots, and staged/unstaged diff labels.
+- Added frontend route coverage proving selected-node session streams close when selection changes or the Session tab is hidden.
+- Added frontend route and browser-harness coverage proving the Session tab is unavailable for a selected semantic node that has no execution instance with a session link, while the no-session empty state remains visible.
+- Aligned the workflow evidence tab control with ARIA tab semantics by wiring each tab to the shared evidence `tabpanel`, with route coverage for the active panel label relationship.
+- Expanded the deterministic workflow-detail transcript fixture to include coding-agent request/response structure with `tool_use`, `tool_result`, and `final` turns, and added route coverage that those roles render in the selected-node Session panel.
+- Moved the historical-only loop case into `frontend/src/test/fixtures/workflow-run-detail.json` so the route tests and Playwright harness share one fixture contract instead of synthesizing the same case independently.
+- Reworked `backend/src/workflows/enrich.ts` into the orchestration layer for the dashboard presentation adapter. It now delegates raw field reads, semantic grouping, execution-instance decoration, edge projection, execution-path resolution, status normalization, session links, and lanes to focused modules with direct tests.
+- Added `useCachedData` race coverage so stale fetches cannot overwrite state after a route-key change or overwrite the active same-key cache slot after a newer refresh completes.
+- Changed the no-env local default city from `gas-city` to `racoon-city`, with config tests and env docs, so local workflow snapshots hit the supervisor city that exists in this environment instead of rendering a 404.
+- Extracted workflow semantic grouping, execution-instance decoration, and lane construction out of `backend/src/workflows/enrich.ts` into focused modules with direct tests:
+  - `backend/src/workflows/groups.ts` plus `backend/test/workflow-groups.test.ts`
+  - `backend/src/workflows/execution-instances.ts` plus `backend/test/workflow-execution-instances.test.ts`
+  - `backend/src/workflows/lanes.ts` plus `backend/test/workflow-lanes.test.ts`
+- Tightened semantic node id projection for supervisor runtime `step_ref` values. A red test first proved `mol.review.attempt.2` projected to the numeric suffix `2`; `semanticNodeIdFor()` now strips runtime suffixes such as `attempt.N`, `run.N`, `check.N`, and terminal `iteration.N` before deriving the stable semantic node id, while preserving loop-body ids such as `review-codex` inside `iteration.N.review-codex.attempt.N`.
+- Tightened runtime numeric field parsing so malformed strings are not accepted through JavaScript numeric-prefix parsing. Red tests first proved `gc.iteration="2x"`, `step_ref` segments such as `iteration.2x`, and `gc.max_attempts="3x"` could still produce iteration numbers or attempt badges; workflow field readers now accept only positive integer values for attempt, iteration, and max-attempt presentation metadata.
+- Tightened current runtime `.run.N` path handling for loop contexts and hidden controls. Red tests first proved nested `run.1-scope-check` targets collapsed to the numeric suffix `1` and `gc.scope_ref="mol.review-loop.run.2"` did not identify the loop control; hidden badge targeting now prefers supervisor `gc.control_for` and falls back through semantic runtime-ref derivation, and loop context now uses supervisor `gc.scope_ref` for `.iteration.N` and `.run.N` scopes.
+- Tightened display-edge projection to match the left graph's latest-iteration visibility. A red test first proved an edge connected to a `visibleInGraph: false` historical-only node still appeared in the display edge list; edge projection now filters against graph-visible nodes so dependency counts and edge metadata do not reference nodes hidden from the left panel.
+- Added a captured supervisor smoke snapshot from an isolated graph.v2 test rig. A red edge-projection test first proved the current code dropped the real `inspect -> scope-check -> summarize` dependency chain and kept only root `tracks` containment edges; display-edge projection now treats `tracks` as containment and bridges visible dependency edges through hidden `scope-check` controls while keeping `workflow-finalize` hidden as a root badge.
+
 ## Formula Construct Research
 
 Relevant Gas City files:
 
 - `/Users/csells/Code/gastownhall/gascity/internal/formula/types.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/formula/recipe.go`
+- `/Users/csells/Code/gastownhall/gascity/internal/formula/compile.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/formula/controlflow.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/formula/expand.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/formula/graph.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/formula/retry.go`
-- `/Users/csells/Code/gastownhall/gascity/internal/formula/ralph.go` (internal check-loop implementation)
+- `/Users/csells/Code/gastownhall/gascity/internal/api/handler_formulas.go`
+- `/Users/csells/Code/gastownhall/gascity/internal/api/huma_types_formulas.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/api/handler_convoy_dispatch.go`
 - `/Users/csells/Code/gastownhall/gascity/internal/api/huma_types_convoys.go`
 
@@ -160,7 +442,7 @@ Graph.v2 constructs in scope for this plan:
 - Conditional step: `condition`, primarily surfaced as skipped or pending runtime state unless source/spec metadata is retained.
 - Nested container: `children`, compiled to parent/child or promoted epic/scope semantics.
 - Retry control: `retry`, compiled to a control bead plus attempt beads.
-- Check-loop control: public formula syntax uses `check`, stored internally as `ralph`, compiled to a control bead plus iteration/check beads.
+- Check-loop control: public formula syntax uses `check`, compiled to a control bead plus iteration/check beads.
 - Runtime graph controls: `fanout`, `scope-check`, `workflow-finalize`, and `spec` nodes inserted during graph control application.
 
 Compiler-supported graph.v2 constructs that are not first-pass implementation scope unless live graph.v2 runtime data exposes them:
@@ -178,12 +460,14 @@ Important data-source caveat:
 
 Gas City's native workflow endpoint currently returns physical beads and deps. In `huma_types_convoys.go`, `LogicalNode` and `ScopeGroup` are intentionally empty presentation placeholders, and comments say logical presentation belongs downstream. Gasworks-gui's server is that downstream presentation layer today.
 
+Gas City's formula endpoints are different: `handler_formulas.go` compiles the loaded formula into a `formula.Recipe`, iterates `recipe.Steps` in order, and returns recipe-derived `steps`, `deps`, and `preview` data. That is the correct supervisor/API path for stable source-order or construct metadata if the workflow snapshot is not enough.
+
 That means this dashboard has two implementation choices:
 
 1. Port the Gasworks presentation enrichment into this repo's backend.
 2. Move the presentation enrichment upstream into Gas City, then have this repo consume it.
 
-Recommendation: start by porting the smallest necessary TypeScript equivalent into this dashboard so this feature can ship, but keep the API shape aligned with Gasworks' `WorkflowSnapshot`. If Gas City later owns presentation enrichment, the dashboard adapter can collapse to a pass-through.
+Recommendation: keep the first dashboard slice as a supervisor-data adapter, not a parser. Start with the workflow snapshot and add a supervisor formula detail/preview call only when a real snapshot proves that the run detail needs compiled `Recipe.Steps` data that is not already present. Keep the API shape aligned with Gasworks' `WorkflowSnapshot`. If Gas City later owns presentation enrichment, the dashboard adapter can collapse to a pass-through.
 
 ## Real-World Formula Pack Observations
 
@@ -191,28 +475,30 @@ Reference pack:
 
 - `/Users/csells/Code/gascity/gas-city-inc/packs/workflows/formulas`
 
-The pack contains 13 TOML formulas: 9 `mol-*` workflow formulas and 4 `expansion-*` formulas. 11 declare `contract = "graph.v2"`; the two router formulas do not declare the graph contract directly and are out of scope unless the detail route resolves them to a launched graph.v2 run.
+These examples are planning research only. They are not an implementation data source for the dashboard, and the dashboard must not reproduce this research with a local formula-file parser.
 
-Construct frequency from exact TOML section/key scans:
+The pack includes `mol-*` workflow formulas and `expansion-*` formulas that exercise the graph.v2 shapes this page has to render. Router formulas are out of scope unless the detail route resolves them to a launched graph.v2 run.
 
-| Construct | Observed usage | Notes |
-| --- | ---: | --- |
-| `[[steps]]` | 68 total across workflow formulas | The dominant visible unit. |
-| `[[template]]` | 16 total across expansion formulas | Expansion output becomes normal runtime nodes after compile. |
-| `[...retry]` | 67 total | Highest priority non-trivial shape. Release, bugflow, review, and bug-hunt flows all rely on retry-managed steps. |
-| check-loop control, stored internally as `[...ralph]` | 5 total | High priority, because these are the iterative review/fix loops the operator will care about. |
-| `[[...children]]` | 11 total | Used mainly inside check loops as scoped loop bodies. |
-| `[[compose.expand]]` | 5 total | Used to inline review/design-review expansions into target steps. |
-| `condition =` | 5 total | Mostly skip flags such as `skip_gemini` and `skip_human_approval`. |
-| explicit `loop`, `waits_for`, `gate`, `compose.branch`, `compose.map`, `compose.gate`, `on_complete` | 0 exact TOML sections/keys in this pack | Document as graph.v2 vocabulary, but do not implement first unless live graph.v2 data requires them. |
+Constructs represented in the real examples:
+
+| Construct | Notes |
+| --- | --- |
+| Normal steps | The dominant visible unit. |
+| Expansion templates | Expansion output becomes normal runtime nodes after compile. |
+| Retry-managed steps | Highest priority non-trivial shape. Release, bugflow, review, and bug-hunt flows all rely on retry-managed steps. |
+| Check-loop controls | High priority, because these are the iterative review/fix loops the operator will care about. |
+| Child scopes | Used mainly inside check loops as scoped loop bodies. |
+| Compose expansion | Used to inline review/design-review expansions into target steps. |
+| Conditions | Mostly skip flags such as `skip_gemini` and `skip_human_approval`. |
+| Less common graph.v2 vocabulary | Keep `loop`, `waits_for`, `gate`, `compose.branch`, `compose.map`, `compose.gate`, and `on_complete` documented as graph.v2 vocabulary, but do not implement first unless live supervisor data requires them. |
 
 Important examples:
 
-- `mol-adopt-pr-v2.toml` uses a `review-loop` check loop, child steps for the review pipeline and fix application, `compose.expand` with `expansion-review-pr`, conditional human approval, and a second check loop for CI repair.
-- `expansion-review-pr.toml` expands a multi-model PR review fanout into retry-managed Claude/Codex/Gemini review steps, a synthesis step, and a scorecard step. The Gemini lane is conditional.
-- `expansion-design-review-core.toml` uses a design review/apply check loop and an explicit runtime fanout control bead through `metadata.gc.kind = "fanout"`, rather than formula-level `on_complete`.
-- `mol-bug-report-implementation-v2.toml` composes both design review and PR review expansions, has a code-review check loop, and uses human approval steps represented as normal/retry-managed work rather than formula `gate` sections.
-- `mol-release-v1.toml` is mostly a long linear graph with a scope body and retry-managed release gates. "Gate" appears as domain language around CI/GitHub workflows, not as the formula `gate` construct.
+- `mol-adopt-pr-v2` uses a `review-loop` check loop, child steps for the review pipeline and fix application, compose expansion with `expansion-review-pr`, conditional human approval, and a second check loop for CI repair.
+- `expansion-review-pr` expands a multi-model PR review fanout into retry-managed Claude/Codex/Gemini review steps, a synthesis step, and a scorecard step. The Gemini lane is conditional.
+- `expansion-design-review-core` uses a design review/apply check loop and an explicit runtime fanout control bead through `metadata.gc.kind = "fanout"`, rather than formula-level `on_complete`.
+- `mol-bug-report-implementation-v2` composes both design review and PR review expansions, has a code-review check loop, and uses human approval steps represented as normal/retry-managed work rather than formula `gate` sections.
+- `mol-release-v1` is mostly a long linear graph with a scope body and retry-managed release gates. "Gate" appears as domain language around CI/GitHub workflows, not as the formula `gate` construct.
 
 Planning implication:
 
@@ -427,6 +713,10 @@ interface WorkflowDisplayNode {
   currentBeadId?: string;
   scopeRef?: string;
   loopControlNodeId?: string;
+  /** False for semantic nodes that have transcript history but are not in the latest visible graph. */
+  visibleInGraph?: boolean;
+  /** True when every execution instance belongs to an older loop iteration or stale expansion. */
+  historicalOnly?: boolean;
   visibleIteration?: number;
   iterationCount?: number;
   hasHistoricalIterations?: boolean;
@@ -571,7 +861,7 @@ Initial port scope:
 
 Construct shape derivation:
 
-- Prefer explicit `constructKind` if upstream adds it.
+- Prefer a future OpenAPI/top-level `constructKind` only after the supervisor adds it. Do not accept dashboard-invented `metadata.constructKind` aliases.
 - Otherwise derive from:
   - `node.kind`
   - bead metadata `gc.kind`
@@ -731,6 +1021,7 @@ Exit criteria:
   - selected node without session
   - stale/partial snapshot
 - Add screenshot coverage for the detail route.
+  - Done for scoped summary clickthrough, no initial selection, selected active session, exact staged/unstaged diff rendering, snapshot version/event-sequence copy, partial snapshot copy, keyboard selection and Escape clearing, iteration tabs, selected-node toggle-off, no-session tab disabling, and historical-only deep-link transcript access via `node scripts/snap-workflow-detail.mjs --test`.
 
 Exit criteria:
 
@@ -775,8 +1066,9 @@ Visual:
 
 - `npm --workspace frontend run typecheck`
 - `npm --workspace backend run typecheck`
-- `node scripts/snap.mjs workflows`
-- Add a detail snapshot harness once fixture workflow detail exists.
+- `node scripts/snap.mjs workflows --test`
+- `node scripts/snap-workflow-detail.mjs --test`
+- `node scripts/e2e-sample-workflow-runs.mjs`, expected to pass only when the live sample city has todo and tic-tac-toe planning and implementation runs present.
 
 ## Risks
 
@@ -828,13 +1120,38 @@ Recommended answer: not in the first pass. Gasworks already has a layout engine,
 
 Answer: show a subtle stack/history cue on the left graph, but only render/select the latest iteration's body nodes there. Use the Session panel's iteration tabs to navigate prior iterations for the selected logical node.
 
-## Open Implementation Decision
+## Residual External Evidence Gap
 
-The only major unresolved dependency is graph.v2 source-construct fidelity. Runtime bead kinds tell us a lot about retry, check loops, fanout, scope-check, workflow-finalize, and normal work. They do not always tell us whether a node came from `condition`, `expand`, `map`, or `compose.branch`.
+The implementation is in place for the v1 dashboard-owned presentation adapter. The remaining gap is not local code structure; it is live fixture evidence from an actual supervisor run.
 
-Recommended next step before coding:
+Runtime bead kinds already cover the first-pass graph.v2 constructs implemented here: normal work, retry, check loops, fanout, scope-check, workflow-finalize, skipped conditions, and completed/active/ready/failed states. The known uncertainty is source-construct fidelity for source-level forms that may be flattened after compile, especially `condition`, `expand`, `map`, and `compose.branch`.
 
-- Pick one real active formula run.
-- Fetch its supervisor workflow snapshot.
-- Inspect bead metadata for source/spec retention.
-- Decide whether `constructKind` can be derived locally or needs new Gas City metadata.
+Current live evidence:
+
+- `formula-detail-demo-city` is the dashboard city currently exposed by `/api/config`.
+- `/workflows` shows the two planning runs that exist in the live supervisor feed:
+  - `todo-p25w`, `Plan Todo App demo`, `rig:todo-app`
+  - `ttt-uuum`, `Plan Tic Tac Toe demo`, `rig:tic-tac-toe-app`
+- The supervisor-backed detail APIs for both planning runs now expose six visible nodes, eight execution instances, three visible edges, and status counts of three ready nodes and three blocked nodes. There are no active/streamable nodes because the ready work has not been claimed by a worker session.
+- The two live sample planning run roots do not currently expose `gc.formula`; their root metadata has `gc.formula_contract`, `gc.kind`, `gc.root_store_ref`, `gc.run_target`, `gc.scope_kind`, and `gc.scope_ref`. The dashboard can use supervisor formula detail/preview ordering for runs that expose `gc.formula`, but these two live roots cannot be formula-ordered yet without upstream metadata.
+- The ready planning work is present in the supervisor queue:
+  - `todo-ytrc`, `Draft plan iteration 1`, routed to `todo-app/codex`
+  - `ttt-bg5j`, `Inspect Tic Tac Toe App scaffold`, routed to `tic-tac-toe-app/codex`
+- The current blocker is external to the dashboard code: the four sample Codex pool worker sessions (`todo-app/codex-1`, `todo-app/codex-2`, `tic-tac-toe-app/codex-1`, `tic-tac-toe-app/codex-2`) all stop at the Codex provider usage-limit message before claiming ready work. Rechecked on May 25, 2026 local time: `gc session peek fddc-kxn`, `fddc-2k8`, `fddc-gxp`, and `fddc-g3v` still show the same usage-limit stop, and no `docs/plan.md` or `docs/plan-review.md` files exist under either sample rig root. The plan files are therefore not produced and implementation formulas must not be launched yet.
+- `node scripts/snap-workflow-detail.mjs --test` passes in light and dark themes, including scoped summary clickthrough, graph selection, active/historical session rendering, session stream proxying, and diff states.
+- `node scripts/snap.mjs workflows --test` passes against the live dashboard, with `/workflows` showing the two planning runs and clean `/api/config`, `/api/snapshot`, and `/api/events/stream` calls.
+- `npm run typecheck`, `npm run lint`, `npm --workspace backend test`, and `npm --workspace frontend test` pass.
+- `node scripts/e2e-sample-workflow-runs.mjs` verifies both planning runs through the real dashboard route and supervisor-backed detail/diff APIs. The harness waits for the `/workflows` lane link to render before counting it, so it no longer races the snapshot fetch after the page heading appears.
+- The same harness fails because the expected implementation runs are absent:
+  - missing todo implementation run for `rig:todo-app`
+  - missing tic-tac-toe implementation run for `rig:tic-tac-toe-app`
+- This should remain a red live-evidence check until the sample city has implementation runs that can be validated without faking data or parsing formula files locally.
+
+Next evidence step when the local supervisor workers can execute real graph.v2 runs:
+
+- Let the two planning formulas complete via the routed pool workers.
+- Verify `docs/plan.md` and `docs/plan-review.md` exist in both sample rig roots.
+- Only then launch the implementation formulas with `gc sling <target> mol-demo-implementation-review --formula --scope-kind rig --scope-ref <rig>`.
+- Re-run `node scripts/e2e-sample-workflow-runs.mjs` and require all four planning/implementation runs to pass through summary click, detail rendering, node selection, diff, and session states.
+- Capture one active graph.v2 formula run and one completed graph.v2 formula run from the supervisor workflow endpoint and add those snapshots beside the modeled graph.v2 fixtures.
+- If a captured snapshot does not retain enough construct/order metadata, fetch the supervisor formula detail/preview response derived from Gas City's compiled `Recipe.Steps`; do not parse formula files in the dashboard.

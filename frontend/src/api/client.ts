@@ -18,6 +18,7 @@ import type {
   DashboardRuntimeConfig,
   WorkflowDiffResponse,
   WorkflowRunDetail,
+  WorkflowScopeKind,
 } from 'gas-city-dashboard-shared';
 
 // Typed fetch client for the admin backend's /api/*. Shares types with
@@ -188,14 +189,14 @@ export const api = {
   },
   workflowRun(
     workflowId: string,
-    params?: { scopeKind?: 'city' | 'rig'; scopeRef?: string },
+    params?: { scopeKind?: WorkflowScopeKind; scopeRef?: string },
   ): Promise<WorkflowRunDetail> {
     const qs = workflowQuery(params);
     return request('GET', `/api/workflows/${encodeURIComponent(workflowId)}${qs}`);
   },
   workflowDiff(
     workflowId: string,
-    params?: { scopeKind?: 'city' | 'rig'; scopeRef?: string },
+    params?: { scopeKind?: WorkflowScopeKind; scopeRef?: string },
   ): Promise<WorkflowDiffResponse> {
     const qs = workflowQuery(params);
     return request('GET', `/api/workflows/${encodeURIComponent(workflowId)}/diff${qs}`);
@@ -226,10 +227,12 @@ export const api = {
   },
 };
 
-function workflowQuery(params?: { scopeKind?: 'city' | 'rig'; scopeRef?: string }): string {
+function workflowQuery(params?: { scopeKind?: WorkflowScopeKind; scopeRef?: string }): string {
   const search = new URLSearchParams();
-  if (params?.scopeKind) search.set('scope_kind', params.scopeKind);
-  if (params?.scopeRef) search.set('scope_ref', params.scopeRef);
+  if (params?.scopeKind && params.scopeRef) {
+    search.set('scope_kind', params.scopeKind);
+    search.set('scope_ref', params.scopeRef);
+  }
   const qs = search.toString();
   return qs.length > 0 ? `?${qs}` : '';
 }

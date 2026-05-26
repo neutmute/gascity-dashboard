@@ -22,8 +22,6 @@ export function WorkflowDiffPanel({ diff }: WorkflowDiffPanelProps) {
     );
   }
 
-  const body = [diff.unstagedDiff, diff.stagedDiff].filter(Boolean).join('\n');
-
   return (
     <section>
       <div className="flex items-baseline justify-between gap-4 flex-wrap">
@@ -44,25 +42,41 @@ export function WorkflowDiffPanel({ diff }: WorkflowDiffPanelProps) {
           ))}
         </ul>
       )}
-      {body.length === 0 ? (
+      {!diff.unstagedDiff && !diff.stagedDiff ? (
         <p className="mt-5 text-body text-fg-muted italic">No tracked-file diff in this work tree.</p>
       ) : (
-        <pre className="mt-5 overflow-auto text-[0.8125rem] leading-relaxed border-y border-rule py-3">
-          {body.split('\n').map((line, index) => (
-            <code
-              key={`${index}:${line}`}
-              className={`block whitespace-pre ${diffLineClass(line)}`}
-            >
-              {line || ' '}
-            </code>
-          ))}
-        </pre>
+        <div className="mt-5 space-y-5">
+          {diff.unstagedDiff && (
+            <DiffBlock title="Unstaged Diff" body={diff.unstagedDiff} />
+          )}
+          {diff.stagedDiff && (
+            <DiffBlock title="Staged Diff" body={diff.stagedDiff} />
+          )}
+        </div>
       )}
       {diff.truncated && (
         <p className="mt-3 text-label uppercase tracking-wider text-fg-faint">
           Diff truncated at the backend output cap.
         </p>
       )}
+    </section>
+  );
+}
+
+function DiffBlock({ title, body }: { title: string; body: string }) {
+  return (
+    <section aria-label={title}>
+      <h4 className="text-label uppercase tracking-wider text-fg-faint">{title}</h4>
+      <pre className="mt-2 overflow-auto text-[0.8125rem] leading-relaxed border-y border-rule py-3">
+        {body.split('\n').map((line, index) => (
+          <code
+            key={`${index}:${line}`}
+            className={`block whitespace-pre ${diffLineClass(line)}`}
+          >
+            {line || ' '}
+          </code>
+        ))}
+      </pre>
     </section>
   );
 }

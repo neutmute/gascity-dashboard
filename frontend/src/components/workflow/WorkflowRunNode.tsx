@@ -1,4 +1,8 @@
-import type { WorkflowDisplayNode, WorkflowNodeStatus } from 'gas-city-dashboard-shared';
+import type {
+  WorkflowConstructKind,
+  WorkflowDisplayNode,
+  WorkflowNodeStatus,
+} from 'gas-city-dashboard-shared';
 
 interface WorkflowRunNodeProps {
   node: WorkflowDisplayNode;
@@ -19,7 +23,7 @@ const STATUS_LABEL: Record<WorkflowNodeStatus, string> = {
 };
 
 export function WorkflowRunNode({ node, selected, onToggle }: WorkflowRunNodeProps) {
-  const shapeClass = shapeClassFor(node);
+  const shapeClass = shapeClassFor(node.constructKind);
   const statusClass = statusClassFor(node.status);
   const history = node.hasHistoricalIterations && node.visibleIteration !== undefined
     ? `${node.iterationCount ?? 1} iterations, showing ${node.visibleIteration}`
@@ -74,23 +78,32 @@ export function WorkflowRunNode({ node, selected, onToggle }: WorkflowRunNodePro
   );
 }
 
-function shapeClassFor(node: WorkflowDisplayNode): string {
-  switch (node.constructKind) {
+function shapeClassFor(constructKind: WorkflowConstructKind): string {
+  switch (constructKind) {
     case 'workflow-root':
-      return 'rounded-[3px] border-2';
+      return 'workflow-node-shape-root';
+    case 'step':
+    case 'unknown':
+      return 'workflow-node-shape-step';
     case 'retry':
-      return 'rounded-full border-2 border-double';
+      return 'workflow-node-shape-retry';
     case 'check-loop':
-      return 'rounded-l-full rounded-r-[4px] border-2 border-double';
+      return 'workflow-node-shape-check-loop';
     case 'scope':
-      return 'rounded-md border border-dashed';
+      return 'workflow-node-shape-scope';
     case 'condition':
-      return 'rounded-[18px_4px] border border-dashed';
+      return 'workflow-node-shape-condition';
     case 'fanout':
+      return 'workflow-node-shape-fanout';
     case 'expansion':
-      return 'rounded-md border border-dashed';
+      return 'workflow-node-shape-expansion';
+    case 'scope-check':
+    case 'workflow-finalize':
+    case 'spec':
+    case 'control':
+      return 'workflow-node-shape-control';
     default:
-      return 'rounded-[3px] border';
+      return 'workflow-node-shape-step';
   }
 }
 

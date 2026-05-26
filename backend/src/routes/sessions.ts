@@ -3,11 +3,8 @@ import type { TranscriptResult, TranscriptTurn } from 'gas-city-dashboard-shared
 import { GcClient } from '../gc-client.js';
 import { sanitiseTerminalOutput } from '../exec.js';
 import { recordAudit } from '../audit.js';
+import { SESSION_ID_RE } from '../lib/sessionId.js';
 
-// gc supervisor session IDs are usually gc-<digits>; td-/th- prefixes
-// and hyphenated suffixes appear in older/test session handles. Keep the
-// allow-list anchored and bounded before any upstream call.
-const SESSION_ID_RE = /^(gc|td|th)-[a-z0-9-]{1,32}$/i;
 const PER_TURN_CAP = 16 * 1024;
 const TOTAL_CAP = 256 * 1024;
 

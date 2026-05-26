@@ -44,6 +44,7 @@ export function eventsRouter(opts: EventsRouterOptions): Router {
       heartbeatMs,
       unreachableMessage: 'gc supervisor SSE upstream unreachable',
       noBodyMessage: 'gc supervisor SSE response had no body',
+      openImmediately: true,
     });
   });
 

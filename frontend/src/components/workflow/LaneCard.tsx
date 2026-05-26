@@ -131,8 +131,10 @@ export function LaneCard({ lane, now }: LaneCardProps) {
 
 function workflowDetailHref(lane: WorkflowLane): string {
   const search = new URLSearchParams();
-  if (lane.scopeKind) search.set('scope_kind', lane.scopeKind);
-  if (lane.scopeRef) search.set('scope_ref', lane.scopeRef);
+  if (lane.scopeKind && lane.scopeRef) {
+    search.set('scope_kind', lane.scopeKind);
+    search.set('scope_ref', lane.scopeRef);
+  }
   const qs = search.toString();
   return `/workflows/${encodeURIComponent(lane.id)}${qs ? `?${qs}` : ''}`;
 }

@@ -13,6 +13,7 @@ export {
   lastSegment,
 } from './session-resolve.js';
 export type * from './workflow-detail.js';
+export type * from './workflow-snapshot.js';
 
 export type IsoTimestamp = string;
 export type BeadId = string;
@@ -210,68 +211,6 @@ export interface GcBeadList {
   items: GcBead[];
   /** gc supervisor's own total count for the requested scope (independent of the fetch limit). */
   total?: number;
-}
-
-// ── Supervisor workflow snapshots ────────────────────────────────────────
-
-/**
- * Raw dependency edge from gc supervisor's workflow snapshot endpoint.
- * graph.v2 currently emits from/to; older store rows may still surface
- * issue_id/depends_on_id. The dashboard normalizes both in the backend
- * before emitting WorkflowRunDetail.
- */
-export interface GcWorkflowDep {
-  issue_id?: string;
-  depends_on_id?: string;
-  from?: string;
-  to?: string;
-  kind?: string;
-  type?: string;
-}
-
-/**
- * Raw bead row inside a gc supervisor workflow snapshot. This is still
- * supervisor wire shape, not the dashboard's display node shape.
- */
-export interface GcWorkflowBead extends Partial<GcBead> {
-  kind?: string;
-  step_ref?: string;
-  logical_bead_id?: string;
-  scope_ref?: string;
-  attempt?: number | string;
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * Raw gc supervisor response for GET /v0/city/{name}/workflow/{id}.
- * The dashboard only supports contract='graph.v2' for the detail view;
- * backend enrichment rejects other contracts explicitly.
- */
-export interface GcWorkflowSnapshot {
-  workflow_id?: string;
-  workflowId?: string;
-  root_bead_id?: string;
-  rootBeadId?: string;
-  root_store_ref?: string;
-  rootStoreRef?: string;
-  resolved_root_store?: string;
-  resolvedRootStore?: string;
-  scope_kind?: string;
-  scopeKind?: string;
-  scope_ref?: string;
-  scopeRef?: string;
-  snapshot_version?: number;
-  snapshotVersion?: number;
-  snapshot_event_seq?: number | null;
-  snapshotEventSeq?: number | null;
-  contract?: string;
-  formula?: string;
-  cwd?: string;
-  work_dir?: string;
-  rig_root?: string;
-  root?: GcWorkflowBead;
-  beads?: GcWorkflowBead[];
-  deps?: GcWorkflowDep[];
 }
 
 /** Frontend-side filter contract. v0 hardcodes; ?showAll=1 disables. */
