@@ -68,7 +68,6 @@ function buildEnvelope(workflowsStatus: SourceStatus = 'fresh'): DashboardSnapsh
       githubOpenReviews: null,
     },
     sources: {
-      aimux: { source: 'aimux', status: 'fixture', fetchedAt: null, staleAt: null, error: null, data: null },
       city: { source: 'city', status: 'fixture', fetchedAt: null, staleAt: null, error: null, data: null },
       resources: { source: 'resources', status: 'fixture', fetchedAt: null, staleAt: null, error: null, data: null },
       workflows: {
@@ -80,7 +79,6 @@ function buildEnvelope(workflowsStatus: SourceStatus = 'fresh'): DashboardSnapsh
         data: { totalActive: 0, runCounts: { total: 0, visible: 0, prReview: 0, designReview: 0, bugfix: 0, blocked: 0, other: 0 }, lanes: [], recentChanges: [], census: null },
       },
       github: { source: 'github', status: 'fixture', fetchedAt: null, staleAt: null, error: null, data: null },
-      tokens: { source: 'tokens', status: 'fixture', fetchedAt: null, staleAt: null, error: null, data: null },
     },
   };
 }

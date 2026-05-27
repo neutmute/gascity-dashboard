@@ -2,19 +2,16 @@
 // (gascity-dashboard-37u). Ported from demo-dash src/shared/types.ts.
 //
 // The SourceName union enumerates every source the dashboard may surface;
-// individual collectors are wired in later beads. Listing all six names
-// here even though only city/workflows/resources have collectors today
-// keeps DashboardSources (bead-3) and the fixture (bead-2) able to
-// `satisfies` a fully-keyed object without churn when the remaining
-// collectors land.
+// individual collectors are wired in later beads. Listing all names here
+// even though only city/workflows/resources have collectors today keeps
+// DashboardSources (bead-3) and the fixture (bead-2) able to `satisfies`
+// a fully-keyed object without churn when the remaining collectors land.
 
 export type SourceName =
-  | 'aimux'
   | 'city'
   | 'resources'
   | 'workflows'
-  | 'github'
-  | 'tokens';
+  | 'github';
 
 export type SourceStatus = 'fresh' | 'stale' | 'error' | 'fixture';
 
@@ -52,12 +49,10 @@ export interface DashboardHeadline {
 }
 
 export interface DashboardSources {
-  aimux: SourceState<AimuxQuotaSummary>;
   city: SourceState<CityStatusSummary>;
   resources: SourceState<ResourceSummary>;
   workflows: SourceState<WorkflowSummary>;
   github: SourceState<GitHubSummary>;
-  tokens: SourceState<TokenUsageSummary>;
 }
 
 /**
@@ -75,36 +70,6 @@ export type SourceDataMap = {
     ? NonNullable<T>
     : never;
 };
-
-// ── aimux ─────────────────────────────────────────────────────────────────
-
-export interface AimuxQuotaSummary {
-  vendors: AimuxVendorQuota[];
-  warnings: string[];
-}
-
-export interface AimuxVendorQuota {
-  vendor: string;
-  accounts: AimuxAccountQuota[];
-}
-
-export interface AimuxAccountQuota {
-  account: string;
-  status: 'available' | 'limited' | 'blocked' | 'unknown';
-  fiveHour: QuotaWindow;
-  sevenDay: QuotaWindow;
-  resetAt: string | null;
-  warning: string | null;
-  error: string | null;
-}
-
-export interface QuotaWindow {
-  used: number | null;
-  available: number | null;
-  limit: number | null;
-  utilization: number | null;
-  resetAt: string | null;
-}
 
 // ── city ──────────────────────────────────────────────────────────────────
 
@@ -385,12 +350,4 @@ export interface GitHubRateLimit {
   remaining: number;
   limit: number;
   resetAt: string | null;
-}
-
-// ── tokens ────────────────────────────────────────────────────────────────
-
-export interface TokenUsageSummary {
-  windows: WindowedCounts;
-  clients: string[];
-  activeDays: number;
 }

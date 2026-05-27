@@ -95,13 +95,6 @@ const SAMPLE_RESOURCES: ResourceSummary = {
  */
 function buildHealthyCaches(): SourceCacheMap {
   return {
-    aimux: new SourceCache({
-      source: 'aimux',
-      ttlMs: 30_000,
-      load: () => {
-        throw new Error('aimux collector not wired');
-      },
-    }),
     city: new SourceCache({
       source: 'city',
       ttlMs: 45_000,
@@ -122,13 +115,6 @@ function buildHealthyCaches(): SourceCacheMap {
       ttlMs: 30_000,
       load: () => {
         throw new Error('github collector not wired');
-      },
-    }),
-    tokens: new SourceCache({
-      source: 'tokens',
-      ttlMs: 30_000,
-      load: () => {
-        throw new Error('tokens collector not wired');
       },
     }),
   };
@@ -181,18 +167,16 @@ describe('readSources failure isolation (settle wrapper contract)', () => {
 
   test('every cache rejecting still resolves with a fully-shaped envelope (no thrown promise)', async () => {
     const caches = buildHealthyCaches();
-    sabotageCache(caches.aimux as SourceCache<unknown>, 'aimux down');
     sabotageCache(caches.city as SourceCache<unknown>, 'city down');
     sabotageCache(caches.resources as SourceCache<unknown>, 'resources down');
     sabotageCache(caches.workflows as SourceCache<unknown>, 'workflows down');
     sabotageCache(caches.github as SourceCache<unknown>, 'github down');
-    sabotageCache(caches.tokens as SourceCache<unknown>, 'tokens down');
 
     const service = buildService(caches);
 
     const snapshot = await service.getSnapshot();
 
-    for (const name of ['aimux', 'city', 'resources', 'workflows', 'github', 'tokens'] as const) {
+    for (const name of ['city', 'resources', 'workflows', 'github'] as const) {
       assert.equal(snapshot.sources[name].status, 'error', `${name} should be status=error`);
       assert.equal(snapshot.sources[name].data, null, `${name} should have data=null`);
       assert.equal(snapshot.sources[name].source, name, `${name} envelope should carry source name`);
@@ -220,7 +204,7 @@ describe('readSources failure isolation (settle wrapper contract)', () => {
     // prevent. With cache.sanitize routing, the default sanitizer fires
     // for caches that omit sanitizeErrorMessage (resources) and the raw
     // string passes through for caches that explicitly opt out
-    // (aimux/github/tokens via notWiredCache).
+    // (github via notWiredCache).
     const caches = buildHealthyCaches();
     const leakyPath = '/home/operator/.ssh/id_rsa';
 

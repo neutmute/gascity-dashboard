@@ -31,16 +31,8 @@ describe('fixtureSourceLoader', () => {
 
   test('rejects for placeholder sources whose data is null', async () => {
     await assert.rejects(
-      fixtureSourceLoader('aimux')(),
-      /fixture data for source 'aimux' is null/,
-    );
-    await assert.rejects(
       fixtureSourceLoader('github')(),
       /fixture data for source 'github' is null/,
-    );
-    await assert.rejects(
-      fixtureSourceLoader('tokens')(),
-      /fixture data for source 'tokens' is null/,
     );
   });
 });

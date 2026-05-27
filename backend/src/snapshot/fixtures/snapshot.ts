@@ -41,10 +41,10 @@ export const fixtureSessions: GcSessionList = {
 // demo-dash src/fixtures/snapshot.json with operator-specific names and
 // paths replaced by generic placeholders.
 //
-// Only city / workflows / resources carry realistic data; aimux / github /
-// tokens are intentionally null until their collectors are wired (deferred
-// pending bead dkb's architecture decisions). The placeholder envelopes
-// keep DashboardSources fully populated so callers can index every source
+// Only city / workflows / resources carry realistic data; github is
+// intentionally null until its collector is wired (deferred pending bead
+// dkb's architecture decisions). The placeholder envelope keeps
+// DashboardSources fully populated so callers can index every source
 // without optional-chaining churn.
 
 export const fixtureSnapshot = {
@@ -63,14 +63,6 @@ export const fixtureSnapshot = {
     githubOpenReviews: 14,
   },
   sources: {
-    aimux: {
-      source: 'aimux',
-      status: 'fixture',
-      fetchedAt: null,
-      staleAt: null,
-      error: null,
-      data: null,
-    },
     city: {
       source: 'city',
       status: 'fixture',
@@ -189,14 +181,6 @@ export const fixtureSnapshot = {
     },
     github: {
       source: 'github',
-      status: 'fixture',
-      fetchedAt: null,
-      staleAt: null,
-      error: null,
-      data: null,
-    },
-    tokens: {
-      source: 'tokens',
       status: 'fixture',
       fetchedAt: null,
       staleAt: null,

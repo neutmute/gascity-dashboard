@@ -65,7 +65,7 @@ function fresh<T>(source: 'city' | 'resources' | 'workflows', data: T): SourceCa
   return new SourceCache<T>({ source, ttlMs: 60_000, sanitizeErrorMessage: null, load: () => data });
 }
 
-function throwing<T>(source: 'aimux' | 'github' | 'tokens'): SourceCache<T> {
+function throwing<T>(source: 'github'): SourceCache<T> {
   return new SourceCache<T>({
     source,
     ttlMs: 30_000,
@@ -78,12 +78,10 @@ function throwing<T>(source: 'aimux' | 'github' | 'tokens'): SourceCache<T> {
 
 function buildCaches(workflows: WorkflowSummary): SourceCacheMap {
   return {
-    aimux: throwing('aimux'),
     city: fresh('city', SAMPLE_CITY),
     resources: fresh('resources', SAMPLE_RESOURCES),
     workflows: fresh('workflows', workflows),
     github: throwing('github'),
-    tokens: throwing('tokens'),
   };
 }
 

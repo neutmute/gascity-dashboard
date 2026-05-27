@@ -23,7 +23,7 @@ export async function loadFixtureSnapshot(): Promise<DashboardSnapshot> {
  * Returns a loader function suitable for SourceCacheOptions.loadFixture.
  * The returned function rejects when the requested source's fixture data
  * is null (the placeholder shape used for collectors that aren't wired
- * yet — aimux, github, tokens at v0). Callers MUST only bind this for
+ * yet — github at v0). Callers MUST only bind this for
  * sources with populated fixture data; binding for a null-data source
  * makes both the live load AND the fixture fallback throw, leaving the
  * cache in the synthetic-error state. Coverage at
