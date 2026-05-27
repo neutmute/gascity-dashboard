@@ -123,6 +123,25 @@ async function runTheme(browser, theme) {
       result,
       'staged add line did not render with add diff class',
     );
+    // Related section (gascity-dashboard-j4x) — RK3 density gate. The
+    // high-volume fixture (40 molecule members + 3 unresolved links) must
+    // render exactly one aggregate maroon mark in the whole viewport, cap
+    // rows per group with a `+ N more`, and pass the greyscale test (every
+    // state still readable without colour).
+    const relatedHeading = page.getByRole('heading', { name: /^related$/i });
+    await relatedHeading.waitFor({ timeout: 5_000 });
+    await page.getByText(/40 resolved, 3 unresolved/i).waitFor({ timeout: 5_000 });
+    // One Mark Rule: at most one maroon (the .text-accent class) on the
+    // page once the Related summary line crosses the unresolved threshold.
+    const maroonCount = await page.locator('.text-accent').count();
+    if (maroonCount > 1) {
+      result.errors.push(`Related section broke the One Mark Rule, maroon count=${maroonCount}`);
+    }
+    await page.getByRole('button', { name: /show detail/i }).click();
+    // Density: the 40-member molecule group must collapse to a `+ N more`.
+    await page.getByText(/\+ \d+ more/i).waitFor({ timeout: 5_000 });
+    await page.getByRole('button', { name: /hide detail/i }).click();
+
     await page.getByRole('tab', { name: /session/i }).click();
     await page.getByText(/select a node/i).waitFor({ timeout: 5_000 });
 
@@ -416,6 +435,20 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
+  // Bead-ID linked view (gascity-dashboard-j4x). A high-volume fixture
+  // (40-entity stuck run) exercises RK3 density discipline: capped rows
+  // per group + `+ N more`, the unresolved/derived/staleness summary line,
+  // and exactly ONE aggregate section-level maroon. Without this route the
+  // --test harness would fail on the unmocked /api/links/* call the
+  // WorkflowRunDetail Related section now makes.
+  await context.route('**/api/links/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(highVolumeLinkView()),
+    });
+  });
+
   await context.route('**/api/sessions/*/peek', async (route) => {
     const sessionId = route.request().url().match(/\/api\/sessions\/([^/]+)\/peek$/)?.[1];
     const transcript = sessionId ? fixture.transcripts[decodeURIComponent(sessionId)] : null;
@@ -449,6 +482,41 @@ async function installApiFixtureRoutes(context) {
       body,
     });
   });
+}
+
+function highVolumeLinkView() {
+  const focus = { key: 'bead:racoon-city:gc-adopt-pr-active', type: 'bead', ref: 'gc-adopt-pr-active' };
+  const nodes = [
+    { ...focus, title: 'Adopt PR #42', status: 'in_progress', url: null, fetchedAt: '2026-05-25T00:00:00Z', unresolved: false },
+  ];
+  const edges = [];
+  // 40 molecule-member beads (resolved) — exercises the per-group cap.
+  for (let i = 0; i < 40; i += 1) {
+    const key = `bead:racoon-city:gc-step-${i}`;
+    nodes.push({ key, type: 'bead', ref: `gc-step-${i}`, title: `step ${i}`, status: 'closed', url: null, fetchedAt: '2026-05-25T00:00:00Z', unresolved: false });
+    edges.push({ from: focus.key, to: key, relation: 'molecule', provenance: 'supervisor', resolved: true });
+  }
+  // A merged-and-vanished PR (unresolved + stale 24h) and two unresolved
+  // issues — three unresolved links cross the aggregate-maroon threshold.
+  nodes.push({ key: 'github_pr:github:42', type: 'github_pr', ref: 'pr/42', title: null, status: null, url: 'https://github.com/sjarmak/gascity-dashboard/pull/42', fetchedAt: '2026-05-24T00:00:00Z', unresolved: true });
+  edges.push({ from: focus.key, to: 'github_pr:github:42', relation: 'pr', provenance: 'supervisor', resolved: false });
+  for (const n of ['7', '8']) {
+    nodes.push({ key: `github_issue:github:${n}`, type: 'github_issue', ref: `issue/${n}`, title: null, status: null, url: null, fetchedAt: null, unresolved: true });
+    edges.push({ from: focus.key, to: `github_issue:github:${n}`, relation: 'issue', provenance: 'supervisor', resolved: false });
+  }
+  return {
+    focus,
+    nodes,
+    edges,
+    stats: [
+      { relation: 'molecule', resolved: 40, unresolved: 0, nCandidates: 0 },
+      { relation: 'pr', resolved: 0, unresolved: 1, nCandidates: 0 },
+      { relation: 'issue', resolved: 0, unresolved: 2, nCandidates: 0 },
+    ],
+    partial: false,
+    generatedAt: '2026-05-25T00:00:00.000Z',
+    asOf: '2026-05-24T00:00:00Z',
+  };
 }
 
 function snapshotFixture() {

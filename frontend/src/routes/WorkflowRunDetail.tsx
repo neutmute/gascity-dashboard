@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { SCOPE_REF_RE } from 'gas-city-dashboard-shared';
 import type {
@@ -8,10 +9,13 @@ import type {
 } from 'gas-city-dashboard-shared';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
+import { RelatedEntities } from '../components/RelatedEntities';
+import { BeadDetailModal } from '../components/BeadDetailModal';
 import { WorkflowRunDiagram } from '../components/workflow/WorkflowRunDiagram';
 import { WorkflowRunTabs } from '../components/workflow/WorkflowRunTabs';
 import { useWorkflowNodeSelection } from '../hooks/useWorkflowNodeSelection';
 import { useWorkflowRunDetail } from '../hooks/useWorkflowRunDetail';
+import { useEntityLinks } from '../hooks/useEntityLinks';
 
 export function WorkflowRunDetailPage() {
   const { workflowId } = useParams<{ workflowId: string }>();
@@ -37,6 +41,19 @@ export function WorkflowRunDetailPage() {
     initialNodeId,
     routeSelectionKey,
   );
+
+  // Related entities (gascity-dashboard-j4x). Focus on the run's root
+  // bead so the index surfaces the molecule members, sessions, and the
+  // PR/issue this run is adopting.
+  const links = useEntityLinks(detail?.rootBeadId ?? null);
+  const [viewingBeadId, setViewingBeadId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, 30_000);
+    return () => clearInterval(tick);
+  }, []);
 
   const synopsis = detail
     ? `${detail.progress.visibleNodeCount} nodes, ${detail.progress.edgeCount} edges. ${summarizeNodeStatuses(detail.progress)}. Current working tree diff is shown for the run execution folder.`
@@ -97,6 +114,19 @@ export function WorkflowRunDetailPage() {
             />
             <WorkflowRunTabs diff={diff} selectedNode={selectedNode} />
           </div>
+          <RelatedEntities
+            view={links.view}
+            loading={links.loading}
+            error={links.error}
+            now={now}
+            onOpenBead={setViewingBeadId}
+          />
+          <BeadDetailModal
+            open={viewingBeadId !== null}
+            onClose={() => setViewingBeadId(null)}
+            beadId={viewingBeadId}
+            onOpenBead={setViewingBeadId}
+          />
         </>
       ) : null}
     </section>

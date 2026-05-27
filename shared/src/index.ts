@@ -14,6 +14,7 @@ export {
 } from './session-resolve.js';
 export * from './workflow-detail.js';
 export type * from './workflow-snapshot.js';
+export * from './links.js';
 
 export type IsoTimestamp = string;
 export type BeadId = string;

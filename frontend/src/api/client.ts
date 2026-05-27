@@ -19,6 +19,7 @@ import type {
   WorkflowDiffResponse,
   WorkflowRunDetail,
   WorkflowScopeKind,
+  EntityLinkView,
 } from 'gas-city-dashboard-shared';
 
 // Typed fetch client for the admin backend's /api/*. Shares types with
@@ -216,6 +217,11 @@ export const api = {
   // gascity-dashboard-0nn: per-item sling dispatch. The bulk-sling
   // action bar fans out one call per selected item via Promise.allSettled
   // so a single 4xx/5xx doesn't block the rest of the batch.
+  // Bead-ID cross-entity linked view (gascity-dashboard-j4x). `ref` is a
+  // bead id, `pr/<n>`, `issue/<n>`, a session id, or a workflow id.
+  entityLinks(ref: string): Promise<EntityLinkView> {
+    return request('GET', `/api/links/${encodeURIComponent(ref)}`);
+  },
   maintainerSling(payload: {
     kind: 'pr' | 'issue';
     number: number;

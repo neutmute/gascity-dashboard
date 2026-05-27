@@ -3,6 +3,8 @@ import type { GcBead } from 'gas-city-dashboard-shared';
 import { api, ApiClientError } from '../api/client';
 import { Modal } from './Modal';
 import { StatusBadge, type StatusTone } from './StatusBadge';
+import { RelatedEntities } from './RelatedEntities';
+import { useEntityLinks } from '../hooks/useEntityLinks';
 
 // Click-to-read modal for a single bead. Used from the Beads list
 // rows and the AgentDetail assigned-beads list. Pure read view;
@@ -19,6 +21,12 @@ interface BeadDetailModalProps {
   beadId: string | null;
   /** Optional pre-loaded bead. When present and complete, skips the fetch. */
   initialBead?: GcBead | null;
+  /**
+   * Re-center the modal on a related bead (gascity-dashboard-j4x). When
+   * omitted, related bead rows render as plain text (no in-place
+   * navigation) so the modal can be used standalone.
+   */
+  onOpenBead?: (beadId: string) => void;
 }
 
 export function BeadDetailModal({
@@ -26,10 +34,27 @@ export function BeadDetailModal({
   onClose,
   beadId,
   initialBead = null,
+  onOpenBead,
 }: BeadDetailModalProps) {
   const [bead, setBead] = useState<GcBead | null>(initialBead);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const links = useEntityLinks(open ? beadId : null);
+
+  // Live clock for RelatedEntities staleness / "as of" (matches the
+  // setNow+interval pattern in AgentDetail / WorkflowRunDetail). A frozen
+  // Date.now() captured once would never re-tick while the modal stays
+  // open, so the relative ages would silently go stale. Only tick while
+  // the modal is open and the tab is visible.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    setNow(Date.now());
+    const tick = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, 30_000);
+    return () => clearInterval(tick);
+  }, [open]);
 
   useEffect(() => {
     if (!open || !beadId) return;
@@ -98,7 +123,16 @@ export function BeadDetailModal({
       ) : bead === null ? (
         <p className="text-fg-muted italic">No bead.</p>
       ) : (
-        <BeadBody bead={bead} />
+        <>
+          <BeadBody bead={bead} />
+          <RelatedEntities
+            view={links.view}
+            loading={links.loading}
+            error={links.error}
+            now={now}
+            onOpenBead={onOpenBead}
+          />
+        </>
       )}
     </Modal>
   );

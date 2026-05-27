@@ -1,0 +1,27 @@
+# Premortem: bead-ID linked view — risk registry
+
+Three independent failure lenses (data-model, scope/wrong-thing, design-integrity) imagining the v1 had failed 6 months out. All three rated their failure High+ and High-likelihood, and all three traced to the same earliest cause: **the build proceeded on clean fixtures and open questions left open.**
+
+## Risk registry (sorted by score; Severity×Likelihood, Crit=4/High=3/Med=2/Low=1 × High=3/Med=2/Low=1)
+
+| # | Lens | Severity | Likelihood | Score | Root cause | Top mitigation |
+|---|------|----------|-----------|-------|-----------|----------------|
+| 1 | Data-model | Critical | High | 12 | Index built on the **raw bead set**, one tier below `execution-instances.ts` — so it re-collapses retry/duplicate beads and ignores city/rig scope nuance; bead-ID keyed bare, not namespaced | Source the index from the **reconciled execution-instance model**; exclude historical retries; key on `scope_kind:scope_ref:id` |
+| 2 | Scope | High | High | 9 | Greenlit the full generalized layer on internal research/debate alone, with the **GitHub→bead value+data-existence question (OQ#2) left open**; R11 instrumentation specified to increment but with **no reader** | **Pre-build data probe** gates the build; if GitHub→bead resolves poorly, ship inline-links-only. Give R11 an owner + surfaced rollup + numeric promote/kill thresholds + sunset |
+| 3 | Design-integrity | High | High | 9 | R6/R2/R7 honest-state rows rendered as **unbounded, always-visible, equally-weighted** content on surfaces whose contract forbids the container that would wall noise off → "information theatre"; per-entity maroon breaks the One-Mark Rule | Cap rows/group; collapse unresolved/derived/staleness into **one summary line** (density on demand); **aggregate section-level maroon**, never per-row; high-volume greyscale+maroon snap gate |
+
+## Cross-cutting themes (highest-confidence — surfaced independently by multiple lenses)
+
+1. **The fixtures lie (all 3 lenses).** The v1 demos clean because fixtures have unique IDs, all-open PRs, one iteration per node, and few entities. Production has rig scopes, retry beads, merged-and-vanished PRs, and 40-entity runs — every one of which breaks a different part of the design. **This convergence is the strongest signal in the premortem.** → Production-shaped fixtures (rig-scoped, multi-iteration, merged-PR, high-volume) are a pre-build requirement, not a follow-up.
+2. **Open Questions gate value/correctness, not just implementation (data-model + scope).** OQ#1 (bead-ID uniqueness) and OQ#2 (does the GitHub→bead edge have data) were left "open" while the build proceeded — but #1 determines whether the join key is even valid and #2 determines whether the headline value exists. → Convert OQ#1/#2 into **go/no-go pre-build gates** with thresholds.
+3. **R11 instrumentation with no consumer is theater (scope, echoed by design).** A counter that increments into a log nobody reads produces two failure states: deferred directions never promoted (stalls at v1 forever) or promoted on cherry-picked data. → R11's acceptance must name the reader, the rollup surface, the threshold, and the cadence.
+
+## Design modifications to fold into the PRD (ranked)
+
+1. **Build the index on the reconciled `WorkflowDisplayNode`/execution-instance model, not raw beads.** Exclude `historical` retry beads from "related" (or render under a `superseded` sub-label); namespace the key `scope:ref:id`. Add a multi-iteration + rig-scoped acceptance test. [Risk 1 — Critical]
+2. **Add a pre-build data-probe gate.** Count bead→PR resolution against a live snapshot before building R1/R3; if GitHub→bead resolves below a pre-committed threshold to a *present* entity, ship only the targeted reverse inline-links (the minimal-camp design) and stop. [Risk 2]
+3. **UI density discipline:** cap rows per group with a typeset `+ N more`; collapse unresolved/derived/staleness into a single summary line; one aggregate section-level maroon; add a high-volume fixture + greyscale/maroon-count assertion to `scripts/snap-workflow-detail.mjs`. [Risk 3]
+4. **R11 gets a consumer:** surfaced rollup in the Health/Activity register, named owner, numeric promote/kill thresholds reviewed on a fixed cadence, and a v1 **sunset condition** (if the section sees fewer interactions than the 3 existing inline links over 30 days, remove it). [Risk 2]
+5. **Production-shaped fixtures as a pre-build test requirement.** [Risks 1, 3 — the cross-cutting theme]
+
+Full narratives retained in the diverge/converge/premortem agent outputs (this session).

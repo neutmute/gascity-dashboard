@@ -17,6 +17,7 @@ import { sessionStreamRouter } from './routes/session-stream.js';
 import { agentsRouter } from './routes/agents.js';
 import { beadsRouter } from './routes/beads.js';
 import { workflowsRouter } from './routes/workflows.js';
+import { linksRouter } from './routes/links.js';
 import { mailRouter } from './routes/mail.js';
 import { mailSendRouter } from './routes/mail-send.js';
 import { gitRouter } from './routes/git.js';
@@ -83,6 +84,10 @@ function main(): void {
   });
   writeRouter.use('/sessions', sessionsRouter(gc));
   writeRouter.use('/workflows', workflowsRouter(gc, { rigRoot: config.cityPath }));
+  // Bead-ID cross-entity linked view (gascity-dashboard-j4x). GET-only
+  // reads; the relation index is rebuilt per request from the bead set +
+  // session list (per-snapshot rebuild — no persisted graph to invalidate).
+  writeRouter.use('/links', linksRouter(gc));
   writeRouter.use('/agents', agentsRouter(config.cityPath));
   writeRouter.use('/beads', beadsRouter(gc, config.cityPath));
   writeRouter.use('/mail', mailRouter(gc));

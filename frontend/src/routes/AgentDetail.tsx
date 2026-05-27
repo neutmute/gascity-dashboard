@@ -8,8 +8,10 @@ import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { LiveSessionPeek, isSessionStreamable } from '../components/LiveSessionPeek';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
+import { RelatedEntities } from '../components/RelatedEntities';
 import { useViewingAs } from '../contexts/ViewingAsContext';
 import { useGcEventRefresh } from '../hooks/useGcEvents';
+import { useEntityLinks } from '../hooks/useEntityLinks';
 import { formatRelative } from '../hooks/time';
 
 // Read-only drilldown for a single agent. Route: /agents/:slug where
@@ -41,6 +43,7 @@ export function AgentDetailPage() {
   const [beads, setBeads] = useState<GcBead[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewingBead, setViewingBead] = useState<GcBead | null>(null);
+  const [viewingBeadId, setViewingBeadId] = useState<string | null>(null);
 
   const [now, setNow] = useState(() => Date.now());
 
@@ -264,6 +267,12 @@ export function AgentDetailPage() {
     void refreshDirectives();
   }, [primeAlias, directivesAliasFetched, refreshDirectives]);
 
+  // Related entities (gascity-dashboard-j4x). Focus on the session id so
+  // the index surfaces the beads, workflow runs, and PRs adjacent to this
+  // agent's work. Hook is called unconditionally (before the early
+  // returns) per rules-of-hooks; a null ref leaves it idle.
+  const links = useEntityLinks(session?.id ?? null);
+
   const chatMessages = useMemo<ReadonlyArray<GcMailItem>>(() => {
     if (chatItems === null) return [];
     const agents = new Set(agentAliases);
@@ -323,6 +332,15 @@ export function AgentDetailPage() {
   const label = session.alias ?? session.title ?? session.id;
   const tone = stateTone(session.state);
 
+  const openBead = (id: string) => {
+    setViewingBead(null);
+    setViewingBeadId(id);
+  };
+  const closeBead = () => {
+    setViewingBead(null);
+    setViewingBeadId(null);
+  };
+
   return (
     <section>
       <PageHeader
@@ -367,7 +385,18 @@ export function AgentDetailPage() {
       <BeadsAssigned
         beads={assignedBeads}
         loading={beads === null}
-        onSelect={setViewingBead}
+        onSelect={(b) => {
+          setViewingBeadId(null);
+          setViewingBead(b);
+        }}
+      />
+
+      <RelatedEntities
+        view={links.view}
+        loading={links.loading}
+        error={links.error}
+        now={now}
+        onOpenBead={openBead}
       />
 
       <section>
@@ -402,10 +431,11 @@ export function AgentDetailPage() {
       />
 
       <BeadDetailModal
-        open={viewingBead !== null}
-        onClose={() => setViewingBead(null)}
-        beadId={viewingBead?.id ?? null}
+        open={viewingBead !== null || viewingBeadId !== null}
+        onClose={closeBead}
+        beadId={viewingBead?.id ?? viewingBeadId}
         initialBead={viewingBead}
+        onOpenBead={openBead}
       />
     </section>
   );

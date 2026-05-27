@@ -68,6 +68,20 @@ beforeEach(() => {
     if (url === '/api/sessions/gc-session-fix-i1/peek') {
       return jsonResponse(transcripts['gc-session-fix-i1']);
     }
+    if (url.startsWith('/api/links/')) {
+      // RelatedEntities (gascity-dashboard-j4x) fetches its view on mount.
+      // A focus-only view keeps this test scoped to the run-detail flow.
+      const ref = decodeURIComponent(url.slice('/api/links/'.length));
+      return jsonResponse({
+        focus: { key: `bead:c:${ref}`, type: 'bead', ref },
+        nodes: [{ key: `bead:c:${ref}`, type: 'bead', ref, title: null, status: null, url: null, fetchedAt: null, unresolved: false }],
+        edges: [],
+        stats: [],
+        partial: false,
+        generatedAt: '2026-05-25T00:00:00.000Z',
+        asOf: null,
+      });
+    }
     throw new Error(`unexpected fetch: ${url}`);
   }));
 });
