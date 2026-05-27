@@ -90,9 +90,9 @@ interface SpyLoads {
 
 /**
  * Build a SourceCacheMap wired with spy-tracked loaders so tests can
- * assert exactly which caches were re-fetched. aimux/github/tokens are
- * wired with throwing loaders (the v0 deferred contract — they surface
- * as status='error' in the snapshot).
+ * assert exactly which caches were re-fetched. github is wired with a
+ * throwing loader (the v0 deferred contract — it surfaces as
+ * status='error' in the snapshot).
  */
 function buildCaches(opts: {
   loadCounts: SpyLoads;
@@ -111,13 +111,6 @@ function buildCaches(opts: {
   const resourcesLoad = opts.resourcesResult ?? (() => SAMPLE_RESOURCES);
 
   return {
-    aimux: new SourceCache({
-      source: 'aimux',
-      ttlMs: 30_000,
-      load: () => {
-        throw new Error('aimux collector not wired');
-      },
-    }),
     city: new SourceCache({
       source: 'city',
       ttlMs: 45_000,
@@ -157,13 +150,6 @@ function buildCaches(opts: {
       ttlMs: 30_000,
       load: () => {
         throw new Error('github collector not wired');
-      },
-    }),
-    tokens: new SourceCache({
-      source: 'tokens',
-      ttlMs: 30_000,
-      load: () => {
-        throw new Error('tokens collector not wired');
       },
     }),
   };
@@ -382,9 +368,9 @@ describe('POST /api/snapshot/refresh', () => {
       });
       assert.equal(res.status, 200);
 
-      // All wired sources re-fetched. (aimux/github/tokens throw on load,
-      // so their counter is unrelated — the spy is only on the three
-      // wired collectors.)
+      // All wired sources re-fetched. (github throws on load, so its
+      // counter is unrelated — the spy is only on the three wired
+      // collectors.)
       assert.equal(counts.city, 2);
       assert.equal(counts.workflows, 2);
       assert.equal(counts.resources, 2);

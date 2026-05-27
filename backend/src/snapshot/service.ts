@@ -1,5 +1,4 @@
 import type {
-  AimuxQuotaSummary,
   CityStatusSummary,
   DashboardHeadline,
   DashboardRuntimeConfig,
@@ -11,7 +10,6 @@ import type {
   SourceName,
   SourceState,
   SourceStatus,
-  TokenUsageSummary,
   WorkflowSummary,
 } from 'gas-city-dashboard-shared';
 
@@ -36,33 +34,29 @@ import {
  */
 export const SESSIONS_CACHE_TTL_MS = 45 * 1000;
 
-// SnapshotService — gascity-dashboard-8nj. Composes the six SourceCaches
+// SnapshotService — gascity-dashboard-8nj. Composes the SourceCaches
 // behind one aggregate getSnapshot()/refresh() façade. Ported from
 // demo-dash src/server/snapshot.ts; differences from the upstream port:
 //   - Uses GcClient (HTTP) for city sessions, not the gc/bd subprocess
 //     CLIs (dkb Q1 — HTTP is the canonical contract here).
-//   - aimux/github/tokens caches are wired with throwing load() (their
-//     collectors are deferred) — snapshot serves status='error' for those
-//     three sources in v0. NOT a bug; the deferred contract is explicit.
+//   - github cache is wired with throwing load() (its collector is
+//     deferred) — snapshot serves status='error' for that source in v0.
+//     NOT a bug; the deferred contract is explicit.
 //   - workflows runs the real lane builder (gascity-dashboard-0t6) over
 //     gc.listBeads({ limit }) with the co-located workflowBeadFilter.
 
 export const SOURCE_NAMES = [
-  'aimux',
   'city',
   'resources',
   'workflows',
   'github',
-  'tokens',
 ] as const satisfies readonly SourceName[];
 
 export interface SourceCacheMap {
-  aimux: SourceCache<AimuxQuotaSummary>;
   city: SourceCache<CityStatusSummary>;
   resources: SourceCache<ResourceSummary>;
   workflows: SourceCache<WorkflowSummary>;
   github: SourceCache<GitHubSummary>;
-  tokens: SourceCache<TokenUsageSummary>;
 }
 
 export interface SnapshotHealth {
@@ -274,12 +268,6 @@ function buildDefaultCaches(
   const useFixture = config.useFixtures;
 
   return {
-    // aimux/github/tokens: deferred collectors (dkb Q2 pending). The
-    // throwing load() materializes as status='error' in the snapshot —
-    // the only correct shape until their endpoints / subprocess
-    // wrappers land. NO fixture binding either — fixtureSourceLoader
-    // would throw on these per loader.ts's null-data guard.
-    aimux: notWiredCache<AimuxQuotaSummary>('aimux', now),
     city: createCityStatusSourceCache({
       gc,
       cityPath: cityPath ?? '',
@@ -312,14 +300,13 @@ function buildDefaultCaches(
       loadFixture: useFixture ? fixtureSourceLoader('workflows') : undefined,
     }),
     github: notWiredCache<GitHubSummary>('github', now),
-    tokens: notWiredCache<TokenUsageSummary>('tokens', now),
   };
 }
 
 /**
- * SourceCache for sources whose collectors are deferred (aimux, github,
- * tokens — dkb Q2 pending). Load throws so the snapshot envelope carries
- * status='error' for those sources. Tests cover the deferred shape in
+ * SourceCache for sources whose collectors are deferred (github — dkb Q2
+ * pending). Load throws so the snapshot envelope carries status='error'
+ * for that source. Tests cover the deferred shape in
  * snapshot-route.test.ts via the same constructor pattern.
  *
  * Opts out of the default-on sanitizer (gascity-dashboard-4r5) via
@@ -383,16 +370,14 @@ async function readSources(
     }
   };
 
-  const [aimux, city, resources, workflows, github, tokens] = await Promise.all([
-    settle('aimux', caches.aimux),
+  const [city, resources, workflows, github] = await Promise.all([
     settle('city', caches.city),
     settle('resources', caches.resources),
     settle('workflows', caches.workflows),
     settle('github', caches.github),
-    settle('tokens', caches.tokens),
   ]);
 
-  return { aimux, city, resources, workflows, github, tokens };
+  return { city, resources, workflows, github };
 }
 
 /**
@@ -447,11 +432,9 @@ function buildHeadline(sources: DashboardSources): DashboardHeadline {
 
 function sourceStatuses(caches: SourceCacheMap): Record<SourceName, SourceStatus> {
   return {
-    aimux: caches.aimux.snapshot().status,
     city: caches.city.snapshot().status,
     resources: caches.resources.snapshot().status,
     workflows: caches.workflows.snapshot().status,
     github: caches.github.snapshot().status,
-    tokens: caches.tokens.snapshot().status,
   };
 }

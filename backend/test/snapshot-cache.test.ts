@@ -145,7 +145,7 @@ describe('SourceCache', () => {
 
   test('never-fetched + load() throws → synthetic error state with null data', async () => {
     const cache = new SourceCache({
-      source: 'tokens',
+      source: 'github',
       ttlMs: 1_000,
       load: async () => {
         throw new Error('upstream offline');
@@ -156,7 +156,7 @@ describe('SourceCache', () => {
     });
 
     const state = await cache.get();
-    assert.equal(state.source, 'tokens');
+    assert.equal(state.source, 'github');
     assert.equal(state.status, 'error');
     assert.equal(state.data, null);
     assert.equal(state.error, 'upstream offline');
@@ -167,7 +167,7 @@ describe('SourceCache', () => {
   test('snapshot() returns last cached state without triggering a load', async () => {
     let loadCount = 0;
     const cache = new SourceCache({
-      source: 'aimux',
+      source: 'city',
       ttlMs: 1_000,
       load: () => {
         loadCount += 1;
@@ -230,7 +230,7 @@ describe('SourceCache', () => {
     // confirming a non-Promise return resolves correctly through .get().
     let loadCount = 0;
     const cache = new SourceCache<{ value: string }>({
-      source: 'tokens',
+      source: 'workflows',
       ttlMs: 1_000,
       load: (): { value: string } => {
         loadCount += 1;
@@ -370,10 +370,10 @@ describe('SourceCache error sanitization (gascity-dashboard-fhj, gascity-dashboa
   test('default-on uses the source name in the generic message', async () => {
     // Pin the message shape so the contract is observable from outside
     // the cache module (the route layer surfaces this to the operator).
-    const cases: Array<{ source: 'city' | 'workflows' | 'tokens'; expected: string }> = [
+    const cases: Array<{ source: 'city' | 'workflows' | 'github'; expected: string }> = [
       { source: 'city', expected: 'city collection failed' },
       { source: 'workflows', expected: 'workflows collection failed' },
-      { source: 'tokens', expected: 'tokens collection failed' },
+      { source: 'github', expected: 'github collection failed' },
     ];
 
     for (const { source, expected } of cases) {
