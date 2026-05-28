@@ -449,7 +449,9 @@ export interface DoltNomsSample {
 export interface DoltNomsTrend {
   /** Up to 144 samples (24 h at 10-min cadence). */
   samples: DoltNomsSample[];
-  /** Null when the metric source isn't wired yet (mechanic surgical-ask td-ulgrt6). */
+  /** Identifies the upstream metric in use (e.g. `status.store_health.size_bytes`).
+   *  Null only before the sampler's first run (pre-boot); a missing-source state
+   *  is signalled by `available`, not by this field. */
   source: string | null;
   available: boolean;
 }

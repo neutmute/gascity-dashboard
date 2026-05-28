@@ -63,7 +63,14 @@ export async function sampleDoltNomsSize(
 ): Promise<number | null> {
   const status = await fetchStatus();
   const sizeBytes = status.store_health?.size_bytes;
-  return typeof sizeBytes === 'number' ? sizeBytes : null;
+  // Validate at the supervisor trust boundary: a non-finite or negative
+  // size_bytes (Infinity / NaN / -1) is meaningless as a byte count and
+  // would either serialise as JSON `null` (silent corruption) or render as
+  // garbage in the trend. Treat it as absent.
+  if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
+    return null;
+  }
+  return sizeBytes;
 }
 
 export function doltRouter(): Router {

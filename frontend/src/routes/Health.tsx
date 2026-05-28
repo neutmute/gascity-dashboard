@@ -113,7 +113,7 @@ export function HealthPage() {
               <p className="text-body text-fg-muted italic">Loading.</p>
             ) : !trend.available ? (
               <p className="text-body text-fg-muted italic">
-                Metric source not yet wired. The ring buffer is running; samples will appear once <code className="text-fg">sampleDoltNomsSize()</code> lands.
+                Supervisor is not reporting <code className="text-fg">store_health</code>. Samples will resume when the supervisor recovers.
               </p>
             ) : trend.samples.length === 0 ? (
               <p className="text-body text-fg-muted italic">

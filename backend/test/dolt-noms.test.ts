@@ -20,6 +20,19 @@ describe('sampleDoltNomsSize', () => {
     assert.equal(bytes, null);
   });
 
+  // Trust-boundary validation: a malformed or degraded supervisor could
+  // return Infinity / NaN / negative size_bytes. JSON.stringify turns
+  // Infinity/NaN into "null" (silent corruption) and a negative byte count
+  // is meaningless. Treat all three as absent.
+  test('returns null for non-finite or negative size_bytes (Infinity / NaN / -1)', async () => {
+    for (const bad of [Infinity, -Infinity, NaN, -1]) {
+      const bytes = await sampleDoltNomsSize(() =>
+        Promise.resolve({ store_health: { size_bytes: bad } } as GcStatus),
+      );
+      assert.equal(bytes, null, `expected null for size_bytes=${bad}`);
+    }
+  });
+
   test('propagates a status-fetch error instead of swallowing it', async () => {
     await assert.rejects(
       () =>
