@@ -54,7 +54,10 @@ const BeadSchema = z.object({
   title: z.string(),
   status: z.string(),
   issue_type: z.string(),
-  priority: z.number().finite(),
+  // The supervisor's OpenAPI spec declares priority optional and in practice
+  // sends `null` for non-engineering beads (messages, sessions, …). Accept
+  // both null and missing so the whole bead list isn't rejected.
+  priority: z.number().finite().nullish(),
   created_at: z.string(),
   description: z.string().optional(),
   owner: z.string().optional(),
