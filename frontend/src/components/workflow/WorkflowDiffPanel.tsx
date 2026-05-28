@@ -17,7 +17,7 @@ export function WorkflowDiffPanel({ diff }: WorkflowDiffPanelProps) {
   if (diff.kind === 'error') {
     return (
       <p className="text-body text-accent" role="alert">
-        {diff.error ?? 'Git diff unavailable.'}
+        {diff.error}
       </p>
     );
   }
@@ -30,8 +30,8 @@ export function WorkflowDiffPanel({ diff }: WorkflowDiffPanelProps) {
           {diff.changedFiles.length} changed file{diff.changedFiles.length === 1 ? '' : 's'}
         </span>
       </div>
-      {diff.rootPath && (
-        <p className="mt-1 text-label text-fg-faint break-all">{diff.rootPath}</p>
+      {diff.rootPath.kind === 'known' && (
+        <p className="mt-1 text-label text-fg-faint break-all">{diff.rootPath.path}</p>
       )}
       {diff.changedFiles.length > 0 && (
         <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-label uppercase tracking-wider text-fg-muted">
@@ -88,6 +88,7 @@ function diffLineClass(line: string): string {
   // Diff lines are body type; the +/-/@@ glyph carries the state (Greyscale
   // Test), so they stay neutral. Coloring them — maroon worst of all — would
   // breach the One Mark Rule and put accent on body type (DESIGN.md §2).
+  // gascity-dashboard-rl5y.
   if (line.startsWith('@@')) return 'diff-line-hunk text-fg-faint';
   if (line.startsWith('+')) return 'diff-line-add text-fg';
   if (line.startsWith('-')) return 'diff-line-remove text-fg-muted';

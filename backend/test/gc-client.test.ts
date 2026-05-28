@@ -120,7 +120,7 @@ describe('GcClient timeout', () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ items: [{ id: 'td-abc' }], total: 1 }));
+      res.end(JSON.stringify({ items: [validBead('td-abc')], total: 1 }));
     });
     const gc = new GcClient({
       baseUrl: fake.baseUrl,
@@ -130,6 +130,22 @@ describe('GcClient timeout', () => {
     const out = await gc.listBeads(undefined, { limit: 10 });
     assert.equal(out.items.length, 1);
     assert.equal(out.total, 1);
+  });
+
+  test('rejects 200 responses with no JSON body at the transport boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.end();
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listSessions(),
+      /gc supervisor returned an empty response body/,
+    );
   });
 });
 
@@ -269,66 +285,236 @@ describe('GcClient error handling', () => {
     assert.doesNotMatch(msg, /\/city\//, `message leaked city path: ${msg}`);
     assert.doesNotMatch(msg, /secret-city/, `message leaked city name: ${msg}`);
   });
-});
 
-// gascity-dashboard-x82: GcClient.getStatus GETs /v0/city/{name}/status,
-// the source of store_health.size_bytes for the dolt-noms trend sampler.
-describe('GcClient.getStatus', () => {
-  let fake: Fake;
-  beforeEach(async () => {
-    fake = await startFake();
-  });
-  afterEach(async () => {
-    await fake.close();
-  });
-
-  test('GETs the city status endpoint and parses store_health', async () => {
-    let method: string | undefined;
-    let url: string | undefined;
+  test('uses generated OpenAPI path and query params for workflow lookup', async () => {
+    let seenUrl = '';
     fake.setHandler((req, res) => {
-      method = req.method;
-      url = req.url;
+      seenUrl = req.url ?? '';
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
-      res.end(
-        JSON.stringify({
-          store_health: {
-            size_bytes: 123_456,
-            live_rows: 2139,
-            ratio_mb_per_row: 0.05,
-            last_gc_at: '2026-05-26T00:00:00Z',
-          },
-        }),
-      );
+      res.end(JSON.stringify(validWorkflowSnapshot('wf/one')));
     });
-    const gc = new GcClient({ baseUrl: fake.baseUrl, cityName: 'test-city', defaultTimeoutMs: 5_000 });
-
-    const out = await gc.getStatus();
-
-    assert.equal(method, 'GET');
-    assert.equal(url, '/v0/city/test-city/status');
-    assert.equal(out.store_health?.size_bytes, 123_456);
-    assert.equal(out.store_health?.live_rows, 2139);
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'city one',
+      defaultTimeoutMs: 5_000,
+    });
+    await gc.getWorkflow('wf/one', undefined, {
+      scopeKind: 'rig',
+      scopeRef: 'rig-a',
+    });
+    const seen = new URL(`http://example.test${seenUrl}`);
+    assert.equal(seen.pathname, '/v0/city/city%20one/workflow/wf%2Fone');
+    assert.equal(seen.searchParams.get('scope_kind'), 'rig');
+    assert.equal(seen.searchParams.get('scope_ref'), 'rig-a');
   });
 
-  test('non-2xx throws a redacted error (status only, no topology)', async () => {
-    fake.setHandler((_req, res) => {
-      res.statusCode = 503;
-      res.end('upstream down');
+  test('fetches health through the generated city-scoped supervisor path', async () => {
+    let seenUrl = '';
+    fake.setHandler((req, res) => {
+      seenUrl = req.url ?? '';
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        status: 'ok',
+        version: 'dev',
+        city: 'city one',
+        uptime_sec: 12,
+      }));
     });
-    const gc = new GcClient({ baseUrl: fake.baseUrl, cityName: 'secret-city', defaultTimeoutMs: 5_000 });
-    let err: unknown;
-    try {
-      await gc.getStatus();
-    } catch (e) {
-      err = e;
-    }
-    assert.ok(err instanceof Error, 'expected an Error rejection');
-    const msg = (err as Error).message;
-    assert.match(msg, /503/);
-    assert.match(msg, /gc supervisor returned/);
-    assert.doesNotMatch(msg, /secret-city/, `message leaked city name: ${msg}`);
-    assert.doesNotMatch(msg, /127\.0\.0\.1/, `message leaked loopback address: ${msg}`);
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'city one',
+      defaultTimeoutMs: 5_000,
+    });
+    const health = await gc.health();
+    assert.deepEqual(health, {
+      status: 'ok',
+      version: 'dev',
+      city: 'city one',
+      uptime_sec: 12,
+    });
+    assert.equal(seenUrl, '/v0/city/city%20one/health');
+  });
+
+  test('passes filtered include-closed query when listing beads', async () => {
+    let seenUrl = '';
+    fake.setHandler((req, res) => {
+      seenUrl = req.url ?? '';
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [], total: 0 }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'city one',
+      defaultTimeoutMs: 5_000,
+    });
+    await gc.listBeads(undefined, {
+      limit: 25,
+      status: 'closed',
+      type: 'task',
+      rig: 'todo-app',
+      all: true,
+    });
+    const seen = new URL(`http://example.test${seenUrl}`);
+    assert.equal(seen.pathname, '/v0/city/city%20one/beads');
+    assert.equal(seen.searchParams.get('limit'), '25');
+    assert.equal(seen.searchParams.get('status'), 'closed');
+    assert.equal(seen.searchParams.get('type'), 'task');
+    assert.equal(seen.searchParams.get('rig'), 'todo-app');
+    assert.equal(seen.searchParams.get('all'), 'true');
+  });
+
+  test('rejects malformed session list payloads at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [{ id: 'missing-required-fields' }] }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listSessions(),
+      /invalid gc supervisor listSessions payload/i,
+    );
+  });
+
+  test('rejects malformed bead payloads at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ id: 'td-abc' }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.getBead('td-abc'),
+      /invalid gc supervisor getBead payload/i,
+    );
+  });
+
+  test('rejects malformed bead list payloads at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [{ id: 'td-abc' }], total: 1 }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listBeads(undefined, { limit: 10 }),
+      /invalid gc supervisor listBeads payload/i,
+    );
+  });
+
+  test('rejects malformed mail list payloads at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [{ id: 'mail-1' }], total: 1 }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listMail(),
+      /invalid gc supervisor listMail payload/i,
+    );
+  });
+
+  test('rejects malformed event list payloads at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [{ type: 'session.started' }] }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listEvents(),
+      /invalid gc supervisor listEvents payload/i,
+    );
+  });
+
+  test('rejects malformed workflow snapshots at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        workflow_id: 'gc-root',
+        root_bead_id: 'gc-root',
+        root_store_ref: 'city:test',
+        resolved_root_store: 'city:test',
+        scope_kind: 'city',
+        scope_ref: 'test',
+        snapshot_version: 1,
+        partial: false,
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.getWorkflow('gc-root'),
+      /invalid gc supervisor getWorkflow payload/i,
+    );
+  });
+
+  test('rejects malformed formula detail payloads at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        name: 'mol-demo',
+        preview: {
+          nodes: [{ title: 'missing id' }],
+          edges: [],
+        },
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.getFormulaDetail('mol-demo', { scopeKind: 'rig', scopeRef: 'demo' }, 'plan'),
+      /invalid gc supervisor getFormulaDetail payload/i,
+    );
+  });
+
+  test('rejects transcript payloads without turns at the supervisor boundary', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ id: 'gc-session-1' }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.fetchTranscript('gc-session-1'),
+      /invalid gc supervisor fetchTranscript payload/i,
+    );
   });
 });
 
@@ -555,3 +741,34 @@ describe('GcClient.sendMail', () => {
     assert.doesNotMatch(msg, /127\.0\.0\.1/, `message leaked loopback address: ${msg}`);
   });
 });
+
+function validBead(id: string) {
+  return {
+    id,
+    title: id,
+    status: 'open',
+    issue_type: 'task',
+    priority: 0,
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function validWorkflowSnapshot(workflowId: string) {
+  return {
+    workflow_id: workflowId,
+    root_bead_id: 'gc-root',
+    root_store_ref: 'city:test',
+    resolved_root_store: 'city:test',
+    scope_kind: 'city',
+    scope_ref: 'test',
+    snapshot_version: 1,
+    snapshot_event_seq: null,
+    partial: false,
+    stores_scanned: [],
+    beads: [],
+    deps: [],
+    logical_nodes: [],
+    logical_edges: [],
+    scope_groups: [],
+  };
+}
