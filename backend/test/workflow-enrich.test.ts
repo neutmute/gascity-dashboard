@@ -104,6 +104,7 @@ describe('workflow presentation enrichment fixtures', () => {
     const preApprovalCi = findNode(detail, 'pre-approval-ci');
     assert.equal(preApprovalCi.constructKind, 'condition');
     assert.equal(preApprovalCi.status, 'skipped');
+    assertRunningCurrentSessionInvariant(detail);
 
     assert.equal(
       detail.edges.some((edge) => edge.from === 'pre-approval-ci' && edge.to === 'gc-adopt-finalize'),
@@ -163,6 +164,7 @@ describe('workflow presentation enrichment fixtures', () => {
     assert.deepEqual(root.controlBadges, [
       { id: 'gc-finalize', label: 'finalize', status: 'completed' },
     ]);
+    assertRunningCurrentSessionInvariant(detail);
     assert.equal(JSON.stringify(detail).toLowerCase().includes('ralph'), false);
   });
 
@@ -215,11 +217,14 @@ describe('workflow presentation enrichment fixtures', () => {
     assert.equal(findNode(detail, 'ready-step').status, 'ready');
     assert.equal(findNode(detail, 'blocked-step').status, 'blocked');
     assert.equal(findNode(detail, 'done-step').status, 'completed');
+    assert.equal(findNode(detail, 'gc-waiting').status, 'active');
     assert.deepEqual(detail.progress.statusCounts, {
-      ready: 2,
+      active: 1,
+      ready: 1,
       blocked: 1,
       completed: 1,
     });
+    assertRunningCurrentSessionInvariant(detail);
   });
 
   test('marks loop body nodes missing from the latest iteration as historical-only', () => {
@@ -236,6 +241,7 @@ describe('workflow presentation enrichment fixtures', () => {
     assertStackedIteration(current, 2, 1, 'review-loop');
     assert.equal(current.historicalOnly, false);
     assert.equal(current.visibleInGraph, true);
+    assertRunningCurrentSessionInvariant(detail);
   });
 
   test('rejects graph.v2 contract aliases outside current supervisor metadata', () => {
@@ -410,6 +416,31 @@ function sessionId(instance: WorkflowExecutionInstance | undefined): string {
 
 function assertNoSession(instance: WorkflowExecutionInstance | undefined): void {
   assert.equal(instance?.session.kind, 'none');
+}
+
+function assertRunningCurrentSessionInvariant(detail: WorkflowRunDetail): void {
+  for (const node of detail.nodes) {
+    for (const instance of node.executionInstances) {
+      if (!instance.currentIteration || !isRunningStatus(instance.status)) continue;
+      if (instance.session.kind === 'attached') {
+        assert.equal(
+          instance.session.streamable,
+          true,
+          `${node.id}/${instance.id} is running and attached, so it must be streamable`,
+        );
+      } else {
+        assert.equal(
+          instance.session.reason,
+          'session_unresolved',
+          `${node.id}/${instance.id} is running without a session, so it must be explicit`,
+        );
+      }
+    }
+  }
+}
+
+function isRunningStatus(status: WorkflowExecutionInstance['status']): boolean {
+  return status === 'active' || status === 'running';
 }
 
 function formulaOrderGraphSnapshot(edges: {

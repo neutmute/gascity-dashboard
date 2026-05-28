@@ -294,6 +294,11 @@ Implemented:
 - deterministic browser harness for the detail route
 - generated OpenAPI path/query/response types plus `openapi-fetch` for
   supervisor workflow endpoint calls
+- centralized client-error reporting for workflow detail load failures, diff
+  failures, malformed city event payloads, and malformed selected-session
+  stream events
+- tests asserting that current running execution instances either have an
+  attached streamable session or expose `session_unresolved`
 
 Partially implemented:
 
@@ -313,8 +318,8 @@ Not implemented:
   OpenAPI component shapes.
 - Incremental event application to the run projection. This is intentionally
   not a goal until the backend can own the event reducer.
-- Persistent frontend telemetry for failed detail refreshes or malformed stream
-  events.
+- Durable analytics or metrics beyond the existing centralized client-error
+  log.
 
 ## Ideal Target State
 
@@ -395,10 +400,7 @@ stable backend boundaries:
 
 1. Capture real graph.v2 supervisor snapshots for completed, running, blocked,
    retried, and looped runs; use them as backend enrichment fixtures.
-2. Add tests that assert every `WorkflowDisplayNode` with a running current
-   instance either resolves a streamable session or surfaces an explicit
-   unresolved-session state.
-3. Replace handwritten supervisor runtime decoders with schema-derived
+2. Replace handwritten supervisor runtime decoders with schema-derived
    validation while keeping dashboard-owned wire shapes explicit.
-4. Push canonical graph presentation semantics down into Gas City or a shared
+3. Push canonical graph presentation semantics down into Gas City or a shared
    package when the dashboard approximation is stable enough to specify.

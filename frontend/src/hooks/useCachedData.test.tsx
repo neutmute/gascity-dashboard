@@ -74,6 +74,20 @@ describe('useCachedData', () => {
     expect(result.current.data).toBe('fresh result');
     expect(getCached<string>(cacheKey)).toBe('fresh result');
   });
+
+  it('reports the latest fetch failure through onError', async () => {
+    const onError = vi.fn();
+    const failure = new Error('network down');
+
+    const { result } = renderHook(() =>
+      useCachedData('broken', () => Promise.reject(failure), { onError }),
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toBe('network down');
+    expect(onError).toHaveBeenCalledWith(failure);
+  });
 });
 
 function fetcherFor<T>(fetchers: Record<string, () => Promise<T>>, key: string) {

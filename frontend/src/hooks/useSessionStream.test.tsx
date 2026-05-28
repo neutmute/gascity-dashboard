@@ -1,7 +1,8 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import type { TranscriptResult } from 'gas-city-dashboard-shared';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { api } from '../api/client';
+import { reportClientError } from '../lib/clientErrorReporting';
 import { useSessionStream } from './useSessionStream';
 
 vi.mock('../api/client', () => ({
@@ -11,7 +12,12 @@ vi.mock('../api/client', () => ({
   },
 }));
 
+vi.mock('../lib/clientErrorReporting', () => ({
+  reportClientError: vi.fn(() => Promise.resolve({ status: 'reported' })),
+}));
+
 const eventSources: FakeEventSource[] = [];
+const mockReportClientError = reportClientError as Mock;
 
 const transcript: TranscriptResult = {
   session_id: 'gc-session-1',
@@ -28,6 +34,7 @@ describe('useSessionStream', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     vi.mocked(api.peekSession).mockReset();
     vi.mocked(api.sessionStreamUrl).mockClear();
+    mockReportClientError.mockClear();
   });
 
   afterEach(() => {
@@ -96,6 +103,11 @@ describe('useSessionStream', () => {
       status: 'degraded',
       error: 'Malformed session stream event.',
     });
+    expect(mockReportClientError).toHaveBeenCalledWith({
+      component: 'session-stream',
+      operation: 'parse stream event',
+      message: 'gc-session-1: Malformed session stream event.',
+    });
   });
 
   it('reports initial transcript load failure without nullable result fields', async () => {
@@ -108,6 +120,11 @@ describe('useSessionStream', () => {
       status: 'failed',
       error: 'peek failed',
       stream: { status: 'idle' },
+    });
+    expect(mockReportClientError).toHaveBeenCalledWith({
+      component: 'session-stream',
+      operation: 'load transcript',
+      message: 'gc-session-1: peek failed',
     });
   });
 });

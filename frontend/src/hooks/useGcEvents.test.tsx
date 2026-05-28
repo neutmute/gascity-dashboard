@@ -1,14 +1,21 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { GC_EVENT_PREFIX } from 'gas-city-dashboard-shared';
+import { reportClientError } from '../lib/clientErrorReporting';
 import { useGcEventRefresh } from './useGcEvents';
 
 const eventSources: FakeEventSource[] = [];
+const mockReportClientError = reportClientError as Mock;
+
+vi.mock('../lib/clientErrorReporting', () => ({
+  reportClientError: vi.fn(() => Promise.resolve({ status: 'reported' })),
+}));
 
 describe('useGcEventRefresh', () => {
   beforeEach(() => {
     eventSources.length = 0;
     vi.stubGlobal('EventSource', FakeEventSource);
+    mockReportClientError.mockClear();
   });
 
   afterEach(() => {
@@ -39,6 +46,11 @@ describe('useGcEventRefresh', () => {
 
     expect(onMatch).not.toHaveBeenCalled();
     expect(result.current).toBe('degraded');
+    expect(mockReportClientError).toHaveBeenCalledWith({
+      component: 'gc-events',
+      operation: 'parse event',
+      message: 'Malformed gc event payload: invalid JSON.',
+    });
   });
 
   it('reports closed when EventSource is unavailable', () => {

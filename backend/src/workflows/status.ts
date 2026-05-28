@@ -14,7 +14,7 @@ export function presentationStatus(bead: GcWorkflowBead): WorkflowNodeStatus {
     return 'completed';
   }
   if (raw === 'in_progress' || raw === 'active' || raw === 'running') {
-    return nonEmpty(bead.assignee) ? 'active' : 'pending';
+    return 'active';
   }
   if (raw === 'blocked') return 'blocked';
   if (raw === 'ready') return 'ready';

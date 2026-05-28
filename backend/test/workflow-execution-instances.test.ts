@@ -111,6 +111,27 @@ describe('workflow execution instance presentation', () => {
     assert.equal(node.executionInstances[1]?.status, 'completed');
   });
 
+  test('surfaces running work without session metadata as an explicit unresolved session', () => {
+    const group = nodeGroup({
+      beads: [
+        bead({
+          id: 'running-without-session',
+          status: 'in_progress',
+        }),
+      ],
+    });
+
+    const node = buildWorkflowDisplayNode(group, [], undefined);
+    const instance = node.executionInstances[0];
+
+    assert.equal(node.status, 'active');
+    assert.equal(instance?.currentIteration, true);
+    assert.deepEqual(instance?.session, {
+      kind: 'none',
+      reason: 'session_unresolved',
+    });
+  });
+
   test('does not render attempt badges from malformed max-attempt metadata', () => {
     const group = nodeGroup({
       constructKind: 'retry',

@@ -205,16 +205,16 @@ async function runTheme(browser, theme) {
     }
 
     await page.getByRole('button', { name: /pre-approval ci repair loop/i }).click();
-    await page.getByText(/no session is attached/i).waitFor({ timeout: 5_000 });
-    const sessionTabUnavailable = await page
+    await page.getByText(/session unresolved for this node/i).waitFor({ timeout: 5_000 });
+    const sessionTabAvailable = await page
       .getByRole('tab', { name: /session/i })
       .evaluate((node) =>
         node instanceof HTMLButtonElement &&
-        node.disabled &&
-        node.getAttribute('aria-disabled') === 'true',
+        !node.disabled &&
+        node.getAttribute('aria-disabled') !== 'true',
       );
-    if (!sessionTabUnavailable) {
-      result.errors.push('Session tab stayed available for a selected node with no session link');
+    if (!sessionTabAvailable) {
+      result.errors.push('Session tab was unavailable for a selected node with unresolved session state');
     }
 
     await page.goto(`${BASE}/workflows/gc-adopt-pr-partial`, {

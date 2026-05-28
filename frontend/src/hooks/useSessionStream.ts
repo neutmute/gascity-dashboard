@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 import type { TranscriptResult, TranscriptTurn } from 'gas-city-dashboard-shared';
+import { errorMessage } from 'gas-city-dashboard-shared';
 import { api } from '../api/client';
+import { reportClientError } from '../lib/clientErrorReporting';
 
 export type SessionStreamProgress =
   | { status: 'idle' }
@@ -25,8 +28,10 @@ export function useSessionStream(
     status: 'idle',
     stream: { status: 'idle' },
   });
+  const malformedEventReportedRef = useRef(false);
 
   useEffect(() => {
+    malformedEventReportedRef.current = false;
     if (!sessionId) {
       setState({ status: 'idle', stream: { status: 'idle' } });
       return;
@@ -62,6 +67,9 @@ export function useSessionStream(
           const onTurn = (event: MessageEvent<string>) => {
             if (cancelled) return;
             const payload = parseStreamPayload(event.data);
+            if (payload.kind === 'invalid') {
+              reportMalformedSessionEvent(sessionId, malformedEventReportedRef);
+            }
             setState((current) => {
               const base = current.status === 'ready' ? current.result : result;
               if (payload.kind === 'invalid') {
@@ -106,9 +114,10 @@ export function useSessionStream(
       },
       (err: unknown) => {
         if (!cancelled) {
+          reportSessionStreamError('load transcript', sessionId, err);
           setState({
             status: 'failed',
-            error: err instanceof Error ? err.message : 'Failed to load session.',
+            error: errorMessage(err) || 'Failed to load session.',
             stream: { status: 'idle' },
           });
         }
@@ -122,6 +131,27 @@ export function useSessionStream(
   }, [sessionId, stream]);
 
   return state;
+}
+
+function reportMalformedSessionEvent(
+  sessionId: string,
+  reportedRef: MutableRefObject<boolean>,
+): void {
+  if (reportedRef.current) return;
+  reportedRef.current = true;
+  reportSessionStreamError('parse stream event', sessionId, MALFORMED_SESSION_STREAM_EVENT);
+}
+
+function reportSessionStreamError(
+  operation: string,
+  sessionId: string,
+  err: unknown,
+): void {
+  void reportClientError({
+    component: 'session-stream',
+    operation,
+    message: `${sessionId}: ${errorMessage(err)}`,
+  });
 }
 
 type SessionStreamPayload =

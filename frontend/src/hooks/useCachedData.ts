@@ -17,6 +17,7 @@ export interface UseCachedDataOptions<T> {
    * the GET as `fetcher` and the POST as `refreshFetcher`.
    */
   refreshFetcher?: () => Promise<T>;
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -39,6 +40,8 @@ export function useCachedData<T>(
   fetcherRef.current = fetcher;
   const refreshFetcherRef = useRef(options?.refreshFetcher);
   refreshFetcherRef.current = options?.refreshFetcher;
+  const onErrorRef = useRef(options?.onError);
+  onErrorRef.current = options?.onError;
   const currentKeyRef = useRef(key);
   currentKeyRef.current = key;
   const runIdRef = useRef(0);
@@ -63,6 +66,7 @@ export function useCachedData<T>(
       } catch (err) {
         if (runIdRef.current === runId) {
           setError(err instanceof Error ? err.message : 'failed to load');
+          onErrorRef.current?.(err);
         }
       } finally {
         if (runIdRef.current === runId) setLoading(false);

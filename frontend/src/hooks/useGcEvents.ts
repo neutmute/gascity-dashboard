@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { reportClientError } from '../lib/clientErrorReporting';
 
 // gascity-dashboard-iew: EventSource against the backend's same-origin
 // SSE proxy at /api/events/stream. The backend pipes the gc supervisor's
@@ -44,8 +45,14 @@ export function useGcEventRefresh(
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retryDelayMs = 1_000;
+    let malformedEventReported = false;
 
     const COALESCE_MS = 2_500;
+    const reportMalformedEventOnce = (reason: string) => {
+      if (malformedEventReported) return;
+      malformedEventReported = true;
+      reportMalformedEvent(reason);
+    };
     const fireMatch = () => {
       lastFireRef.current = Date.now();
       onMatchRef.current();
@@ -98,11 +105,13 @@ export function useGcEventRefresh(
           parsed = JSON.parse(msg.data) as { type?: string };
         } catch {
           setState('degraded');
+          reportMalformedEventOnce('invalid JSON');
           return;
         }
         const t = parsed?.type;
         if (typeof t !== 'string') {
           setState('degraded');
+          reportMalformedEventOnce('missing string event type');
           return;
         }
         setState('open');
@@ -144,4 +153,12 @@ export function useGcEventRefresh(
   }, [prefixKey]);
 
   return state;
+}
+
+function reportMalformedEvent(reason: string): void {
+  void reportClientError({
+    component: 'gc-events',
+    operation: 'parse event',
+    message: `Malformed gc event payload: ${reason}.`,
+  });
 }

@@ -504,7 +504,11 @@ describe('workflows detail route', () => {
       const body = await res.json();
 
       const rootNode = body.nodes.find((node: { id?: string }) => node.id === 'gc-root');
-      assert.equal(rootNode?.status, 'ready');
+      assert.equal(rootNode?.status, 'active');
+      assert.deepEqual(rootNode?.executionInstances[0].session, {
+        kind: 'none',
+        reason: 'session_unresolved',
+      });
 
       const codexNode = body.nodes.find((node: { semanticNodeId?: string }) => node.semanticNodeId === 'review-codex');
       assert.equal(codexNode?.status, 'active');
@@ -518,7 +522,7 @@ describe('workflows detail route', () => {
     }
   });
 
-  test('does not mark an unassigned workflow root active or attach a dispatcher transcript', async () => {
+  test('marks an unassigned active workflow root as unresolved without attaching a dispatcher transcript', async () => {
     const snapshot = graphV2Snapshot();
     snapshot.scope_kind = 'rig';
     snapshot.scope_ref = 'tic-tac-toe-app';
@@ -606,10 +610,10 @@ describe('workflows detail route', () => {
       assert.equal(res.status, 200);
       const body = await res.json();
       const rootNode = body.nodes.find((node: { id?: string }) => node.id === 'gc-root');
-      assert.equal(rootNode?.status, 'ready');
+      assert.equal(rootNode?.status, 'active');
       assert.deepEqual(rootNode?.executionInstances[0].session, {
         kind: 'none',
-        reason: 'not_started',
+        reason: 'session_unresolved',
       });
     } finally {
       await close();

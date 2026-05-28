@@ -10,7 +10,6 @@ interface WorkflowRunTabsProps {
 
 export function WorkflowRunTabs({ diff, selectedNode }: WorkflowRunTabsProps) {
   const [tab, setTab] = useState<'diff' | 'session'>('diff');
-  const sessionDisabled = selectedNode !== null && !nodeHasSession(selectedNode);
   const activeTabId = `workflow-evidence-tab-${tab}`;
 
   useEffect(() => {
@@ -35,7 +34,6 @@ export function WorkflowRunTabs({ diff, selectedNode }: WorkflowRunTabsProps) {
           id="workflow-evidence-tab-session"
           controls="workflow-evidence-panel"
           active={tab === 'session'}
-          disabled={sessionDisabled}
           onClick={() => setTab('session')}
         >
           Session
@@ -89,8 +87,4 @@ function TabButton({
       {children}
     </button>
   );
-}
-
-function nodeHasSession(node: WorkflowDisplayNode): boolean {
-  return node.executionInstances.some((instance) => instance.session.kind === 'attached');
 }

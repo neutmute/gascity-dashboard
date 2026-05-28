@@ -40,7 +40,7 @@ export function WorkflowNodeSessionPanel({
     return <p className="text-body text-fg-muted italic">Select a node to inspect its session.</p>;
   }
   if (sessionInstances.length === 0) {
-    return <p className="text-body text-fg-muted italic">No session is attached to this node.</p>;
+    return <p className="text-body text-fg-muted italic">{sessionUnavailableCopy(node)}</p>;
   }
 
   const selected =
@@ -53,7 +53,7 @@ export function WorkflowNodeSessionPanel({
     (instance) => iterationValue(instance) === selectedIteration,
   );
   if (!selected) {
-    return <p className="text-body text-fg-muted italic">No session is attached to this node.</p>;
+    return <p className="text-body text-fg-muted italic">{sessionUnavailableCopy(node)}</p>;
   }
 
   return (
@@ -188,6 +188,33 @@ function streamBadge(stream: SessionStreamProgress): {
     case 'idle':
       return { tone: 'neutral', label: 'snapshot' };
   }
+}
+
+function sessionUnavailableCopy(node: WorkflowDisplayNode): string {
+  const missing = node.executionInstances.filter((instance) => instance.session.kind === 'none');
+  const hasUnresolvedRunning = missing.some(
+    (instance) =>
+      instance.currentIteration &&
+      instance.session.kind === 'none' &&
+      instance.session.reason === 'session_unresolved' &&
+      isRunningStatus(instance.status),
+  );
+  if (hasUnresolvedRunning) {
+    return 'Session unresolved for the current running node.';
+  }
+  if (
+    missing.some(
+      (instance) =>
+        instance.session.kind === 'none' && instance.session.reason === 'session_unresolved',
+    )
+  ) {
+    return 'Session unresolved for this node.';
+  }
+  return 'This node has not started a session yet.';
+}
+
+function isRunningStatus(status: WorkflowExecutionInstance['status']): boolean {
+  return status === 'active' || status === 'running';
 }
 
 function preferredInstance(

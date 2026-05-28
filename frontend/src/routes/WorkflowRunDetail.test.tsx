@@ -331,17 +331,17 @@ describe('WorkflowRunDetailPage', () => {
     await waitFor(() => expect(secondStream?.closed).toBe(true));
   });
 
-  it('marks the Session tab unavailable when the selected node has no session link', async () => {
+  it('keeps the Session tab available so a selected node can explain unresolved sessions', async () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
-    const sessionTab = screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement;
-    expect(sessionTab.disabled).toBe(false);
+    expect((screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: /pre-approval ci repair loop/i }));
 
-    await screen.findByText(/no session is attached/i);
-    expect(sessionTab.disabled).toBe(true);
-    expect(sessionTab.getAttribute('aria-disabled')).toBe('true');
+    await screen.findByText(/session unresolved for this node/i);
+    const sessionTab = screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement;
+    expect(sessionTab.disabled).toBe(false);
+    expect(sessionTab.getAttribute('aria-disabled')).toBeNull();
   });
 
   it('renders the current execution-folder diff with prefix-based line classes', async () => {
@@ -384,7 +384,7 @@ describe('WorkflowRunDetailPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: /pre-approval ci repair loop/i }));
-    expect(screen.getByText(/no session is attached/i)).toBeTruthy();
+    expect(screen.getByText(/session unresolved for this node/i)).toBeTruthy();
   });
 
   it('shows retry attempt tabs for multiple attempts in the selected execution context', async () => {

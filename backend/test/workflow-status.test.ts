@@ -30,7 +30,7 @@ describe('workflow status presentation', () => {
     );
   });
 
-  test('maps assigned active supervisor statuses to active dashboard state', () => {
+  test('maps active supervisor statuses to active dashboard state', () => {
     assert.equal(
       presentationStatus(workflowBead({ status: 'in_progress', assignee: 'agent-session' })),
       'active',
@@ -43,12 +43,9 @@ describe('workflow status presentation', () => {
       presentationStatus(workflowBead({ status: 'running', assignee: 'agent-session' })),
       'active',
     );
-  });
-
-  test('does not mark unassigned active supervisor statuses as running', () => {
-    assert.equal(presentationStatus(workflowBead({ status: 'in_progress' })), 'pending');
-    assert.equal(presentationStatus(workflowBead({ status: 'active' })), 'pending');
-    assert.equal(presentationStatus(workflowBead({ status: 'running' })), 'pending');
+    assert.equal(presentationStatus(workflowBead({ status: 'in_progress' })), 'active');
+    assert.equal(presentationStatus(workflowBead({ status: 'active' })), 'active');
+    assert.equal(presentationStatus(workflowBead({ status: 'running' })), 'active');
   });
 
   test('passes through terminal and waiting statuses, otherwise pending', () => {
