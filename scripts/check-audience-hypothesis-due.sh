@@ -37,6 +37,16 @@ if [ -z "${BEAD_ID}" ]; then
   exit 2
 fi
 
+# Defense-in-depth: bead ids in this repo are lowercase alphanumeric + hyphens
+# + dots (e.g. gascity-dashboard-9yj.1). Reject anything else before passing
+# to `bd show`. The current `bd` CLI quotes its argument safely, but a future
+# CLI refactor that shells out unquoted would otherwise turn a malicious env
+# var into command injection.
+if ! [[ "${BEAD_ID}" =~ ^[a-z0-9.-]+$ ]]; then
+  echo "audience-hypothesis: AUDIENCE_HYPOTHESIS_BEAD has unexpected format: ${BEAD_ID}" >&2
+  exit 2
+fi
+
 if ! command -v bd >/dev/null 2>&1; then
   echo "audience-hypothesis: 'bd' CLI not on PATH" >&2
   exit 2
@@ -60,8 +70,8 @@ if [ -z "${TARGET}" ]; then
 fi
 
 TODAY=$(date -u +%Y-%m-%d)
-if [[ "${TODAY}" > "${TARGET}" ]]; then
-  echo "audience-hypothesis: target date ${TARGET} has passed (today=${TODAY})" >&2
+if [[ "${TODAY}" >= "${TARGET}" ]]; then
+  echo "audience-hypothesis: target date ${TARGET} reached (today=${TODAY})" >&2
   echo "audience-hypothesis: bead ${BEAD_ID} is still open AND no ${TOMBSTONE}" >&2
   echo "audience-hypothesis: per PRD §7, choose ONE: open Phase 2 design bead, OR write the tombstone" >&2
   exit 1

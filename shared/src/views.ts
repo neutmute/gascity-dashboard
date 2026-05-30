@@ -100,7 +100,14 @@ export interface CityContext<TGc extends GcClientLike = GcClientLike, TConfig = 
   cityPath: string;
   /** Per-city data directory. Modules MUST derive paths from this, not
    *  from config-dirname operations. Closes the leak surface premortem
-   *  #5 found (per-city MaintainerRefresher writing the same global path). */
+   *  #5 found (per-city MaintainerRefresher writing the same global path).
+   *
+   *  OWNERSHIP: the host constructs the path but does NOT create the
+   *  directory. Each module is responsible for `fs.mkdir(path.dirname(myFile),
+   *  { recursive: true })` before writing its own sub-paths. The host's
+   *  `cityName` is validated against `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i` at
+   *  config-load time so this path segment can never escape the
+   *  cities/ root via path.join's `..` normalization. */
   cityDataDir: string;
   /** gc supervisor surface (Phase 1: full client; Phase 2/3 may narrow). */
   gc: TGc;
