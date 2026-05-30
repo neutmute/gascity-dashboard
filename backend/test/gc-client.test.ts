@@ -736,6 +736,10 @@ describe('GcClient error handling', () => {
             run_detail_available: true,
           },
         ],
+        // mfb9: FormulaFeedBody.partial is declared `boolean` (required) in
+        // the supervisor's OpenAPI — keep the fixture aligned with the wire
+        // contract so the decoder's RequiredPartialField test passes.
+        partial: false,
       }));
     });
     const gc = new GcClient({
@@ -786,6 +790,244 @@ describe('GcClient error handling', () => {
       () => gc.listFormulaRuns({ scopeKind: 'city', scopeRef: 'ds-research' }),
       /invalid gc supervisor listFormulaRuns payload/i,
     );
+  });
+
+  test('mfb9: listFormulaRuns rejects payload missing required `partial` field', async () => {
+    // The supervisor's OpenAPI declares FormulaFeedBody.partial as required
+    // boolean (unlike the other List* envelopes whose partial is optional).
+    // Locking the dashboard-side contract: a body with valid items but no
+    // `partial` field must fail decoding, so a future supervisor regression
+    // that drops the field surfaces at the decoder edge instead of leaking
+    // `undefined` into consumers typed as `partial: boolean`.
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [] }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listFormulaRuns({ scopeKind: 'city', scopeRef: 'ds-research' }),
+      /invalid gc supervisor listFormulaRuns payload.*partial/i,
+    );
+  });
+
+  // gascity-dashboard-19w: GET /v0/city/{cityName}/rigs replaces the
+  // on-disk city.toml parse. These tests pin the GcClient.listRigs
+  // boundary — the snapshot-cityStatus tests inject a pre-decoded
+  // GcRigList directly, so without these the URL + decoder path is
+  // untested.
+
+  test('19w: listRigs decodes a populated rig list (name+path only)', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      // Supervisor's RigResponse carries more fields (agent_count, suspended,
+      // git status, etc.); GcRig is intentionally narrowed to name+path.
+      // RigSchema uses passthrough, so the extras are accepted but not
+      // surfaced in the typed output.
+      res.end(JSON.stringify({
+        items: [
+          { name: 'gascity', path: '/home/ds/gascity/polecat', agent_count: 3, suspended: false },
+          { name: 'shared',  path: '/home/ds/shared/work',     agent_count: 0, suspended: false },
+        ],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    const out = await gc.listRigs();
+    assert.equal(out.items.length, 2);
+    assert.equal(out.items[0]?.name, 'gascity');
+    assert.equal(out.items[0]?.path, '/home/ds/gascity/polecat');
+    assert.equal(out.items[1]?.name, 'shared');
+    assert.equal(out.items[1]?.path, '/home/ds/shared/work');
+  });
+
+  test('19w: listRigs accepts items=null + partial signal (mirrors izgc F3 pattern)', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        items: null,
+        partial: true,
+        partial_errors: ['rig backend gascity unreachable'],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    const out = await gc.listRigs();
+    assert.deepEqual(out.items, []);
+    assert.equal(out.partial, true);
+    assert.deepEqual(out.partial_errors, ['rig backend gascity unreachable']);
+  });
+
+  test('19w: listRigs rejects malformed rig entries (missing required name)', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ items: [{ path: '/no/name' }] }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listRigs(),
+      /invalid gc supervisor listRigs payload/i,
+    );
+  });
+
+  // gascity-dashboard-ay6: GET /v0/city/{cityName}/agents is the first-class
+  // agent roster. The dashboard previously reconstructed agent identity from
+  // the session list, which undercounts agents that don't have a running
+  // session. These tests pin the GcClient.listAgents boundary against the
+  // supervisor's `ListBodyAgentResponse` envelope.
+
+  test('ay6: listAgents decodes a populated roster with nested session info', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      // Mirror the shape from supervisor `AgentResponse` (gc-supervisor.ts:2070).
+      // Required: name, available, running, suspended, state. Optional fields the
+      // Agents view consumes: display_name, model, provider, pool, rig, activity,
+      // context_pct, context_window, last_output, active_bead, description,
+      // unavailable_reason, session.
+      res.end(JSON.stringify({
+        items: [
+          {
+            name: 'mayor',
+            display_name: 'Mayor',
+            available: true,
+            running: true,
+            suspended: false,
+            state: 'active',
+            provider: 'claude-code',
+            model: 'claude-opus-4-7',
+            pool: 'orchestration',
+            rig: '',
+            activity: 'thinking',
+            context_pct: 18,
+            context_window: 200_000,
+            // Extra supervisor fields (last_output, active_bead) ride through
+            // via passthrough but the dashboard-side GcAgent intentionally
+            // narrows to fields the Agents view consumes; the decoder drops
+            // them from the typed output.
+            last_output: 'reviewing PR',
+            active_bead: 'gascity-dashboard-ay6',
+            session: {
+              name: 'gc-sess-mayor',
+              attached: true,
+              last_activity: '2026-05-29T10:00:00Z',
+            },
+          },
+          {
+            // Agent with no running session — the canonical case the
+            // session-derived path under-counted.
+            name: 'kb3',
+            available: true,
+            running: false,
+            suspended: false,
+            state: 'asleep',
+            provider: 'codex',
+          },
+        ],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    const out = await gc.listAgents();
+    assert.equal(out.items.length, 2);
+    assert.equal(out.items[0]?.name, 'mayor');
+    assert.equal(out.items[0]?.display_name, 'Mayor');
+    assert.equal(out.items[0]?.running, true);
+    assert.equal(out.items[0]?.state, 'active');
+    assert.equal(out.items[0]?.session?.name, 'gc-sess-mayor');
+    assert.equal(out.items[0]?.session?.attached, true);
+    assert.equal(out.items[0]?.session?.last_activity, '2026-05-29T10:00:00Z');
+    // The orphan agent's session must be absent (no silent {} fabrication).
+    assert.equal(out.items[1]?.name, 'kb3');
+    assert.equal(out.items[1]?.session, undefined);
+    assert.equal(out.items[1]?.running, false);
+  });
+
+  test('ay6: listAgents accepts items=null + partial signal (mirrors izgc F3 pattern)', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        items: null,
+        partial: true,
+        partial_errors: ['agent backend gascity unreachable'],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    const out = await gc.listAgents();
+    assert.deepEqual(out.items, []);
+    assert.equal(out.partial, true);
+    assert.deepEqual(out.partial_errors, ['agent backend gascity unreachable']);
+  });
+
+  test('ay6: listAgents rejects malformed agent entries (missing required name)', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        items: [{ available: true, running: false, suspended: false, state: 'asleep' }],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    await assert.rejects(
+      () => gc.listAgents(),
+      /invalid gc supervisor listAgents payload/i,
+    );
+  });
+
+  test('ay6: getAgent decodes a single-agent detail response', async () => {
+    fake.setHandler((req, res) => {
+      assert.match(req.url ?? '', /\/v0\/city\/test\/agent\/mayor$/);
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        name: 'mayor',
+        display_name: 'Mayor',
+        available: true,
+        running: true,
+        suspended: false,
+        state: 'active',
+        provider: 'claude-code',
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 5_000,
+    });
+    const out = await gc.getAgent('mayor');
+    assert.equal(out.name, 'mayor');
+    assert.equal(out.display_name, 'Mayor');
+    assert.equal(out.state, 'active');
+    assert.equal(out.running, true);
   });
 
   test('rejects malformed mail list payloads at the supervisor boundary', async () => {

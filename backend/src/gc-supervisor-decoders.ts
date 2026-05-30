@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import type {
+  GcAgent,
+  GcAgentList,
   GcBead,
   GcBeadList,
   GcEventList,
   GcFormulaDetail,
   GcFormulaRunList,
   GcMailList,
+  GcRigList,
   GcSessionList,
   GcWorkflowSnapshot,
   SupervisorHealth,
@@ -83,6 +86,53 @@ const BeadSchema = z.object({
   dependent_count: z.number().finite().optional(),
   comment_count: z.number().finite().optional(),
   metadata: UnknownRecordSchema.optional(),
+}).passthrough();
+
+// Per-rig wire shape from `GET /v0/city/{name}/rigs`. The supervisor's
+// RigResponse carries agent_count, running_count, suspended, git status,
+// default_branch, prefix, last_activity — all of which we drop at the
+// edge because GcRig (shared) is intentionally narrow (name + path
+// only). Adding a field to GcRig means widening this schema first so the
+// SSOT contract stays one-way: shared.GcRig ⊆ supervisor.RigResponse.
+// gascity-dashboard-19w.
+const RigSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+}).passthrough();
+
+// Per-agent wire shape from `GET /v0/city/{name}/agents` and
+// `GET /v0/city/{name}/agent/{base}`. Mirrors the supervisor's
+// AgentResponse schema (backend/src/generated/gc-supervisor.ts:2070).
+// gascity-dashboard-ay6.
+//
+// Required fields per OpenAPI: name, available, running, suspended,
+// state. Embedded `session` is the supervisor's `SessionInfo` shape —
+// only `attached` + `name` are required there; `last_activity` is
+// optional. Absent `session` means the agent is configured but does not
+// currently have a running supervisor session (the canonical case the
+// session-derived path under-counted).
+const AgentSessionSchema = z.object({
+  name: z.string(),
+  attached: z.boolean(),
+  last_activity: z.string().optional(),
+}).passthrough();
+
+const AgentSchema = z.object({
+  name: z.string(),
+  available: z.boolean(),
+  running: z.boolean(),
+  suspended: z.boolean(),
+  state: z.string(),
+  display_name: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  pool: z.string().optional(),
+  rig: z.string().optional(),
+  activity: z.string().optional(),
+  context_pct: z.number().finite().optional(),
+  context_window: z.number().finite().optional(),
+  unavailable_reason: z.string().optional(),
+  session: AgentSessionSchema.optional(),
 }).passthrough();
 
 const MailItemSchema = z.object({
@@ -248,7 +298,14 @@ const HealthSchema = z.object({
 function listItemsField<T extends z.ZodTypeAny>(itemSchema: T) {
   return z.array(itemSchema).nullish().transform((v) => v ?? []);
 }
+// The supervisor's OpenAPI declares `partial` as optional on ListBodyBead,
+// ListBodySessionResponse, MailListBody, and ListBodyWireEvent — `PartialField`
+// mirrors that contract. FormulaFeedBody is the lone outlier: its `partial` is
+// declared `boolean` (required), so `listFormulaRuns` uses `RequiredPartialField`
+// instead. Keeping the two named helpers separate prevents the wire-shape drift
+// from leaking back into the optional-side decoders.
 const PartialField = z.boolean().optional();
+const RequiredPartialField = z.boolean();
 const PartialErrorsField = z.array(z.string())
   .nullish()
   .transform((v) => (v ?? undefined));
@@ -264,6 +321,34 @@ export const gcSupervisorDecoders = {
       value,
       'listSessions',
     );
+  },
+
+  listRigs(value: RawSupervisorSchema['ListBodyRigResponse']): GcRigList {
+    return decodeSupervisorPayload(
+      z.object({
+        items: listItemsField(RigSchema),
+        partial: PartialField,
+        partial_errors: PartialErrorsField,
+      }).passthrough(),
+      value,
+      'listRigs',
+    );
+  },
+
+  listAgents(value: RawSupervisorSchema['ListBodyAgentResponse']): GcAgentList {
+    return decodeSupervisorPayload(
+      z.object({
+        items: listItemsField(AgentSchema),
+        partial: PartialField,
+        partial_errors: PartialErrorsField,
+      }).passthrough(),
+      value,
+      'listAgents',
+    );
+  },
+
+  getAgent(value: RawSupervisorSchema['AgentResponse']): GcAgent {
+    return decodeSupervisorPayload(AgentSchema, value, 'getAgent');
   },
 
   getBead(value: RawSupervisorSchema['Bead']): GcBead {
@@ -313,7 +398,11 @@ export const gcSupervisorDecoders = {
     return decodeSupervisorPayload(
       z.object({
         items: listItemsField(FormulaRunSchema),
-        partial: PartialField,
+        // mfb9: FormulaFeedBody.partial is required (`boolean`) per OpenAPI —
+        // unlike its List* siblings whose `partial` is optional. The required
+        // helper here locks the dashboard-side contract so a missing field
+        // surfaces at the decoder edge instead of silently becoming `undefined`.
+        partial: RequiredPartialField,
         partial_errors: PartialErrorsField,
       }).passthrough(),
       value,

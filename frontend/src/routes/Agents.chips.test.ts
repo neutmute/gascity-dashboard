@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { GcSession } from 'gas-city-dashboard-shared';
-import { SESSION_CHIPS, buildSynopsis, stateTone } from './Agents';
+import type { GcAgent } from 'gas-city-dashboard-shared';
+import { AGENT_CHIPS, buildAgentSynopsis, stateTone } from './Agents';
 
-// Every named value in GcSessionState (shared/src/index.ts) must match
-// at least one chip. Otherwise, sessions in that state vanish silently
-// when any chip is active — the bug from gascity-dashboard-9yb. Listed
-// literally rather than via Exclude<GcSessionState, string> because the
-// union widens to string for forward-compat, which would yield never.
+// gascity-dashboard-ay6: the Agents view consumes the supervisor's
+// first-class agent roster (GcAgent), not the session list. These tests
+// pin the chip-coverage invariant on the agent shape: every state the
+// supervisor reports must match at least one chip, otherwise agents in
+// that state vanish silently when any chip is active (parallels the bug
+// from gascity-dashboard-9yb on the session side).
+
+// AgentResponse.state is a free `string` in the OpenAPI; this is the set
+// observed in this deployment + the named states the supervisor commits
+// to today. Same conservative posture as the previous NAMED_STATES list.
 const NAMED_STATES = [
   'creating',
   'active',
@@ -16,21 +21,22 @@ const NAMED_STATES = [
   'closed',
 ] as const;
 
-function mkSession(state: string): GcSession {
+function mkAgent(state: string, overrides: Partial<GcAgent> = {}): GcAgent {
   return {
-    id: `s-${state}`,
-    template: 'claude-code',
+    name: `agent-${state}`,
+    available: true,
+    running: state === 'active' || state === 'running',
+    suspended: false,
     state,
-    created_at: '2026-01-01T00:00:00Z',
-    attached: false,
+    ...overrides,
   };
 }
 
-describe('SESSION_CHIPS', () => {
-  it('every named GcSessionState matches at least one chip', () => {
+describe('AGENT_CHIPS', () => {
+  it('every named agent state matches at least one chip', () => {
     for (const state of NAMED_STATES) {
-      const session = mkSession(state);
-      const matched = SESSION_CHIPS.some((chip) => chip.match(session));
+      const agent = mkAgent(state);
+      const matched = AGENT_CHIPS.some((chip) => chip.match(agent));
       expect(
         matched,
         `state "${state}" must match at least one chip, otherwise it disappears when any chip is active`,
@@ -38,30 +44,31 @@ describe('SESSION_CHIPS', () => {
     }
   });
 
-  it('exposes a "detached" chip so detached sessions stay visible under chip filters', () => {
-    const detached = mkSession('detached');
-    const detachedChip = SESSION_CHIPS.find((chip) => chip.id === 'detached');
+  it('exposes a "detached" chip so detached agents stay visible under chip filters', () => {
+    const detached = mkAgent('detached');
+    const detachedChip = AGENT_CHIPS.find((chip) => chip.id === 'detached');
     expect(detachedChip, 'detached chip should exist').toBeDefined();
     expect(detachedChip?.match(detached)).toBe(true);
   });
 
-  it('detached sessions match only the detached chip when not running', () => {
-    const detached = mkSession('detached');
-    const matchingIds = SESSION_CHIPS.filter((chip) => chip.match(detached)).map(
+  it('detached agents match only the detached chip when not running', () => {
+    const detached = mkAgent('detached');
+    const matchingIds = AGENT_CHIPS.filter((chip) => chip.match(detached)).map(
       (chip) => chip.id,
     );
     expect(matchingIds).toEqual(['detached']);
   });
 
-  it('a detached session that is still running matches BOTH the running and detached chips', () => {
-    // gc can report a session as state='detached' (tmux disconnected) while
-    // its underlying process is still running. The running chip keys on
-    // s.running===true; the detached chip keys on s.state==='detached'. A
-    // detached-but-running session must surface under both filters so an
-    // operator scanning for 'what is alive right now' doesn't lose it just
-    // because the tmux attachment is gone. See gascity-dashboard-bi9.
-    const detachedAndRunning: GcSession = { ...mkSession('detached'), running: true };
-    const matchingIds = SESSION_CHIPS.filter((chip) => chip.match(detachedAndRunning)).map(
+  it('a detached agent whose process is still running matches BOTH the running and detached chips', () => {
+    // gc can report state='detached' (tmux disconnected) while the
+    // underlying process is still running. The running chip keys on
+    // a.running===true; the detached chip keys on a.state==='detached'.
+    // Detached-but-running must surface under both filters so an
+    // operator scanning for 'what is alive right now' doesn't lose it
+    // just because the tmux attachment is gone. Mirrors the session-side
+    // invariant from gascity-dashboard-bi9.
+    const detachedAndRunning = mkAgent('detached', { running: true });
+    const matchingIds = AGENT_CHIPS.filter((chip) => chip.match(detachedAndRunning)).map(
       (chip) => chip.id,
     );
     expect(matchingIds).toContain('running');
@@ -69,10 +76,21 @@ describe('SESSION_CHIPS', () => {
     // Bound the match set: only those two chips, no spurious third match.
     expect(matchingIds).toHaveLength(2);
   });
+
+  it('suspended agents match the suspended chip regardless of state', () => {
+    // Suspended is a roster-side signal the session list never carried
+    // (a suspended agent has no session). The dedicated chip lets the
+    // operator slice the new agent surface by it.
+    const suspended = mkAgent('asleep', { suspended: true });
+    const matchingIds = AGENT_CHIPS.filter((chip) => chip.match(suspended)).map(
+      (chip) => chip.id,
+    );
+    expect(matchingIds).toContain('suspended');
+  });
 });
 
 describe('stateTone', () => {
-  it('classifies detached sessions explicitly (not via default fallthrough)', () => {
+  it('classifies detached agents explicitly (not via default fallthrough)', () => {
     // Detached is paused-alive — same neutral palette as idle/asleep, but the
     // case is explicit so a reviewer sees the intent rather than a silent
     // default. See gascity-dashboard-x4k for context.
@@ -80,36 +98,42 @@ describe('stateTone', () => {
   });
 
   it('falls through to neutral for unknown states', () => {
-    // GcSessionState widens to `string` for forward-compat. Any state gc
-    // emits that the dashboard hasn't seen yet must land on neutral via the
-    // default branch — not crash, not lie with a tone we picked at random.
-    // Paired with the detached test above so a future change that
-    // accidentally drops the explicit detached case would still be caught
-    // (this test would not — that one would).
+    // AgentResponse.state is free `string` for forward-compat. Any state
+    // gc emits that the dashboard hasn't seen yet must land on neutral
+    // via the default branch — not crash, not lie with a tone we picked
+    // at random.
     expect(stateTone('this-state-does-not-exist')).toBe('neutral');
   });
 });
 
-describe('buildSynopsis', () => {
-  it('reports detached sessions as a distinct count, not bucketed under idle', () => {
-    const rows: GcSession[] = [
-      mkSession('active'),
-      mkSession('asleep'),
-      mkSession('asleep'),
-      mkSession('detached'),
+describe('buildAgentSynopsis', () => {
+  it('reports detached agents as a distinct count, not bucketed under idle', () => {
+    const rows: GcAgent[] = [
+      mkAgent('active'),
+      mkAgent('asleep'),
+      mkAgent('asleep'),
+      mkAgent('detached'),
     ];
-    const synopsis = buildSynopsis(rows);
+    const synopsis = buildAgentSynopsis(rows);
     expect(synopsis).toContain('1 active');
     expect(synopsis).toContain('2 idle');
     expect(synopsis).toContain('1 detached');
   });
 
-  it('omits detached from the synopsis when there are no detached sessions', () => {
-    const rows: GcSession[] = [mkSession('active'), mkSession('asleep')];
-    expect(buildSynopsis(rows)).not.toContain('detached');
+  it('omits detached from the synopsis when there are no detached agents', () => {
+    const rows: GcAgent[] = [mkAgent('active'), mkAgent('asleep')];
+    expect(buildAgentSynopsis(rows)).not.toContain('detached');
+  });
+
+  it('breaks suspended out as its own count', () => {
+    const rows: GcAgent[] = [
+      mkAgent('active'),
+      mkAgent('asleep', { suspended: true }),
+    ];
+    expect(buildAgentSynopsis(rows)).toContain('1 suspended');
   });
 
   it('returns the empty-state sentence when no rows', () => {
-    expect(buildSynopsis([])).toBe('No sessions running.');
+    expect(buildAgentSynopsis([])).toBe('No agents configured.');
   });
 });

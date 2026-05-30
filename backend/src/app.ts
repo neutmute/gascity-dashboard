@@ -88,7 +88,7 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
   writeRouter.use('/sessions', sessionsRouter(gc));
   writeRouter.use('/workflows', workflowsRouter(gc, { rigRoot: config.cityPath }));
   writeRouter.use('/links', linksRouter(gc));
-  writeRouter.use('/agents', agentsRouter(config.cityPath));
+  writeRouter.use('/agents', agentsRouter({ cityPath: config.cityPath, gc }));
   writeRouter.use('/beads', beadsRouter(gc, config.cityPath));
   writeRouter.use('/mail', mailRouter(gc));
   writeRouter.use(
@@ -129,7 +129,6 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
   const snapshotService = createSnapshotService({
     gc,
     config: dashboardConfig,
-    cityPath: config.cityPath,
   });
   writeRouter.use('/snapshot', snapshotRouter(snapshotService));
 

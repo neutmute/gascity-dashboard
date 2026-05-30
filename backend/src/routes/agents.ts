@@ -5,9 +5,14 @@ import {
 } from '../exec.js';
 import type { ExecResult } from '../exec.js';
 import { recordAudit } from '../audit.js';
+import { GcClient } from '../gc-client.js';
 import { toWireExecError } from '../lib/sanitise-error.js';
-import { LOG_COMPONENT, logWarn } from '../logging.js';
-import { routeInternalError, writeRouteError } from '../route-errors.js';
+import { LOG_COMPONENT, logWarn, sanitizeForLog } from '../logging.js';
+import {
+  routeInternalError,
+  routeUpstreamError,
+  writeRouteError,
+} from '../route-errors.js';
 
 // gascity-dashboard-vq7: per-agent prompt/directive surface. Read-only.
 // The bead acceptance is explicitly read-only — direct prompt edit via
@@ -36,6 +41,14 @@ interface AgentsRouterOptions {
    * (gascity-dashboard-i53) is unit-testable without spawning gc.
    */
   execAgentPrime?: (alias: string, cityPath?: string) => Promise<ExecResult>;
+  /**
+   * Typed gc supervisor client. Required for `GET /api/agents` (the
+   * canonical agent roster). Optional only because the legacy
+   * `agentsRouter(cityPath)` call site predates the roster route — tests
+   * that exercise only `:alias/prime` may continue to omit it, in which
+   * case `GET /` returns 503.
+   */
+  gc?: GcClient;
 }
 
 export function agentsRouter(opts: AgentsRouterOptions | string = {}): Router {
@@ -45,7 +58,60 @@ export function agentsRouter(opts: AgentsRouterOptions | string = {}): Router {
     typeof opts === 'string' ? { cityPath: opts } : opts;
   const cityPath = normalised.cityPath;
   const execAgentPrime = normalised.execAgentPrime ?? defaultExecAgentPrime;
+  const gc = normalised.gc;
   const router = Router();
+
+  // gascity-dashboard-ay6: first-class agent roster. Supersedes the
+  // session-derived path in the Agents view (which under-counted agents
+  // configured-but-not-running). Read-only; mirrors /api/sessions in
+  // shape (single `items` envelope) so the browser-facing contract stays
+  // uniform across list endpoints. The 503-without-`gc` arm exists only
+  // for legacy callers of agentsRouter(cityPath); production wiring
+  // always passes `gc`.
+  router.get('/', async (_req, res) => {
+    if (!gc) {
+      logWarn(
+        LOG_COMPONENT.agents,
+        '/api/agents called without configured GcClient',
+      );
+      writeRouteError(res, {
+        status: 503,
+        body: {
+          error: 'agents roster unavailable: gc supervisor client not configured',
+          kind: 'unavailable',
+        },
+      });
+      return;
+    }
+    try {
+      const { items, partial, partial_errors } = await gc.listAgents();
+      // Apply `sanitizeForLog` to supervisor-supplied error strings before
+      // they cross the browser boundary. The cityStatus collector
+      // (snapshot/collectors/cityStatus.ts) already sanitizes the same
+      // signal before writing it to the operator log; doing it here keeps
+      // the convention consistent and forecloses on a future supervisor
+      // version embedding filesystem paths or internal hostnames in
+      // `partial_errors`. Backend binds 127.0.0.1 only today, so this is
+      // defense-in-depth — but the rule "don't ship raw supervisor
+      // strings through the wire" survives a later topology change.
+      const sanitizedErrors = partial_errors?.map(sanitizeForLog);
+      const body: {
+        items: typeof items;
+        partial?: boolean;
+        partial_errors?: readonly string[];
+      } = { items };
+      if (partial !== undefined) body.partial = partial;
+      if (sanitizedErrors !== undefined) body.partial_errors = sanitizedErrors;
+      res.json(body);
+    } catch (err) {
+      writeRouteError(res, routeUpstreamError(err, {
+        component: LOG_COMPONENT.agents,
+        operation: '/api/agents failed',
+        responseError: 'failed to list agents',
+        isTimeout: GcClient.isTimeoutError,
+      }));
+    }
+  });
 
   router.get('/:alias/prime', async (req, res) => {
     const alias = req.params.alias;

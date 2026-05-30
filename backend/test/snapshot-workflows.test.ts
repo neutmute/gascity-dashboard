@@ -1226,6 +1226,10 @@ describe('createWorkflowsSourceCache', () => {
                 run_detail_available: true,
               },
             ],
+            // mfb9: FormulaFeedBody.partial is required upstream. The mock's
+            // enclosing `as never` cast masks the type error, so make the
+            // fixture honest to match the GcFormulaRunList contract.
+            partial: false,
           };
         },
         cityName: 'ds-research',
@@ -1356,6 +1360,7 @@ describe('createWorkflowsSourceCache', () => {
               run_detail_available: true,
             },
           ],
+          partial: false,
         }),
         cityName: 'test',
       } as never,
@@ -1431,6 +1436,7 @@ describe('createWorkflowsSourceCache', () => {
               run_detail_available: true,
             },
           ],
+          partial: false,
         }),
         cityName: 'ds-research',
       } as never,
@@ -1506,6 +1512,7 @@ describe('createWorkflowsSourceCache', () => {
               run_detail_available: true,
             },
           ],
+          partial: false,
         }),
         cityName: 'ds-research',
       } as never,

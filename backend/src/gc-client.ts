@@ -1,4 +1,6 @@
 import type {
+  GcAgent,
+  GcAgentList,
   GcSessionList,
   GcBead,
   GcBeadList,
@@ -6,6 +8,7 @@ import type {
   GcMailList,
   GcEventList,
   GcFormulaDetail,
+  GcRigList,
   GcWorkflowSnapshot,
   SlingInput,
   SlingResponse,
@@ -50,6 +53,8 @@ const DEFAULT_TIMEOUT_MS = (() => {
 const SLING_TIMEOUT_MS = 60_000;
 
 const SUPERVISOR_PATHS = {
+  agent: '/v0/city/{cityName}/agent/{base}',
+  agents: '/v0/city/{cityName}/agents',
   bead: '/v0/city/{cityName}/bead/{id}',
   beads: '/v0/city/{cityName}/beads',
   events: '/v0/city/{cityName}/events',
@@ -58,6 +63,7 @@ const SUPERVISOR_PATHS = {
   formulasFeed: '/v0/city/{cityName}/formulas/feed',
   health: '/v0/city/{cityName}/health',
   mail: '/v0/city/{cityName}/mail',
+  rigs: '/v0/city/{cityName}/rigs',
   sessionStream: '/v0/city/{cityName}/session/{id}/stream',
   sessions: '/v0/city/{cityName}/sessions',
   sling: '/v0/city/{cityName}/sling',
@@ -307,6 +313,68 @@ export class GcClient {
       gcSupervisorDecoders.listSessions,
       (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.sessions, {
         params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/rigs` — list of configured rigs for this city.
+   * Used by the cityStatus snapshot collector to source rigs from the
+   * HTTP API instead of parsing city.toml off the host filesystem
+   * (gascity-dashboard-19w). The supervisor's RigResponse carries more
+   * fields (agent_count, running_count, git status, etc.); the decoder
+   * narrows to name+path which is all the dashboard's CityRig contract
+   * uses today.
+   */
+  async listRigs(signal?: AbortSignal): Promise<GcRigList> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.rigs),
+      gcSupervisorDecoders.listRigs,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.rigs, {
+        params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/agents` — first-class agent roster
+   * (gascity-dashboard-ay6). Supersedes the previous derive-from-sessions
+   * path which under-counted agents that are configured but not currently
+   * bound to a running session. Alias-keyed (each item's `name` is the
+   * stable alias the operator types into `gc sling`). The Agents view
+   * consumes this directly; the cityStatus snapshot collector continues
+   * aggregating over sessions for now (migration is sd4's territory).
+   */
+  async listAgents(signal?: AbortSignal): Promise<GcAgentList> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.agents),
+      gcSupervisorDecoders.listAgents,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.agents, {
+        params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/agent/{base}` — per-agent detail keyed by the
+   * agent's alias (`base` in the supervisor's path naming, but it is the
+   * agent's `name`, not a session id). gascity-dashboard-ay6. The caller
+   * is responsible for URL-encoding any '/' inside qualified names
+   * (e.g. 'thriva/devpipeline.architect') — openapi-fetch handles the
+   * `{base}` substitution and applies encodeURIComponent.
+   */
+  async getAgent(base: string, signal?: AbortSignal): Promise<GcAgent> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.agent, [base]),
+      gcSupervisorDecoders.getAgent,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.agent, {
+        params: { path: { ...this.cityPathParams(), base } },
         signal: upstreamSignal,
       }),
       signal,

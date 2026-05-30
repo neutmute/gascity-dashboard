@@ -173,6 +173,106 @@ export interface TranscriptResult {
   truncated: boolean;
 }
 
+// ── Agents (gascity-dashboard-ay6) ───────────────────────────────────────
+
+/**
+ * One entry from `GET /v0/city/{name}/agents`. Mirrors the supervisor's
+ * `AgentResponse` schema narrowed to the fields the Agents list view
+ * actually consumes — adding a field means widening both the decoder
+ * Zod schema (backend/src/gc-supervisor-decoders.ts) and this type.
+ *
+ * The agents endpoint is the canonical roster: it surfaces every
+ * configured agent regardless of whether a session is currently
+ * running, which the previous session-derived path under-counted.
+ * `session` is present only when an agent currently has a running
+ * supervisor session; orphan agents (configured but not running) carry
+ * everything except `session`.
+ */
+export interface GcAgent {
+  /** Stable alias (e.g. 'mayor', 'thriva/devpipeline.architect'). Required. */
+  name: string;
+  /** Human-readable display name when supervisor sets one. */
+  display_name?: string;
+  /** Whether the agent is currently available to dispatch (config + runtime). */
+  available: boolean;
+  /** Whether the underlying process is running. Independent of `state`. */
+  running: boolean;
+  /** Whether the agent is suspended in city config. */
+  suspended: boolean;
+  /** gc-level lifecycle state (e.g. 'active', 'asleep', 'closed'). */
+  state: string;
+  /** Provider (e.g. 'codex', 'claude', 'gemini'). Optional per OpenAPI. */
+  provider?: string;
+  /** Model identifier (e.g. 'claude-opus-4-7'). */
+  model?: string;
+  /** Pool / role bucket (e.g. 'orchestration', 'research'). */
+  pool?: string;
+  /** Rig the agent is scoped to. Empty string for cross-rig agents (mayor). */
+  rig?: string;
+  /** Coarse activity hint ('idle' | 'thinking' | 'tool_use' | ...). */
+  activity?: string;
+  /** Raw context-pct as gc reports it. Use effectiveContextPct() for display. */
+  context_pct?: number;
+  /** gc's reported context-window denominator for the pct above. */
+  context_window?: number;
+  /** When available===false, the reason string the supervisor surfaces. */
+  unavailable_reason?: string;
+  /** Embedded SessionInfo when a session is currently bound to this agent. */
+  session?: GcAgentSession;
+}
+
+/**
+ * Subset of supervisor `SessionInfo` carried under `GcAgent.session`. Used to
+ * drive the Agents view's peek-modal target + last-activity column when an
+ * agent has a running session.
+ */
+export interface GcAgentSession {
+  /** Session id / name on the supervisor (peek-modal target). Required. */
+  name: string;
+  /** True when a human is currently attached to the tmux session. Required. */
+  attached: boolean;
+  /** ISO timestamp of the session's most recent activity. */
+  last_activity?: IsoTimestamp;
+}
+
+export interface GcAgentList {
+  items: GcAgent[];
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; the decoder normalizes items to `[]` so consumers
+   *  always have an array, but the degradation signal survives here. */
+  partial?: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
+// ── Rigs (gascity-dashboard-19w) ─────────────────────────────────────────
+
+/**
+ * Per-rig shape returned by `GET /v0/city/{name}/rigs`. The supervisor's
+ * RigResponse carries more fields (agent_count, running_count, git status,
+ * suspended, last_activity, default_branch, prefix); only name + path are
+ * exposed here because that's all the snapshot collector's CityRig
+ * downstream contract needs. Other fields are intentionally dropped at
+ * the decoder edge — adding one means widening both the decoder Zod
+ * schema and the consumer (CityRig in snapshot/types.ts).
+ */
+export interface GcRig {
+  name: string;
+  path: string;
+}
+
+export interface GcRigList {
+  items: GcRig[];
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; the decoder normalizes items to `[]` so consumers
+   *  always have an array, but the degradation signal survives here. */
+  partial?: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
 // ── Beads ─────────────────────────────────────────────────────────────────
 
 export type BeadStatus =
@@ -553,8 +653,13 @@ export interface GcFormulaRunList {
   /** True when the supervisor reports the list is incomplete (one or more
    *  backends failed during aggregation). Wire shape is `items: null` +
    *  `partial: true`; decoder normalizes items to `[]` so consumers always
-   *  have an array. */
-  partial?: boolean;
+   *  have an array.
+   *
+   *  Required (not optional) because the supervisor's OpenAPI declares
+   *  `FormulaFeedBody.partial` as required `boolean` — distinct from the
+   *  other List* envelopes whose `partial` is optional. Tracked in
+   *  gascity-dashboard-mfb9. */
+  partial: boolean;
   /** Human-readable errors from backends that failed during aggregation. */
   partial_errors?: readonly string[];
 }
