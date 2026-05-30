@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type {
+  GcAgent,
+  GcAgentList,
   GcBead,
   GcBeadList,
   GcEventList,
@@ -96,6 +98,41 @@ const BeadSchema = z.object({
 const RigSchema = z.object({
   name: z.string(),
   path: z.string(),
+}).passthrough();
+
+// Per-agent wire shape from `GET /v0/city/{name}/agents` and
+// `GET /v0/city/{name}/agent/{base}`. Mirrors the supervisor's
+// AgentResponse schema (backend/src/generated/gc-supervisor.ts:2070).
+// gascity-dashboard-ay6.
+//
+// Required fields per OpenAPI: name, available, running, suspended,
+// state. Embedded `session` is the supervisor's `SessionInfo` shape —
+// only `attached` + `name` are required there; `last_activity` is
+// optional. Absent `session` means the agent is configured but does not
+// currently have a running supervisor session (the canonical case the
+// session-derived path under-counted).
+const AgentSessionSchema = z.object({
+  name: z.string(),
+  attached: z.boolean(),
+  last_activity: z.string().optional(),
+}).passthrough();
+
+const AgentSchema = z.object({
+  name: z.string(),
+  available: z.boolean(),
+  running: z.boolean(),
+  suspended: z.boolean(),
+  state: z.string(),
+  display_name: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  pool: z.string().optional(),
+  rig: z.string().optional(),
+  activity: z.string().optional(),
+  context_pct: z.number().finite().optional(),
+  context_window: z.number().finite().optional(),
+  unavailable_reason: z.string().optional(),
+  session: AgentSessionSchema.optional(),
 }).passthrough();
 
 const MailItemSchema = z.object({
@@ -296,6 +333,22 @@ export const gcSupervisorDecoders = {
       value,
       'listRigs',
     );
+  },
+
+  listAgents(value: RawSupervisorSchema['ListBodyAgentResponse']): GcAgentList {
+    return decodeSupervisorPayload(
+      z.object({
+        items: listItemsField(AgentSchema),
+        partial: PartialField,
+        partial_errors: PartialErrorsField,
+      }).passthrough(),
+      value,
+      'listAgents',
+    );
+  },
+
+  getAgent(value: RawSupervisorSchema['AgentResponse']): GcAgent {
+    return decodeSupervisorPayload(AgentSchema, value, 'getAgent');
   },
 
   getBead(value: RawSupervisorSchema['Bead']): GcBead {

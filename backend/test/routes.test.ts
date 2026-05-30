@@ -8,6 +8,7 @@ import { sessionsRouter, resolveSessionsTimeoutMs } from '../src/routes/sessions
 import { beadsRouter } from '../src/routes/beads.js';
 import { mailRouter } from '../src/routes/mail.js';
 import { healthRouter, resolveHealthTimeoutMs } from '../src/routes/health.js';
+import { agentsRouter } from '../src/routes/agents.js';
 
 // End-to-end test that the timeout-aware GcClient + the routes' 504
 // translation produce the right wire response when the upstream supervisor
@@ -549,6 +550,118 @@ describe('routes: upstream timeout -> HTTP 504', () => {
       const body = (await res.json()) as { items: { id: string }[] };
       assert.equal(body.items.length, 1);
       assert.equal(body.items[0]?.id, 'td-foo');
+    } finally {
+      await close();
+    }
+  });
+
+  // gascity-dashboard-ay6: /api/agents is the browser's view of the canonical
+  // agent roster. Mirrors /api/sessions in envelope (items + optional partial
+  // signal). The route delegates to GcClient.listAgents() which is exercised
+  // directly in gc-client.test.ts; here we pin the wire contract end-to-end.
+  test('GET /api/agents returns 200 with the supervisor roster on success', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        items: [
+          {
+            name: 'mayor',
+            available: true,
+            running: true,
+            suspended: false,
+            state: 'active',
+            provider: 'claude-code',
+            session: {
+              name: 'gc-sess-mayor',
+              attached: true,
+              last_activity: '2026-05-29T10:00:00Z',
+            },
+          },
+          {
+            name: 'kb3',
+            available: true,
+            running: false,
+            suspended: false,
+            state: 'asleep',
+          },
+        ],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 100,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/agents', agentsRouter({ gc }));
+    const { url, close } = await startApp(app);
+    try {
+      const res = await fetch(`${url}/api/agents`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        items: Array<{ name: string; running: boolean; session?: { name: string } }>;
+      };
+      assert.equal(body.items.length, 2);
+      assert.equal(body.items[0]?.name, 'mayor');
+      assert.equal(body.items[0]?.session?.name, 'gc-sess-mayor');
+      assert.equal(body.items[1]?.name, 'kb3');
+      assert.equal(body.items[1]?.session, undefined);
+    } finally {
+      await close();
+    }
+  });
+
+  test('GET /api/agents propagates supervisor partial-degraded signal to the wire', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        items: null,
+        partial: true,
+        partial_errors: ['agent backend gascity unreachable'],
+      }));
+    });
+    const gc = new GcClient({
+      baseUrl: fake.baseUrl,
+      cityName: 'test',
+      defaultTimeoutMs: 100,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/agents', agentsRouter({ gc }));
+    const { url, close } = await startApp(app);
+    try {
+      const res = await fetch(`${url}/api/agents`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        items: unknown[];
+        partial?: boolean;
+        partial_errors?: string[];
+      };
+      assert.deepEqual(body.items, []);
+      assert.equal(body.partial, true);
+      assert.deepEqual(body.partial_errors, ['agent backend gascity unreachable']);
+    } finally {
+      await close();
+    }
+  });
+
+  test('GET /api/agents returns 503 when agentsRouter is constructed without a GcClient', async () => {
+    // Defensive: only the legacy `agentsRouter(cityPath)` form omits `gc`.
+    // Production wiring (app.ts) always passes a client. The 503 makes the
+    // misconfiguration visible instead of letting the browser silently fall
+    // through to the prime route on subpaths.
+    const app = express();
+    app.use(express.json());
+    app.use('/api/agents', agentsRouter('/home/test/gas-city'));
+    const { url, close } = await startApp(app);
+    try {
+      const res = await fetch(`${url}/api/agents`);
+      assert.equal(res.status, 503);
+      const body = (await res.json()) as { kind?: string };
+      assert.equal(body.kind, 'unavailable');
     } finally {
       await close();
     }

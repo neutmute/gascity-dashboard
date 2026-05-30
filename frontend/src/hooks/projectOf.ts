@@ -1,4 +1,4 @@
-import type { GcBead, GcMailItem, GcSession } from 'gas-city-dashboard-shared';
+import type { GcAgent, GcBead, GcMailItem, GcSession } from 'gas-city-dashboard-shared';
 
 // Per-source project derivation. There is no explicit project field
 // on any of the three wire shapes, so we derive from observable
@@ -82,4 +82,55 @@ export function sessionProject(session: GcSession): ProjectBucket {
 export function mailProject(mail: GcMailItem): string {
   if (mail.rig && mail.rig.length > 0) return mail.rig;
   return '(no rig)';
+}
+
+// ── Agent grouping (gascity-dashboard-ay6) ───────────────────────────────
+//
+// Parallel to the session-derived helpers above. GcAgent has no `template`
+// field (which sessionProject uses to detect cross-rig orchestration), so
+// the agent-side analog keys on `name` (the alias) instead. Cross-rig
+// agents — mayor, the global control dispatcher, oversight-rig.chief-of-staff
+// — surface with `rig === ''` (or absent) and a well-known alias.
+//
+// Kept separate from sessionProject rather than folded together because the
+// agent and session wires carry different identifying fields; coercing one
+// into the other would either drop information or fabricate it.
+
+const ORCHESTRATION_AGENT_NAMES: ReadonlySet<string> = new Set([
+  'mayor',
+  'control-dispatcher',
+  'oversight-rig.chief-of-staff',
+]);
+
+export function isOrchestrationAgent(a: GcAgent): boolean {
+  if (a.rig && a.rig.length > 0) return false;
+  return ORCHESTRATION_AGENT_NAMES.has(a.name);
+}
+
+/**
+ * An agent is a per-rig dispatcher when it's scoped to a rig but performs
+ * the dispatcher role. Mirrors `isPerRigDispatcher` for sessions, but keys
+ * on the agent's `name` (the alias) rather than `session.alias`.
+ */
+export function isPerRigDispatcherAgent(a: GcAgent): boolean {
+  if (!a.rig || a.rig.length === 0) return false;
+  return PER_RIG_DISPATCHER_RX.test(a.name);
+}
+
+export function agentProject(agent: GcAgent): ProjectBucket {
+  if (isOrchestrationAgent(agent)) {
+    return { key: ORCHESTRATION_PROJECT, label: ORCHESTRATION_PROJECT };
+  }
+  // Agents — unlike sessions — never carry a `template` field; rig/pool are
+  // the only grouping candidates. Empty-string `rig` is treated as absent
+  // (the supervisor uses '' for cross-rig agents that aren't in the
+  // orchestration set).
+  const rig = agent.rig && agent.rig.length > 0 ? agent.rig : undefined;
+  const candidate = rig ?? agent.pool;
+  if (!candidate) {
+    return { key: '(no rig)', label: '(no rig)' };
+  }
+  const parts = candidate.split(/[\\/]/).filter(Boolean);
+  const basename = parts[parts.length - 1] ?? candidate;
+  return { key: normalizeRigKey(basename), label: basename };
 }

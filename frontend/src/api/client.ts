@@ -1,4 +1,5 @@
 import type {
+  GcAgent,
   GcSession,
   GcBead,
   GcMailItem,
@@ -102,6 +103,18 @@ export class ApiClientError extends Error {
 export const api = {
   listSessions(): Promise<{ items: GcSession[] }> {
     return request('GET', '/api/sessions');
+  },
+  // gascity-dashboard-ay6: canonical agent roster. Supersedes the
+  // session-derived Agents-view path which under-counted configured
+  // agents that were not currently running. `partial` + `partial_errors`
+  // mirror the supervisor's degraded-list signal so the UI can surface
+  // upstream failures distinctly from "no agents".
+  listAgents(): Promise<{
+    items: GcAgent[];
+    partial?: boolean;
+    partial_errors?: readonly string[];
+  }> {
+    return request('GET', '/api/agents');
   },
   peekSession(id: string): Promise<TranscriptResult> {
     return request('POST', `/api/sessions/${encodeURIComponent(id)}/peek`, {});
