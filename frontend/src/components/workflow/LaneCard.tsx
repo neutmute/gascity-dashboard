@@ -42,7 +42,9 @@ export function isHistoricalLane(lane: WorkflowLane): boolean {
   return lane.phase === 'complete';
 }
 
-function phaseLabelTone(phase: WorkflowLane['phase']): string {
+function phaseLabelTone(
+  phase: WorkflowLane['phase'],
+): 'text-accent' | 'text-fg-muted' | 'text-fg' {
   if (phase === 'blocked') return 'text-accent';
   if (phase === 'complete') return 'text-fg-muted';
   return 'text-fg';

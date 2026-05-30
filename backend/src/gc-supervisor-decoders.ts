@@ -536,7 +536,12 @@ function zodPath(path: ReadonlyArray<PropertyKey>): string {
   if (path.length === 0) return 'payload';
   return `payload${path.map((part) => {
     if (typeof part === 'number') return `[${part}]`;
-    return `.${String(part)}`;
+    // The path segment is a supervisor-controlled key (e.g. a metadata
+    // key after 6bv7 F11). Strip CR/LF so a malicious or buggy
+    // supervisor that emits a key like `"evil\n[component] forged log"`
+    // cannot forge a line into the dashboard's logs when this error
+    // surfaces through logWarn (route-errors / snapshot/cache).
+    return `.${String(part).replace(/[\r\n]/g, '_')}`;
   }).join('')}`;
 }
 
