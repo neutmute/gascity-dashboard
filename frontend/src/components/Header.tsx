@@ -41,8 +41,9 @@ const REGISTRY_ROUTES: ReadonlyArray<NavRoute> = ALL_VIEWS.flatMap((v) => {
   }];
 });
 
+// Spread already allocates a new mutable array, so .sort() in-place is
+// safe — no .slice() needed (PR-A Phase-4 TS M4).
 const ROUTES: ReadonlyArray<NavRoute> = [...EXPLICIT_ROUTES, ...REGISTRY_ROUTES]
-  .slice()
   .sort((a, b) => a.order - b.order);
 
 // The header is page furniture, not chrome. A small wordmark, the

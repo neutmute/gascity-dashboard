@@ -105,6 +105,23 @@ describe('views/types#bind', () => {
       /missing required needs/,
     );
   });
+
+  test('@ts-expect-error: BackendModule without `needs` field is a compile error (Phase-4 TS M3)', () => {
+    // The PRD explicitly requires `needs` non-optional so the type system
+    // catches a missing field at compile time, not just bind()'s runtime
+    // guard. If `needs` is ever made optional, the @ts-expect-error
+    // directive below becomes a "Unused @ts-expect-error" tsc error and
+    // typecheck fails — that IS the regression alarm.
+
+    // @ts-expect-error needs is required by BackendModule — omitting it must be a compile error
+    const _bad: BackendModule<void> = {
+      id: 'bad',
+      kind: 'core',
+      resources: {},
+      mount: () => Router(),
+    };
+    void _bad;
+  });
 });
 
 describe('BackgroundWorker contract', () => {
