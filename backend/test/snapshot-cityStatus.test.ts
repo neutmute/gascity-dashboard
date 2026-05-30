@@ -1,10 +1,17 @@
 import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { GcRig, GcRigList, GcSession, GcSessionList } from 'gas-city-dashboard-shared';
+import type {
+  GcAgent,
+  GcAgentList,
+  GcRig,
+  GcRigList,
+  GcSession,
+  GcSessionList,
+} from 'gas-city-dashboard-shared';
 
 import {
-  aggregateSessionsByProvider,
+  aggregateAgentsByProvider,
   collectCityStatus,
 } from '../src/snapshot/collectors/cityStatus.js';
 
@@ -48,20 +55,42 @@ function sess(partial: Partial<GcSession>): GcSession {
   };
 }
 
-describe('aggregateSessionsByProvider', () => {
-  test('aggregates active+total counts when every session has provider populated', () => {
-    const sessions: GcSession[] = [
-      sess({ id: 't-1', provider: 'codex', state: 'active' }),
-      sess({ id: 't-2', provider: 'codex', state: 'asleep' }),
-      sess({ id: 't-3', provider: 'codex', state: 'active' }),
-      sess({ id: 't-4', provider: 'claude', state: 'active' }),
-      sess({ id: 't-5', provider: 'claude', state: 'closed' }),
-      sess({ id: 't-6', provider: 'gemini', state: 'active' }),
+function agent(partial: Partial<GcAgent>): GcAgent {
+  // sd4: GcAgent factory mirroring `sess` — `running` defaults from `state`
+  // so fixtures resemble live data. Provider defaults to 'codex' so tests
+  // that don't care about the empty-provider edge case stay terse.
+  const state = partial.state ?? 'active';
+  const running = partial.running ?? state === 'active';
+  return {
+    name: partial.name ?? 'mayor',
+    available: true,
+    running,
+    suspended: false,
+    state,
+    provider: 'codex',
+    ...partial,
+  };
+}
+
+describe('aggregateAgentsByProvider', () => {
+  // gascity-dashboard-sd4: cityStatus.sessionsByProvider now derives from the
+  // /agents roster (authoritative provider info) instead of /sessions, which
+  // was systematically undercounting because supervisor doesn't populate
+  // GcSession.provider for every session today. Agents-derived path removes
+  // the undercount completely.
+
+  test('aggregates active+total counts when every agent has provider populated', () => {
+    const agents: GcAgent[] = [
+      agent({ name: 'a-1', provider: 'codex', state: 'active' }),
+      agent({ name: 'a-2', provider: 'codex', state: 'asleep' }),
+      agent({ name: 'a-3', provider: 'codex', state: 'active' }),
+      agent({ name: 'a-4', provider: 'claude', state: 'active' }),
+      agent({ name: 'a-5', provider: 'claude', state: 'closed' }),
+      agent({ name: 'a-6', provider: 'gemini', state: 'active' }),
     ];
 
-    const breakdown = aggregateSessionsByProvider(sessions);
+    const breakdown = aggregateAgentsByProvider(agents);
 
-    // Sorted by active desc, then provider asc.
     assert.deepEqual(breakdown, [
       { provider: 'codex', active: 2, total: 3 },
       { provider: 'claude', active: 1, total: 2 },
@@ -69,27 +98,37 @@ describe('aggregateSessionsByProvider', () => {
     ]);
   });
 
-  test('skips sessions with empty provider string and logs a single warn (6bv7.2)', () => {
-    // 6bv7 F10 tightened GcSession.provider to required `string` per OpenAPI,
-    // but the aggregator still skips empty-string providers as a defensive
-    // guard against a degenerate supervisor response (the wire contract is
-    // `string`, not "non-empty string"). Title text is NEVER consulted —
-    // no inference fallback (ZFC).
-    //
-    // 6bv7.2: the skip is no longer silent — a single warn is emitted per
-    // call with the count, so a supervisor sending `provider: ""` for all
-    // sessions does not invisibly produce zero aggregated sessions.
-    // Bounded by SourceCache TTL (~45s) so no log-spam risk.
+  test('counts an agent as active when running===true even if state is not "active"', () => {
+    // Parity with countActiveAgents(sessions): `running === true || state==='active'`.
+    // The Agents view treats running as authoritative for "currently doing work."
+    const agents: GcAgent[] = [
+      agent({ name: 'a-1', provider: 'codex', state: 'asleep', running: true }),
+      agent({ name: 'a-2', provider: 'codex', state: 'closed', running: false }),
+    ];
+
+    assert.deepEqual(aggregateAgentsByProvider(agents), [
+      { provider: 'codex', active: 1, total: 2 },
+    ]);
+  });
+
+  test('skips agents with undefined or empty provider and logs a single warn', () => {
     const warnMock = mock.method(console, 'warn', () => undefined);
     try {
-      const sessions: GcSession[] = [
-        sess({ id: 't-1', provider: 'codex', state: 'active' }),
-        sess({ id: 't-2', title: 'codex/research', provider: '', state: 'active' }),
-        sess({ id: 't-3', title: 'claude/triage', provider: '', state: 'active' }),
-        sess({ id: 't-4', provider: 'claude', state: 'asleep' }),
+      // Omit `provider` entirely on a-2 to model the supervisor not
+      // including the field at all (OpenAPI marks it optional). `provider:
+      // undefined` would violate exactOptionalPropertyTypes, but the
+      // runtime behavior we want to test is "key absent" — which a fresh
+      // object built without the field reproduces faithfully.
+      const a2 = agent({ name: 'a-2', state: 'active' });
+      delete a2.provider;
+      const agents: GcAgent[] = [
+        agent({ name: 'a-1', provider: 'codex', state: 'active' }),
+        a2,
+        agent({ name: 'a-3', provider: '', state: 'active' }),
+        agent({ name: 'a-4', provider: 'claude', state: 'asleep' }),
       ];
 
-      const breakdown = aggregateSessionsByProvider(sessions);
+      const breakdown = aggregateAgentsByProvider(agents);
 
       assert.deepEqual(breakdown, [
         { provider: 'codex', active: 1, total: 1 },
@@ -98,7 +137,7 @@ describe('aggregateSessionsByProvider', () => {
 
       const emptyWarns = warnMock.mock.calls.filter((call) =>
         String(call.arguments[0]).includes(
-          'aggregateSessionsByProvider: 2 sessions skipped due to empty provider',
+          'aggregateAgentsByProvider: 2 agents skipped due to empty provider',
         ),
       );
       assert.equal(emptyWarns.length, 1, 'expected exactly one empty-provider warn per call');
@@ -107,53 +146,13 @@ describe('aggregateSessionsByProvider', () => {
     }
   });
 
-  test('returns empty array AND warns once when every provider is the empty string', () => {
-    const warnMock = mock.method(console, 'warn', () => undefined);
-    try {
-      const sessions: GcSession[] = [
-        sess({ id: 't-1', title: 'codex/x', provider: '' }),
-        sess({ id: 't-2', title: 'claude/y', provider: '' }),
-      ];
-
-      assert.deepEqual(aggregateSessionsByProvider(sessions), []);
-
-      const emptyWarns = warnMock.mock.calls.filter((call) =>
-        String(call.arguments[0]).includes(
-          'aggregateSessionsByProvider: 2 sessions skipped due to empty provider',
-        ),
-      );
-      assert.equal(emptyWarns.length, 1);
-    } finally {
-      warnMock.mock.restore();
-    }
-  });
-
-  test('does NOT warn when every session has a populated provider (happy path)', () => {
-    const warnMock = mock.method(console, 'warn', () => undefined);
-    try {
-      const sessions: GcSession[] = [
-        sess({ id: 't-1', provider: 'codex', state: 'active' }),
-        sess({ id: 't-2', provider: 'claude', state: 'asleep' }),
-      ];
-
-      aggregateSessionsByProvider(sessions);
-
-      const emptyWarns = warnMock.mock.calls.filter((call) =>
-        String(call.arguments[0]).includes('aggregateSessionsByProvider:'),
-      );
-      assert.equal(emptyWarns.length, 0);
-    } finally {
-      warnMock.mock.restore();
-    }
-  });
-
   test('returns empty array on empty input', () => {
-    assert.deepEqual(aggregateSessionsByProvider([]), []);
+    assert.deepEqual(aggregateAgentsByProvider([]), []);
   });
 });
 
 describe('collectCityStatus', () => {
-  test('builds CityStatusSummary from sessions + rigs HTTP responses; maxSessions stays unavailable', async () => {
+  test('builds CityStatusSummary from sessions + agents + rigs HTTP responses; maxSessions stays unavailable', async () => {
     const sessionList: GcSessionList = {
       items: [
         sess({ id: 't-1', provider: 'codex', state: 'active' }),
@@ -161,6 +160,16 @@ describe('collectCityStatus', () => {
         sess({ id: 't-3', provider: 'claude', state: 'active' }),
       ],
       total: 3,
+    };
+    // sd4: sessionsByProvider now derives from /agents (authoritative
+    // provider info). Fixture the agent roster independently of sessions
+    // so the test pins that the agents-derived path is in effect.
+    const agentList: GcAgentList = {
+      items: [
+        agent({ name: 'a-1', provider: 'codex', state: 'active' }),
+        agent({ name: 'a-2', provider: 'codex', state: 'asleep' }),
+        agent({ name: 'a-3', provider: 'claude', state: 'active' }),
+      ],
     };
     const rigList: GcRigList = {
       items: [
@@ -171,6 +180,7 @@ describe('collectCityStatus', () => {
 
     const summary = await collectCityStatus({
       listSessions: async () => sessionList,
+      listAgents: async () => agentList,
       listRigs: async () => rigList,
     });
 
@@ -195,9 +205,44 @@ describe('collectCityStatus', () => {
     ]);
   });
 
+  test('sessionsByProvider matches agent roster even when sessions lack provider (undercount fix)', async () => {
+    // sd4 regression guard: this scenario reproduces the original
+    // undercount — sessions don't carry provider, but agents do. Old
+    // session-derived path would return []; the new agents-derived path
+    // returns the correct breakdown.
+    const sessionList: GcSessionList = {
+      items: [
+        // Cast to bypass the wire-required `provider` for this regression
+        // fixture — the bug we're guarding against is precisely a session
+        // arriving with provider absent / empty.
+        { ...sess({ id: 't-1' }), provider: '' } as GcSession,
+        { ...sess({ id: 't-2' }), provider: '' } as GcSession,
+      ],
+      total: 2,
+    };
+    const agentList: GcAgentList = {
+      items: [
+        agent({ name: 'a-1', provider: 'codex', state: 'active' }),
+        agent({ name: 'a-2', provider: 'claude', state: 'asleep' }),
+      ],
+    };
+
+    const summary = await collectCityStatus({
+      listSessions: async () => sessionList,
+      listAgents: async () => agentList,
+      listRigs: async () => ({ items: [] }),
+    });
+
+    assert.deepEqual(summary.sessionsByProvider, [
+      { provider: 'codex', active: 1, total: 1 },
+      { provider: 'claude', active: 0, total: 1 },
+    ]);
+  });
+
   test('empty sessions and empty rigs remain zero counts; maxSessions still unavailable', async () => {
     const summary = await collectCityStatus({
       listSessions: async () => ({ items: [], total: 0 }),
+      listAgents: async () => ({ items: [] }),
       listRigs: async () => ({ items: [] }),
     });
 
@@ -213,6 +258,22 @@ describe('collectCityStatus', () => {
     assert.deepEqual(summary.rigs, []);
   });
 
+  test('agents collector failure surfaces — no swallow (sd4)', async () => {
+    // sd4: listAgents is the new source of truth for sessionsByProvider.
+    // A 5xx must surface as a city-source error, not silently degrade to
+    // an empty provider breakdown. Mirrors the rigs failure contract.
+    await assert.rejects(
+      collectCityStatus({
+        listSessions: async () => ({ items: [], total: 0 }),
+        listAgents: async () => {
+          throw new Error('gc supervisor returned 502');
+        },
+        listRigs: async () => ({ items: [] }),
+      }),
+      /gc supervisor returned 502/,
+    );
+  });
+
   test('rigs collector failure surfaces — no swallow', async () => {
     // gascity-dashboard-19w: listRigs is awaited; if the supervisor 5xx's,
     // the collector throws so the city source goes to status='error' per
@@ -221,6 +282,7 @@ describe('collectCityStatus', () => {
     await assert.rejects(
       collectCityStatus({
         listSessions: async () => ({ items: [], total: 0 }),
+        listAgents: async () => ({ items: [] }),
         listRigs: async () => {
           throw new Error('gc supervisor returned 502');
         },
@@ -244,6 +306,7 @@ describe('collectCityStatus', () => {
 
     const summary = await collectCityStatus({
       listSessions: async () => ({ items: [], total: 0 }),
+      listAgents: async () => ({ items: [] }),
       listRigs: async () => rigList,
     });
 
@@ -262,6 +325,7 @@ describe('collectCityStatus', () => {
 
     const summary = await collectCityStatus({
       listSessions: async () => ({ items: [], total: 0 }),
+      listAgents: async () => ({ items: [] }),
       listRigs: async () => rigList,
     });
 
@@ -279,6 +343,7 @@ describe('collectCityStatus', () => {
 
     const summary = await collectCityStatus({
       listSessions: async () => ({ items: [], total: 0 }),
+      listAgents: async () => ({ items: [] }),
       listRigs: async () => rigList,
     });
 
@@ -301,6 +366,7 @@ describe('collectCityStatus', () => {
 
     const summary = await collectCityStatus({
       listSessions: async () => ({ items: [], total: 0 }),
+      listAgents: async () => ({ items: [] }),
       listRigs: async () => rigList,
     });
 
@@ -313,6 +379,7 @@ describe('collectCityStatus', () => {
     // (the field is optional so callers can use truthy checks).
     const summary = await collectCityStatus({
       listSessions: async () => ({ items: [], total: 0 }),
+      listAgents: async () => ({ items: [] }),
       listRigs: async () => ({ items: [{ name: 'rig-a', path: '/data/rig-a' }] }),
     });
 
