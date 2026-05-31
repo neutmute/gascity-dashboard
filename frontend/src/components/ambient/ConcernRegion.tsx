@@ -44,15 +44,15 @@ function rowHref(lane: RunLane): string {
       qs.set('scope_kind', scope.kind);
       qs.set('scope_ref', scope.ref);
     }
-    return `/workflows/${idForPath}?${qs.toString()}`;
+    return `/runs/${idForPath}?${qs.toString()}`;
   }
   if (scope) {
     const qs = new URLSearchParams();
     qs.set('scope_kind', scope.kind);
     qs.set('scope_ref', scope.ref);
-    return `/workflows/${idForPath}?${qs.toString()}`;
+    return `/runs/${idForPath}?${qs.toString()}`;
   }
-  return `/workflows/${idForPath}`;
+  return `/runs/${idForPath}`;
 }
 
 function reasonLabel(reason: ConcernRow['reason']): string {

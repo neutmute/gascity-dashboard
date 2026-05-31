@@ -163,7 +163,19 @@ async function getRunSessions(
 ): Promise<RunSessionsLookup> {
   try {
     const list = await gc.listSessions();
-    return { kind: 'available', sessions: Array.isArray(list.items) ? list.items : [] };
+    const items = Array.isArray(list.items) ? list.items : [];
+    // A supervisor-reported partial session list is a degraded read: propagate
+    // it as unavailable so run-detail completeness surfaces session_list_failed
+    // instead of a misleadingly clean badge (matches links.ts; restored after
+    // the workflow→run rename dropped the check).
+    if (list.partial === true || (list.partial_errors?.length ?? 0) > 0) {
+      logWarn(
+        LOG_COMPONENT.runs,
+        `supervisor reported partial session list for run detail; serving as unavailable`,
+      );
+      return { kind: 'unavailable', sessions: items };
+    }
+    return { kind: 'available', sessions: items };
   } catch (err) {
     logWarn(LOG_COMPONENT.runs, `failed to fetch sessions for run detail: ${errorMessage(err)}`);
     return { kind: 'unavailable', sessions: [] };

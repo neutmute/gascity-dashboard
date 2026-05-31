@@ -21,6 +21,7 @@ export {
 export * from './run-detail.js';
 export type * from './run-snapshot.js';
 export * from './links.js';
+export * from './city.js';
 export type * from './views.js';
 // 9yj.1.1: gc-client types live in their own file so views.ts can import
 // them without going through this barrel and creating a type-only cycle.

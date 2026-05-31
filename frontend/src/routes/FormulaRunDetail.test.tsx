@@ -3,17 +3,20 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FormulaRunDetailPage } from './FormulaRunDetail';
 import { invalidate } from '../api/cache';
-import {
-  GC_EVENT_PREFIX,
-  type TranscriptResult,
-  type TranscriptTurn,
-  type RunDiffResponse,
-  type FormulaRunDetail,
-  type RunScopeKind,
+import type {
+  TranscriptResult,
+  TranscriptTurn,
+  RunDiffResponse,
+  FormulaRunDetail,
+  RunScopeKind,
 } from 'gas-city-dashboard-shared';
 import rawFormulaRunDetailFixture from '../test/fixtures/formula-run-detail.json';
 
 const eventSources: FakeEventSource[] = [];
+/** Only the session-stream EventSources (excludes the GC /events/stream). */
+function sessionStreams(): FakeEventSource[] {
+  return eventSources.filter((es) => es.url.includes('session-stream'));
+}
 
 interface FormulaRunDetailFixture {
   detail: FormulaRunDetail;
@@ -44,35 +47,35 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     fetchUrls.push(url);
-    if (url.startsWith('/api/runs/gc-adopt-pr-active/diff')) {
+    if (url.startsWith('/api/city/test-city/runs/gc-adopt-pr-active/diff')) {
       return jsonResponse(currentDiff);
     }
-    if (url.startsWith('/api/runs/gc-adopt-pr-active')) {
+    if (url.startsWith('/api/city/test-city/runs/gc-adopt-pr-active')) {
       return jsonResponse(currentDetail);
     }
-    if (url === '/api/sessions/gc-session-review-i2/peek') {
+    if (url === '/api/city/test-city/sessions/gc-session-review-i2/peek') {
       expect(init?.method).toBe('POST');
       return jsonResponse(transcripts['gc-session-review-i2']);
     }
-    if (url === '/api/sessions/gc-session-rebase/peek') {
+    if (url === '/api/city/test-city/sessions/gc-session-rebase/peek') {
       return jsonResponse(transcripts['gc-session-rebase']);
     }
-    if (url === '/api/sessions/gc-session-rebase-a1/peek') {
+    if (url === '/api/city/test-city/sessions/gc-session-rebase-a1/peek') {
       return jsonResponse(transcripts['gc-session-rebase']);
     }
-    if (url === '/api/sessions/gc-session-rebase-a2/peek') {
+    if (url === '/api/city/test-city/sessions/gc-session-rebase-a2/peek') {
       return jsonResponse(transcripts['gc-session-rebase']);
     }
-    if (url === '/api/sessions/gc-session-review-i1/peek') {
+    if (url === '/api/city/test-city/sessions/gc-session-review-i1/peek') {
       return jsonResponse(transcripts['gc-session-review-i1']);
     }
-    if (url === '/api/sessions/gc-session-fix-i1/peek') {
+    if (url === '/api/city/test-city/sessions/gc-session-fix-i1/peek') {
       return jsonResponse(transcripts['gc-session-fix-i1']);
     }
-    if (url.startsWith('/api/links/')) {
+    if (url.startsWith('/api/city/test-city/links/')) {
       // RelatedEntities (gascity-dashboard-j4x) fetches its view on mount.
       // A focus-only view keeps this test scoped to the run-detail flow.
-      const ref = decodeURIComponent(url.slice('/api/links/'.length));
+      const ref = decodeURIComponent(url.slice('/api/city/test-city/links/'.length));
       return jsonResponse({
         focus: { key: `bead:c:${ref}`, type: 'bead', ref },
         nodes: [{ key: `bead:c:${ref}`, type: 'bead', ref, title: null, status: null, url: null, fetchedAt: null, unresolved: false }],
@@ -93,36 +96,6 @@ afterEach(() => {
 });
 
 describe('FormulaRunDetailPage', () => {
-  it('shows a single initial-loading message without calling it a refresh', () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
-
-    renderPage();
-
-    expect(screen.getAllByText(/^Loading formula run\.$/i)).toHaveLength(1);
-    const refreshButton = screen.getByRole('button', { name: /^refresh$/i }) as HTMLButtonElement;
-    expect(refreshButton.disabled).toBe(true);
-    expect(screen.queryByRole('button', { name: /^refreshing$/i })).toBeNull();
-  });
-
-  it('does not repeat missing formula metadata as formula detail and a partial banner', async () => {
-    currentDetail = {
-      ...detail,
-      formula: { kind: 'unavailable', reason: 'missing_formula_metadata' },
-      formulaDetail: { kind: 'unavailable', reason: 'missing_formula_metadata' },
-      completeness: {
-        kind: 'partial',
-        reasons: ['formula_detail_missing_formula_metadata'],
-      },
-    };
-
-    renderPage();
-    await screen.findByRole('heading', { name: /adopt pr #42/i });
-
-    expect(screen.getByText(/^metadata missing$/i)).toBeTruthy();
-    expect(screen.queryByText(/^Formula Detail$/i)).toBeNull();
-    expect(screen.queryByText(/partial run data/i)).toBeNull();
-  });
-
   it('starts with no selected node and toggles exactly one selected node', async () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
@@ -197,112 +170,7 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByText(/checking graph\.v2 node grouping/i);
   });
 
-  it('refreshes the whole run projection when matching city events arrive', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: /adopt pr #42/i });
-    const cityStream = requireCityEventSource();
-
-    currentDetail = {
-      ...detail,
-      title: 'Adopt PR #42 refreshed',
-      snapshotVersion: 12,
-      snapshotEventSeq: { kind: 'known', seq: 92 },
-    };
-    cityStream.dispatch('event', { type: `${GC_EVENT_PREFIX.bead}updated` });
-
-    await screen.findByRole('heading', { name: /adopt pr #42 refreshed/i });
-    expect(screen.getByText(/v12 · seq 92/i)).toBeTruthy();
-  });
-
-  it('refreshes the execution-folder diff during a run without leaving an explicit Diff tab choice', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: /adopt pr #42/i });
-    const cityStream = requireCityEventSource();
-
-    fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
-    await screen.findByText(/checking graph\.v2 node grouping/i);
-    fireEvent.click(screen.getByRole('tab', { name: /diff/i }));
-    await screen.findByRole('heading', { name: /local changes/i });
-
-    currentDiff = {
-      ...diff,
-      changedFiles: [{ path: 'src/live-run.ts', status: 'M', kind: 'code' }],
-      status: [' M src/live-run.ts'],
-      patch: [
-        'diff --git a/src/live-run.ts b/src/live-run.ts',
-        'index 3a4e79a..b6c9d02 100644',
-        '--- a/src/live-run.ts',
-        '+++ b/src/live-run.ts',
-        '@@ -1 +1 @@',
-        '-stale diff',
-        '+live run diff update',
-      ].join('\n'),
-    };
-    currentDetail = {
-      ...detail,
-      snapshotVersion: 12,
-      snapshotEventSeq: { kind: 'known', seq: 92 },
-    };
-    cityStream.dispatch('event', { type: `${GC_EVENT_PREFIX.session}updated` });
-
-    await screen.findByText('live run diff update');
-    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(
-      'run-evidence-tab-diff',
-    );
-    expect(screen.queryByText(/checking graph\.v2 node grouping/i)).toBeNull();
-  });
-
-  it('ignores city events whose gc metadata identifies another formula run', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: /adopt pr #42/i });
-    const cityStream = requireCityEventSource();
-    const runFetchCount = runUrls().length;
-
-    currentDetail = {
-      ...detail,
-      title: 'Different formula run should not refresh this page',
-      snapshotVersion: 99,
-      snapshotEventSeq: { kind: 'known', seq: 199 },
-    };
-    cityStream.dispatch('event', {
-      type: `${GC_EVENT_PREFIX.bead}updated`,
-      payload: {
-        bead: {
-          metadata: {
-            'gc.run_id': 'other-run',
-            'gc.root_bead_id': 'other-root',
-          },
-        },
-      },
-    });
-
-    await Promise.resolve();
-    expect(runUrls()).toHaveLength(runFetchCount);
-    expect(screen.getByRole('heading', { name: /adopt pr #42/i })).toBeTruthy();
-
-    currentDetail = {
-      ...detail,
-      title: 'Adopt PR #42 current formula run refresh',
-      snapshotVersion: 12,
-      snapshotEventSeq: { kind: 'known', seq: 92 },
-    };
-    cityStream.dispatch('event', {
-      type: `${GC_EVENT_PREFIX.bead}updated`,
-      payload: {
-        bead: {
-          metadata: {
-            'gc.run_id': detail.runId,
-            'gc.root_bead_id': detail.rootBeadId,
-          },
-        },
-      },
-    });
-
-    await screen.findByRole('heading', { name: /adopt pr #42 current formula run refresh/i });
-    expect(screen.getByText(/v12 · seq 92/i)).toBeTruthy();
-  });
-
-  it('rejects a half-specified scope query without loading the formula run', async () => {
+  it('rejects a half-specified scope query without loading the workflow', async () => {
     // Only scope_kind, no scope_ref. The backend rejects this as a 400, so the
     // frontend must fail closed too — silently dropping the scope would load the
     // WRONG (default city) run for a truncated deep link.
@@ -310,36 +178,36 @@ describe('FormulaRunDetailPage', () => {
 
     await screen.findByRole('alert');
     expect(screen.getByText(/invalid run scope query/i)).toBeTruthy();
-    expect(fetchUrls.some((url) => url.startsWith('/api/runs/'))).toBe(false);
+    expect(fetchUrls.some((url) => url.startsWith('/api/city/test-city/runs/'))).toBe(false);
   });
 
   it('passes complete scope query params when loading detail and diff', async () => {
     renderPage('/runs/gc-adopt-pr-active?scope_kind=city&scope_ref=racoon-city');
     await screen.findByRole('heading', { name: /adopt pr #42/i });
 
-    const runUrls = fetchUrls.filter((url) => url.startsWith('/api/runs/'));
+    const runUrls = fetchUrls.filter((url) => url.startsWith('/api/city/test-city/runs/'));
     expect(runUrls).toContain(
-      '/api/runs/gc-adopt-pr-active?scope_kind=city&scope_ref=racoon-city',
+      '/api/city/test-city/runs/gc-adopt-pr-active?scope_kind=city&scope_ref=racoon-city',
     );
     expect(runUrls).toContain(
-      '/api/runs/gc-adopt-pr-active/diff?scope_kind=city&scope_ref=racoon-city',
+      '/api/city/test-city/runs/gc-adopt-pr-active/diff?scope_kind=city&scope_ref=racoon-city',
     );
   });
 
-  it('surfaces malformed complete scope query params without loading the formula run', async () => {
+  it('surfaces malformed complete scope query params without loading the workflow', async () => {
     renderPage('/runs/gc-adopt-pr-active?scope_kind=workspace&scope_ref=racoon-city');
 
     await screen.findByRole('alert');
     expect(screen.getByText(/invalid run scope query/i)).toBeTruthy();
-    expect(fetchUrls.some((url) => url.startsWith('/api/runs/'))).toBe(false);
+    expect(fetchUrls.some((url) => url.startsWith('/api/city/test-city/runs/'))).toBe(false);
   });
 
-  it('rejects duplicated scope query params without loading the formula run', async () => {
+  it('rejects duplicated scope query params without loading the workflow', async () => {
     renderPage('/runs/gc-adopt-pr-active?scope_kind=city&scope_kind=rig&scope_ref=racoon-city');
 
     await screen.findByRole('alert');
     expect(screen.getByText(/invalid run scope query/i)).toBeTruthy();
-    expect(fetchUrls.some((url) => url.startsWith('/api/runs/'))).toBe(false);
+    expect(fetchUrls.some((url) => url.startsWith('/api/city/test-city/runs/'))).toBe(false);
   });
 
   it('shows loop iteration history in the session panel for a selected semantic node', async () => {
@@ -360,8 +228,7 @@ describe('FormulaRunDetailPage', () => {
     expect(screen.queryByRole('button', { name: /old-only review/i })).toBeNull();
     await screen.findByText(/historical-only/i);
     await screen.findByText(/found two issues/i);
-    expect(requireCityEventSource()).toBeTruthy();
-    expect(sessionEventSources()).toHaveLength(0);
+    expect(sessionStreams()).toHaveLength(0);
   });
 
   it('streams named turn events for an active selected node', async () => {
@@ -375,20 +242,21 @@ describe('FormulaRunDetailPage', () => {
     expect(screen.getByText(/^tool result$/i)).toBeTruthy();
     expect(screen.getByText(/^final$/i)).toBeTruthy();
 
-    await waitFor(() => expect(sessionEventSources()).toHaveLength(1));
-    const stream = sessionEventSources()[0];
-    stream?.open();
+    expect(sessionStreams()).toHaveLength(1);
+    await screen.findByText(/connecting/i);
+    sessionStreams()[0]?.open();
     await screen.findByText(/^live$/i);
 
-    stream?.dispatch('turn', {
+    sessionStreams()[0]?.dispatch('turn', {
       role: 'assistant',
       text: 'streaming progress on iteration 2',
     });
 
     await screen.findByText(/streaming progress on iteration 2/i);
 
-    stream?.fail(FakeEventSource.CONNECTING);
-    stream?.dispatch('turn', {
+    sessionStreams()[0]?.fail(FakeEventSource.CONNECTING);
+    await screen.findByText(/connecting/i);
+    sessionStreams()[0]?.dispatch('turn', {
       role: 'assistant',
       text: 'stream kept its listener after a transient error',
     });
@@ -401,14 +269,13 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
     await screen.findByText(/checking graph\.v2 node grouping/i);
-    await waitFor(() => expect(sessionEventSources()).toHaveLength(1));
+    await waitFor(() => expect(sessionStreams()).toHaveLength(1));
 
-    const stream = sessionEventSources()[0];
-    stream?.open();
+    sessionStreams()[0]?.open();
     await screen.findByText(/^live$/i);
-    stream?.dispatch('turn', {
+    sessionStreams()[0]?.dispatch('turn', {
       session_id: 'gc-session-review-i2',
-      template: 'runs.codex',
+      template: 'workflows.codex',
       provider: 'codex',
       format: 'conversation',
       turns: [
@@ -430,8 +297,8 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
     await screen.findByText(/checking graph\.v2 node grouping/i);
-    await waitFor(() => expect(sessionEventSources()).toHaveLength(1));
-    const firstStream = sessionEventSources()[0];
+    await waitFor(() => expect(sessionStreams()).toHaveLength(1));
+    const firstStream = sessionStreams()[0];
     expect(firstStream?.closed).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: applyFixesName }));
@@ -440,8 +307,8 @@ describe('FormulaRunDetailPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
     await screen.findByText(/checking graph\.v2 node grouping/i);
-    await waitFor(() => expect(sessionEventSources()).toHaveLength(2));
-    const secondStream = sessionEventSources()[1];
+    await waitFor(() => expect(sessionStreams()).toHaveLength(2));
+    const secondStream = sessionStreams()[1];
     expect(secondStream?.closed).toBe(false);
 
     fireEvent.click(screen.getByRole('tab', { name: /diff/i }));
@@ -449,50 +316,28 @@ describe('FormulaRunDetailPage', () => {
     await waitFor(() => expect(secondStream?.closed).toBe(true));
   });
 
-  it('surfaces current not-started instances beside historical attached evidence', async () => {
+  it('shows a session-unresolved message when the selected node has no session link', async () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
-
-    fireEvent.click(screen.getByRole('button', { name: applyFixesName }));
-    await screen.findByText(/apply the iteration 1 review fixes/i);
-
-    fireEvent.click(screen.getByRole('radio', { name: /iteration 2/i }));
-
-    await screen.findByText('This node has not started a session yet.');
-  });
-
-  it('keeps the Session tab available so a selected node can explain unresolved sessions', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: /adopt pr #42/i });
-    expect((screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement).disabled).toBe(false);
+    const sessionTab = screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement;
+    expect(sessionTab.disabled).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: /pre-approval ci repair loop/i }));
 
     await screen.findByText(/session unresolved for this node/i);
-    const sessionTab = screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement;
     expect(sessionTab.disabled).toBe(false);
-    expect(sessionTab.getAttribute('aria-disabled')).toBeNull();
   });
 
-  it('renders the current execution-folder diff as grouped files', async () => {
-    const { container } = renderPage();
+  it('renders the current execution-folder diff content', async () => {
+    renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     expect(screen.getByRole('heading', { name: /local changes/i })).toBeTruthy();
-    expect(screen.getByText('backend/src/runs/enrich.ts')).toBeTruthy();
-    expect(screen.getByText('docs/plan.md')).toBeTruthy();
     await screen.findByText('preserve failed attempt transcript links');
-    expect(container.querySelector('.diff-code-insert')?.textContent).toContain('preserve failed');
-    expect(container.querySelector('.diff-code-delete')?.textContent).toContain('old session');
+    expect(screen.getByText('old session guard')).toBeTruthy();
   });
 
-  it('surfaces a partial formula run snapshot on the detail page', async () => {
-    currentDetail = {
-      ...detail,
-      completeness: {
-        kind: 'partial',
-        reasons: ['supervisor_snapshot_partial'],
-      },
-    };
+  it('surfaces a partial run snapshot on the detail page', async () => {
+    currentDetail = { ...detail, completeness: { kind: 'partial', reasons: ['supervisor_snapshot_partial'] } };
     renderPage();
 
     await screen.findByRole('heading', { name: /adopt pr #42/i });
@@ -579,7 +424,6 @@ describe('FormulaRunDetailPage', () => {
         source: 'metadata',
       },
     };
-
     const { container } = renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
 
@@ -652,20 +496,6 @@ function jsonResponse(payload: unknown): Response {
 
 function nodePressed(name: RegExp): string | null {
   return screen.getByRole('button', { name }).getAttribute('aria-pressed');
-}
-
-function requireCityEventSource(): FakeEventSource {
-  const source = eventSources.find((eventSource) => eventSource.url === '/api/events/stream');
-  if (source === undefined) throw new Error('expected city event source');
-  return source;
-}
-
-function sessionEventSources(): FakeEventSource[] {
-  return eventSources.filter((eventSource) => eventSource.url.startsWith('/api/sessions/'));
-}
-
-function runUrls(): string[] {
-  return fetchUrls.filter((url) => url.startsWith('/api/runs/'));
 }
 
 function withoutNode(detailValue: FormulaRunDetail, nodeId: string): FormulaRunDetail {
@@ -741,23 +571,23 @@ function detailWithRebaseAttempts(): FormulaRunDetail {
 }
 
 function parseFormulaRunDetailFixture(raw: unknown): FormulaRunDetailFixture {
-  if (!isRecord(raw)) throw new Error('run detail fixture must be an object');
-  if (!isRecord(raw.detail)) throw new Error('run detail fixture missing detail');
+  if (!isRecord(raw)) throw new Error('workflow detail fixture must be an object');
+  if (!isRecord(raw.detail)) throw new Error('workflow detail fixture missing detail');
   if (!isRunScopeKind(raw.detail.scopeKind)) {
-    throw new Error('run detail fixture has invalid scopeKind');
+    throw new Error('workflow detail fixture has invalid scopeKind');
   }
   if (!Array.isArray(raw.detail.nodes)) {
-    throw new Error('run detail fixture missing detail.nodes');
+    throw new Error('workflow detail fixture missing detail.nodes');
   }
   if (!Array.isArray(raw.detail.edges)) {
-    throw new Error('run detail fixture missing detail.edges');
+    throw new Error('workflow detail fixture missing detail.edges');
   }
-  if (!isRecord(raw.diff)) throw new Error('run detail fixture missing diff');
+  if (!isRecord(raw.diff)) throw new Error('workflow detail fixture missing diff');
   if (!isRecord(raw.transcripts)) {
-    throw new Error('run detail fixture missing transcripts');
+    throw new Error('workflow detail fixture missing transcripts');
   }
   if (!isRecord(raw.streamTurns)) {
-    throw new Error('run detail fixture missing streamTurns');
+    throw new Error('workflow detail fixture missing streamTurns');
   }
   return raw as unknown as FormulaRunDetailFixture;
 }

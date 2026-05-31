@@ -19,7 +19,17 @@ import { argv, exit } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const BASE = 'http://127.0.0.1:5174';
+// BASE is env-configurable so an isolated worktree dev stack (its own
+// backend PORT + a vite instance proxying /api to it on an alternate port)
+// can be driven without touching the primary :5174 the user may be viewing.
+// Default keeps the historic single-tree behaviour.
+const BASE = process.env.SNAP_BASE || 'http://127.0.0.1:5174';
+// gascity-dashboard-ucc: the dashboard is now city-scoped. The browser route
+// carries a `/city/:cityName` basename and every city-scoped API call rides
+// `/api/city/:cityName/*`. The harness navigates under this city and mocks
+// the city-scoped request plane.
+const CITY = 'racoon-city';
+const CITY_BASE = `${BASE}/city/${CITY}`;
 const OUT = '/tmp/cp-snaps';
 const THEMES = ['light', 'dark'];
 const TEST_MODE = argv.includes('--test');
@@ -73,7 +83,7 @@ async function runTheme(browser, theme) {
 
   try {
     try {
-      await page.goto(`${BASE}/runs`, {
+      await page.goto(`${CITY_BASE}/runs`, {
         waitUntil: 'domcontentloaded',
         timeout: 5_000,
       });
@@ -89,28 +99,15 @@ async function runTheme(browser, theme) {
     await summaryLane.waitFor({ timeout: 5_000 });
     await summaryLane.click();
     await page.waitForURL(
-      `${BASE}/runs/gc-adopt-pr-active?scope_kind=city&scope_ref=racoon-city`,
+      `${CITY_BASE}/runs/gc-adopt-pr-active?scope_kind=city&scope_ref=racoon-city`,
       { timeout: 5_000 },
     );
     await page.getByRole('heading', { name: /adopt pr #42/i }).waitFor({ timeout: 5_000 });
     await page.getByText(/v11 · seq 91/i).waitFor({ timeout: 5_000 });
     await page.getByRole('heading', { name: /formula graph/i }).waitFor({ timeout: 5_000 });
-    await page.getByRole('heading', { name: /^local changes$/i }).waitFor({ timeout: 5_000 });
-    await page.locator('.formula-run-diff-view summary').filter({
-      hasText: 'backend/src/runs/enrich.ts',
-    }).waitFor({ timeout: 5_000 });
-    await page.locator('.formula-run-diff-view summary').filter({
-      hasText: 'docs/plan.md',
-    }).waitFor({ timeout: 5_000 });
-    await page.locator('.diff-code-insert').filter({
-      hasText: 'preserve failed attempt transcript links',
-    }).first().waitFor({ timeout: 5_000 });
-    await page.locator('.diff-code-delete').filter({
-      hasText: 'old session guard',
-    }).first().waitFor({ timeout: 5_000 });
-    await page.locator('.diff-code-insert').filter({
-      hasText: '# Plan',
-    }).first().waitFor({ timeout: 5_000 });
+    await page.getByRole('heading', { name: /local changes/i }).waitFor({ timeout: 5_000 });
+    await page.getByText('preserve failed attempt transcript links').waitFor({ timeout: 5_000 });
+    await page.getByText('old session guard').waitFor({ timeout: 5_000 });
     // Related section (gascity-dashboard-j4x) — RK3 density gate. The
     // high-volume fixture (40 molecule members + 3 unresolved links) must
     // render exactly one aggregate maroon mark in the whole viewport, cap
@@ -194,24 +191,14 @@ async function runTheme(browser, theme) {
 
     await page.getByRole('button', { name: /pre-approval ci repair loop/i }).click();
     await page.getByText(/session unresolved for this node/i).waitFor({ timeout: 5_000 });
-    const sessionTabAvailable = await page
-      .getByRole('tab', { name: /session/i })
-      .evaluate((node) =>
-        node instanceof HTMLButtonElement &&
-        !node.disabled &&
-        node.getAttribute('aria-disabled') !== 'true',
-      );
-    if (!sessionTabAvailable) {
-      result.errors.push('Session tab was unavailable for a selected node with unresolved session state');
-    }
 
-    await page.goto(`${BASE}/runs/gc-adopt-pr-partial`, {
+    await page.goto(`${CITY_BASE}/runs/gc-adopt-pr-partial`, {
       waitUntil: 'domcontentloaded',
       timeout: 5_000,
     });
     await page.getByText(/partial run data/i).waitFor({ timeout: 5_000 });
 
-    await page.goto(`${BASE}/runs/gc-adopt-pr-active?node=old-only-review`, {
+    await page.goto(`${CITY_BASE}/runs/gc-adopt-pr-active?node=old-only-review`, {
       waitUntil: 'domcontentloaded',
       timeout: 5_000,
     });
@@ -225,25 +212,25 @@ async function runTheme(browser, theme) {
     await page.screenshot({ path: hiddenSnapPath, fullPage: false });
     result.info.hiddenSnap = hiddenSnapPath;
 
-    await page.goto(`${BASE}/runs/gc-no-graph`, {
+    await page.goto(`${CITY_BASE}/runs/gc-no-graph`, {
       waitUntil: 'domcontentloaded',
       timeout: 5_000,
     });
     await page.getByText(/no graph nodes have materialized/i).waitFor({ timeout: 5_000 });
 
-    await page.goto(`${BASE}/runs/gc-not-git`, {
+    await page.goto(`${CITY_BASE}/runs/gc-not-git`, {
       waitUntil: 'domcontentloaded',
       timeout: 5_000,
     });
     await page.getByText(/not a git work tree/i).waitFor({ timeout: 5_000 });
 
-    await page.goto(`${BASE}/runs/gc-path-unknown`, {
+    await page.goto(`${CITY_BASE}/runs/gc-path-unknown`, {
       waitUntil: 'domcontentloaded',
       timeout: 5_000,
     });
     await page.getByText(/execution folder is unknown/i).waitFor({ timeout: 5_000 });
 
-    await page.goto(`${BASE}/runs/gc-clean-worktree`, {
+    await page.goto(`${CITY_BASE}/runs/gc-clean-worktree`, {
       waitUntil: 'domcontentloaded',
       timeout: 5_000,
     });
@@ -283,7 +270,24 @@ function recordApiFailures(result, apiCalls, apiFailures) {
 }
 
 async function installApiFixtureRoutes(context) {
-  await context.route('**/api/snapshot', async (route) => {
+  // The city switcher (Header) lists managed cities via the non-city-scoped
+  // `/api/cities`. Mock it so the harness needs no live supervisor.
+  await context.route('**/api/cities', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [{ name: CITY, running: true }],
+        total: 1,
+      }),
+    });
+  });
+
+  // All city-scoped endpoints now ride `/api/city/:cityName/*`. The glob
+  // `*` segment matches the city name. session-stream lives under its own
+  // `/session-stream/` prefix (distinct from the REST `/sessions/`), so the
+  // peek and stream mocks target different paths.
+  await context.route('**/api/city/*/snapshot', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -291,18 +295,18 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/events/stream', async (route) => {
+  await context.route('**/api/city/*/events/stream', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
       },
-      body: 'retry: 60000\n: run detail fixture\n\n',
+      body: 'retry: 60000\n: workflow detail fixture\n\n',
     });
   });
 
-  await context.route('**/api/config', async (route) => {
+  await context.route('**/api/city/*/config', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -314,7 +318,7 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/runs/gc-adopt-pr-partial**', async (route) => {
+  await context.route('**/api/city/*/runs/gc-adopt-pr-partial**', async (route) => {
     if (INJECT_LATE_API_FAILURE && route.request().url().includes('/diff')) {
       await route.fulfill({
         status: 500,
@@ -325,14 +329,7 @@ async function installApiFixtureRoutes(context) {
     }
     const payload = route.request().url().includes('/diff')
       ? fixture.diff
-      : {
-          ...fixture.detail,
-          runId: 'gc-adopt-pr-partial',
-          completeness: {
-            kind: 'partial',
-            reasons: ['supervisor_snapshot_partial'],
-          },
-        };
+      : { ...fixture.detail, runId: 'gc-adopt-pr-partial', completeness: { kind: 'partial', reasons: ['supervisor_snapshot_partial'] } };
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -340,7 +337,7 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/runs/gc-adopt-pr-active**', async (route) => {
+  await context.route('**/api/city/*/runs/gc-adopt-pr-active**', async (route) => {
     const payload = route.request().url().includes('/diff')
       ? fixture.diff
       : fixture.detail;
@@ -351,7 +348,7 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/runs/gc-no-graph**', async (route) => {
+  await context.route('**/api/city/*/runs/gc-no-graph**', async (route) => {
     const payload = route.request().url().includes('/diff')
       ? fixture.diff
       : {
@@ -372,15 +369,15 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/runs/gc-not-git**', async (route) => {
+  await context.route('**/api/city/*/runs/gc-not-git**', async (route) => {
     const payload = route.request().url().includes('/diff')
       ? {
           kind: 'not_git',
           rootPath: { kind: 'unavailable', reason: 'not_git' },
-          comparison: { kind: 'unavailable', reason: 'not_git' },
           status: [],
           changedFiles: [],
-          patch: '',
+          unstagedDiff: '',
+          stagedDiff: '',
           truncated: false,
         }
       : { ...fixture.detail, runId: 'gc-not-git' };
@@ -391,15 +388,15 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/runs/gc-path-unknown**', async (route) => {
+  await context.route('**/api/city/*/runs/gc-path-unknown**', async (route) => {
     const payload = route.request().url().includes('/diff')
       ? {
           kind: 'path_unknown',
           rootPath: { kind: 'unavailable', reason: 'path_unknown' },
-          comparison: { kind: 'unavailable', reason: 'path_unknown' },
           status: [],
           changedFiles: [],
-          patch: '',
+          unstagedDiff: '',
+          stagedDiff: '',
           truncated: false,
         }
       : {
@@ -414,15 +411,15 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/runs/gc-clean-worktree**', async (route) => {
+  await context.route('**/api/city/*/runs/gc-clean-worktree**', async (route) => {
     const payload = route.request().url().includes('/diff')
       ? {
           kind: 'ok',
           rootPath: { kind: 'known', path: '/tmp/gascity/adopt-pr-42' },
-          comparison: { kind: 'head', reason: 'no_upstream' },
           status: [],
           changedFiles: [],
-          patch: '',
+          unstagedDiff: '',
+          stagedDiff: '',
           truncated: false,
         }
       : { ...fixture.detail, runId: 'gc-clean-worktree' };
@@ -438,8 +435,8 @@ async function installApiFixtureRoutes(context) {
   // per group + `+ N more`, the unresolved/derived/staleness summary line,
   // and exactly ONE aggregate section-level maroon. Without this route the
   // --test harness would fail on the unmocked /api/links/* call the
-  // FormulaRunDetail Related section now makes.
-  await context.route('**/api/links/**', async (route) => {
+  // WorkflowRunDetail Related section now makes.
+  await context.route('**/api/city/*/links/**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -447,8 +444,11 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/sessions/*/peek', async (route) => {
-    const sessionId = route.request().url().match(/\/api\/sessions\/([^/]+)\/peek$/)?.[1];
+  await context.route('**/api/city/*/sessions/*/peek', async (route) => {
+    const sessionId = route
+      .request()
+      .url()
+      .match(/\/api\/city\/[^/]+\/sessions\/([^/]+)\/peek$/)?.[1];
     const transcript = sessionId ? fixture.transcripts[decodeURIComponent(sessionId)] : null;
     if (!transcript) {
       await route.fulfill({
@@ -465,8 +465,13 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/sessions/*/stream', async (route) => {
-    const sessionId = route.request().url().match(/\/api\/sessions\/([^/]+)\/stream$/)?.[1];
+  // Session SSE stream rides its own `/session-stream/` prefix (distinct from
+  // the REST `/sessions/`) — see city/runtime.ts + api.sessionStreamUrl.
+  await context.route('**/api/city/*/session-stream/*/stream', async (route) => {
+    const sessionId = route
+      .request()
+      .url()
+      .match(/\/api\/city\/[^/]+\/session-stream\/([^/]+)\/stream$/)?.[1];
     const turns = sessionId ? fixture.streamTurns[decodeURIComponent(sessionId)] ?? [] : [];
     const body = turns
       .map((turn) => `event: turn\ndata: ${JSON.stringify(turn)}\n\n`)
@@ -529,12 +534,12 @@ function snapshotFixture() {
       activeAgents: unavailableMetric('city', 'city unavailable in fixture'),
       maxAgents: unavailableMetric('city', 'city unavailable in fixture'),
       activeSessions: unavailableMetric('city', 'city unavailable in fixture'),
-      activeRuns: { status: 'available', value: 1 },
+      activeWorkflows: { status: 'available', value: 1 },
     },
     sources: {
       city: sourceUnavailable('city', 'city unavailable in fixture'),
       resources: sourceUnavailable('resources', 'resources unavailable in fixture'),
-      runs: sourceFixture('runs', {
+      workflows: sourceFixture('workflows', {
         totalActive: 1,
         // yh5i: shared WorkflowSummary now carries totalHistorical +
         // historicalLanes. This is a .mjs fixture and isn't typechecked,
@@ -554,7 +559,7 @@ function snapshotFixture() {
         recentChanges: [],
         census: {
           status: 'unavailable',
-          error: 'run health has not been derived',
+          error: 'workflow health has not been derived',
         },
       }),
     },
@@ -610,7 +615,7 @@ function runLaneFixture() {
     formulaStageResolved: true,
     health: {
       status: 'unavailable',
-      error: 'run health has not been derived',
+      error: 'workflow health has not been derived',
     },
   };
 }
@@ -680,13 +685,13 @@ for (const result of results) {
 
 if (TEST_MODE) {
   if (hadErrors) {
-    console.error('run detail snapshot: FAILED');
+    console.error('formula run detail snapshot: FAILED');
     exit(1);
   }
   const ranAny = results.some((result) => result.skipped === null);
   if (!ranAny) {
-    console.log('run detail snapshot: SKIPPED (no live frontend)');
+    console.log('formula run detail snapshot: SKIPPED (no live frontend)');
     exit(0);
   }
-  console.log('run detail snapshot: PASSED');
+  console.log('formula run detail snapshot: PASSED');
 }

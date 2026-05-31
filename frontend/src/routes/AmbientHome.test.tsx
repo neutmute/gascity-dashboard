@@ -342,7 +342,7 @@ describe('AmbientHomePage', () => {
     // useParams() will decode it once. Query params are encoded only once
     // by URLSearchParams so the consumer's search.get('node') yields the
     // raw 'review:check/2' — Phase 4 caught a pre-fix double-encode.
-    expect(href).toMatch(/^\/workflows\/stalled%2Fwith%20chars\?/);
+    expect(href).toMatch(/^\/runs\/stalled%2Fwith%20chars\?/);
     expect(href).toContain('node=review%3Acheck%2F2');
     expect(href).toContain('scope_kind=rig');
     expect(href).toContain('scope_ref=gascity');
