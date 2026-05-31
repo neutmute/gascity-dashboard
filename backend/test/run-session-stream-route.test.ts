@@ -79,6 +79,66 @@ describe('session stream route', () => {
     }
   });
 
+  test('returns a 502 JSON error when the supervisor is unreachable before the stream opens', async () => {
+    // session-stream does not pass openImmediately, so a pre-open upstream
+    // failure must surface as a real HTTP 502 (not a 200 SSE error frame) —
+    // the client never saw a stream, so the status code is still meaningful.
+    const { url, close } = await startApp(buildApp('http://127.0.0.1:1'));
+    try {
+      const res = await fetch(`${url}/api/sessions/gc-session-b/stream`);
+      assert.equal(res.status, 502);
+      assert.match(res.headers.get('content-type') ?? '', /application\/json/);
+      const body = await res.json();
+      assert.equal(body.kind, 'upstream');
+      assert.match(body.error, /session stream unreachable/);
+    } finally {
+      await close();
+    }
+  });
+
+  test('returns a 502 JSON error when the supervisor responds non-200 before the stream opens', async () => {
+    fake.setHandler((_req, res) => {
+      res.statusCode = 503;
+      res.end('upstream down');
+    });
+    const { url, close } = await startApp(buildApp(fake.baseUrl));
+    try {
+      const res = await fetch(`${url}/api/sessions/gc-session-b/stream`);
+      assert.equal(res.status, 502);
+      const body = await res.json();
+      assert.equal(body.kind, 'upstream');
+      assert.match(body.error, /gc supervisor returned 503/);
+    } finally {
+      await close();
+    }
+  });
+
+  test('emits a post-open SSE error frame when the upstream stream fails after bytes flow', async () => {
+    // Once the proxy has piped at least one upstream chunk, the client-facing
+    // headers are already sent; a later upstream drop must arrive as an
+    // `event: error` frame on the open stream, not a (now impossible) status.
+    fake.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/event-stream');
+      res.flushHeaders();
+      res.write('event: turn\ndata: {"role":"assistant","text":"open"}\n\n');
+      // Drop the upstream connection abruptly mid-stream.
+      setTimeout(() => res.destroy(new Error('upstream reset')), 20);
+    });
+    const { url, close } = await startApp(buildApp(fake.baseUrl));
+    try {
+      const res = await fetch(`${url}/api/sessions/gc-session-b/stream`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') ?? '', /text\/event-stream/);
+      // The proxy ends the client stream after the upstream drops; the body
+      // resolves with the bytes that were piped before the reset.
+      const text = await res.text();
+      assert.match(text, /event: turn/);
+    } finally {
+      await close();
+    }
+  });
+
   test('rejects invalid stream session ids before calling supervisor', async () => {
     const { url, close } = await startApp(buildApp(fake.baseUrl));
     try {

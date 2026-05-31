@@ -121,6 +121,147 @@ describe("useGcEventRefresh", () => {
     expect(result.current).toBe("closed");
     expect(eventSources).toHaveLength(0);
   });
+
+  describe("reconnect backoff", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    it("reconnects after an exponentially growing, 30s-capped delay", () => {
+      const { result } = renderHook(() =>
+        useGcEventRefresh([GC_EVENT_PREFIX.bead], vi.fn()),
+      );
+      expect(eventSources).toHaveLength(1);
+
+      // First error schedules a reconnect using the initial 1s delay.
+      act(() => eventSources[0]?.error());
+      expect(result.current).toBe("closed");
+      expect(eventSources).toHaveLength(1);
+
+      // Just before the 1s delay elapses, no reconnect has happened.
+      act(() => { vi.advanceTimersByTime(999); });
+      expect(eventSources).toHaveLength(1);
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(eventSources).toHaveLength(2);
+
+      // The delay doubled to 2s for the next reconnect.
+      act(() => eventSources[1]?.error());
+      act(() => { vi.advanceTimersByTime(1_999); });
+      expect(eventSources).toHaveLength(2);
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(eventSources).toHaveLength(3);
+
+      // Drive past the cap: each subsequent retry doubles (4s, 8s, 16s) and
+      // then clamps at 30s no matter how many failures accrue.
+      const driveOneRetry = (delayMs: number) => {
+        const idx = eventSources.length - 1;
+        act(() => eventSources[idx]?.error());
+        act(() => { vi.advanceTimersByTime(delayMs - 1); });
+        expect(eventSources).toHaveLength(idx + 1);
+        act(() => { vi.advanceTimersByTime(1); });
+        expect(eventSources).toHaveLength(idx + 2);
+      };
+      driveOneRetry(4_000);
+      driveOneRetry(8_000);
+      driveOneRetry(16_000);
+      driveOneRetry(30_000);
+      // Already at the cap; the next delay stays clamped at 30s, not 60s.
+      driveOneRetry(30_000);
+    });
+
+    it("resets the backoff delay to 1s once a reconnect opens", () => {
+      renderHook(() => useGcEventRefresh([GC_EVENT_PREFIX.bead], vi.fn()));
+
+      // Two failures grow the delay to 4s for the third attempt.
+      act(() => eventSources[0]?.error());
+      act(() => { vi.advanceTimersByTime(1_000); });
+      act(() => eventSources[1]?.error());
+      act(() => { vi.advanceTimersByTime(2_000); });
+      expect(eventSources).toHaveLength(3);
+
+      // A successful open resets the backoff window.
+      act(() => eventSources[2]?.open());
+      act(() => eventSources[2]?.error());
+      // The delay is back to the initial 1s, not the grown 8s.
+      act(() => { vi.advanceTimersByTime(999); });
+      expect(eventSources).toHaveLength(3);
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(eventSources).toHaveLength(4);
+    });
+
+    it("cancels a pending reconnect timer on unmount", () => {
+      const { unmount } = renderHook(() =>
+        useGcEventRefresh([GC_EVENT_PREFIX.bead], vi.fn()),
+      );
+      act(() => eventSources[0]?.error());
+      unmount();
+      act(() => { vi.advanceTimersByTime(60_000); });
+      // No reconnect after teardown.
+      expect(eventSources).toHaveLength(1);
+    });
+  });
+
+  describe("coalesce throttle window", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    it("fires immediately for the first match, then coalesces a burst into one trailing fire", () => {
+      const onMatch = vi.fn();
+      renderHook(() => useGcEventRefresh([GC_EVENT_PREFIX.bead], onMatch));
+      act(() => eventSources[0]?.open());
+
+      const emit = () =>
+        act(() =>
+          eventSources[0]?.emitNamed(
+            "event",
+            JSON.stringify({ type: "bead.updated" }),
+          ),
+        );
+
+      // Leading edge: the first matching event fires onMatch right away.
+      emit();
+      expect(onMatch).toHaveBeenCalledTimes(1);
+
+      // A burst inside the 2.5s window does not fire again immediately;
+      // it schedules a single trailing fire at the window edge.
+      emit();
+      emit();
+      emit();
+      expect(onMatch).toHaveBeenCalledTimes(1);
+
+      // Before the window closes, still just the leading fire.
+      act(() => { vi.advanceTimersByTime(2_499); });
+      expect(onMatch).toHaveBeenCalledTimes(1);
+
+      // At the window edge the single trailing fire lands: burst -> 2 total.
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(onMatch).toHaveBeenCalledTimes(2);
+    });
+
+    it("fires immediately again once the window has elapsed", () => {
+      const onMatch = vi.fn();
+      renderHook(() => useGcEventRefresh([GC_EVENT_PREFIX.bead], onMatch));
+      act(() => eventSources[0]?.open());
+
+      const emit = () =>
+        act(() =>
+          eventSources[0]?.emitNamed(
+            "event",
+            JSON.stringify({ type: "bead.updated" }),
+          ),
+        );
+
+      emit();
+      expect(onMatch).toHaveBeenCalledTimes(1);
+
+      // After the full window elapses with no events, the next match is
+      // outside the window and fires on its own leading edge.
+      act(() => { vi.advanceTimersByTime(2_500); });
+      emit();
+      expect(onMatch).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 class FakeEventSource {
@@ -155,6 +296,10 @@ class FakeEventSource {
   open(): void {
     this.readyState = FakeEventSource.OPEN;
     this.onopen?.(new Event("open"));
+  }
+
+  error(): void {
+    this.onerror?.(new Event("error"));
   }
 
   emitNamed(type: string, data: string): void {
