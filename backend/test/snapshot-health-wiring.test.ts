@@ -286,6 +286,149 @@ describe('health engine wiring on /api/snapshot', () => {
   });
 });
 
+// gascity-dashboard-7u5a — progress-mark monotonicity under concurrent reads
+// straddling a generation boundary. The cross-cycle thrashStreak (R8) is the
+// ONE "failing"-class signal the client cannot recompute (R1), and it lives in
+// closure-scoped service state advanced inside enrichRuns. Two overlapping
+// readSnapshot calls (ambient GET poll vs POST /refresh) can capture different
+// runs generations; if the newer generation enriches first, a late older read
+// must NOT re-advance the marks backward to the stale generation. The pure
+// engine tests in snapshot-runHealth.test.ts cannot catch this — the bug is in
+// the service-layer guard that decides WHEN to call advanceProgressMarks, so
+// the regression guard has to drive createSnapshotService under a real,
+// deterministically-ordered straddle.
+
+interface LoadGate {
+  promise: Promise<void>;
+  release: () => void;
+}
+
+function loadGate(): LoadGate {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  return { promise, release };
+}
+
+// A thrashing lane: attempt climbs each generation while the active step and
+// stage index stay flat. Hysteresis default = 2 consecutive ticks.
+function thrashLane(attempt: number): RunLane {
+  return lane({
+    id: 'thrash',
+    formulaStageResolved: true,
+    activeAssignees: ['w'],
+    progress: activeProgress('wait-for-ci', 5, attempt),
+  });
+}
+
+function laneThrashing(snap: { sources: { runs: SourceState<RunSummary> } }): boolean {
+  assertSourceAvailable(snap.sources.runs);
+  const target = snap.sources.runs.data.lanes.find((l) => l.id === 'thrash');
+  return requireAvailableHealth(target).thrashingDetected;
+}
+
+// A clock-injected cache: every source in these tests shares one controlled
+// `now` so each runs generation gets a distinct fetchedAt under test control.
+function clocked<T>(source: 'city' | 'resources' | 'runs', now: () => Date, load: () => T | Promise<T>): SourceCache<T> {
+  return new SourceCache<T>({ source, ttlMs: 600_000, now, sanitizeErrorMessage: null, load });
+}
+
+describe('progress-mark monotonicity under concurrent reads (gascity-dashboard-7u5a)', () => {
+  test('a late older-generation read must not regress the thrash streak', async () => {
+    // A controlled clock stamps each runs generation with a distinct
+    // fetchedAt, so the straddle exercises genuinely different generations
+    // (not the same-ms coalescing blind spot).
+    const clock = { ms: Date.parse('2026-05-25T00:00:00.000Z') };
+    const now = () => new Date(clock.ms);
+
+    let currentRuns: RunSummary = summary([thrashLane(1)]);
+    let cityGate: LoadGate | null = null;
+
+    // Read B's runs load is never gated — it resolves naturally and enriches
+    // while read A is still parked on the city gate, producing the newer-first
+    // ordering the bug needs. thrashingDetected derives from the cross-cycle
+    // marks alone, independent of session resolution (health.ts), so empty
+    // sessions keep the test focused.
+    const service = createSnapshotService({
+      caches: {
+        city: clocked('city', now, async () => {
+          if (cityGate) await cityGate.promise;
+          return SAMPLE_CITY;
+        }),
+        resources: clocked('resources', now, () => SAMPLE_RESOURCES),
+        runs: clocked('runs', now, () => currentRuns),
+      },
+      // The shared sessions cache is labeled with the 'city' SourceName (it IS
+      // the city's session list) — mirroring buildSessionsCache in service.ts.
+      sessions: clocked<GcSessionList>('city', now, () => ({ items: [], total: 0 })),
+      config: CONFIG,
+    });
+
+    // Seed the streak sequentially: gen1 (attempt 1 → streak 0), then gen2
+    // (attempt 2, position flat → streak 1, still below the 2-tick threshold).
+    await service.refresh(); // gen1 @ t0
+    clock.ms += 1000;
+    currentRuns = summary([thrashLane(2)]);
+    const gen2Snap = await service.refresh(['runs']); // gen2 @ t1
+    assert.equal(laneThrashing(gen2Snap), false, 'streak 1 must be below the 2-tick threshold');
+
+    // Park read A (POST /refresh of an unrelated source) on the city-load
+    // gate. It captures the CURRENT cached runs generation (gen2 @ t1, older)
+    // synchronously via snapshot() before read B advances the generation.
+    cityGate = loadGate();
+    const readA = service.refresh(['city']);
+
+    // Read B forces a new runs generation (gen3 @ t2, attempt 3 → streak 2 →
+    // thrash detected) and, with no gate of its own, resolves and enriches
+    // FIRST while A is still parked.
+    clock.ms += 1000;
+    currentRuns = summary([thrashLane(3)]);
+    const bSnap = await service.refresh(['runs']);
+    assert.equal(laneThrashing(bSnap), true, 'newer generation crosses the 2-tick threshold');
+
+    // Release A so the older (gen2 @ t1) read enriches SECOND. Under the
+    // pre-fix identity guard this re-runs advanceProgressMarks with the OLDER
+    // lanes, resetting the streak to 0; the monotonic guard makes it a no-op.
+    cityGate?.release();
+    await readA;
+
+    // gen3 is still the freshest cached runs generation. A follow-up read must
+    // still surface the detection B established — the late older read must not
+    // have regressed the cross-cycle streak.
+    const afterSnap = await service.getSnapshot();
+    assert.equal(
+      laneThrashing(afterSnap),
+      true,
+      'late older-generation read must not regress the thrash streak (R1/R8)',
+    );
+  });
+
+  test('sequential generations still advance the streak normally', async () => {
+    const clock = { ms: Date.parse('2026-05-25T00:00:00.000Z') };
+    const now = () => new Date(clock.ms);
+    let currentRuns: RunSummary = summary([thrashLane(1)]);
+
+    const service = createSnapshotService({
+      caches: {
+        city: clocked('city', now, () => SAMPLE_CITY),
+        resources: clocked('resources', now, () => SAMPLE_RESOURCES),
+        runs: clocked('runs', now, () => currentRuns),
+      },
+      sessions: clocked<GcSessionList>('city', now, () => ({ items: [], total: 0 })),
+      config: CONFIG,
+    });
+
+    assert.equal(laneThrashing(await service.refresh()), false); // gen1, streak 0
+    clock.ms += 1000;
+    currentRuns = summary([thrashLane(2)]);
+    assert.equal(laneThrashing(await service.refresh(['runs'])), false); // gen2, streak 1
+    clock.ms += 1000;
+    currentRuns = summary([thrashLane(3)]);
+    assert.equal(laneThrashing(await service.refresh(['runs'])), true); // gen3, streak 2 → detected
+  });
+});
+
 function assertSourceAvailable<T>(
   state: SourceState<T>,
 ): asserts state is SourceAvailableState<T> {

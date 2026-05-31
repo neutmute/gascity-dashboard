@@ -106,11 +106,11 @@ export function createSnapshotService(
   // Cross-cycle progress marks for the monotonicity predicate (R1) +
   // hysteresis (R8). Ephemeral process state, NOT a persistence layer (R7):
   // it carries no historical baseline and resets on restart. Advanced ONLY
-  // when the runs cache produces a new generation (fetchedAt identity),
-  // so concurrent GET/POST builds reading one frozen generation can't clobber
-  // the streak (architect review §2A). The advance is synchronous, so each
-  // build runs it atomically before yielding — this safety holds ONLY because
-  // enrichRuns contains no `await`; do not introduce one inside it.
+  // when the runs cache produces a STRICTLY NEWER generation (monotonic on
+  // fetchedAt), so concurrent GET/POST builds reading one frozen generation
+  // can't clobber the streak. The advance is synchronous, so each build runs
+  // it atomically before yielding — this safety holds ONLY because enrichRuns
+  // contains no `await`; do not introduce one inside it.
   let progressMarks = new Map<string, LaneProgressMark>();
   let marksFetchedAt: string | null = null;
 
@@ -128,9 +128,24 @@ export function createSnapshotService(
     const sessionsAvailable = sourceIsAvailable(sessionsState);
 
     // A sessions read failure degrades confidence (all lanes inferred, no
-    // maroon — R2 fail-safe); it never blanks the lanes. Only advance the
-    // monotonicity marks on a genuine new runs generation.
-    if (wf.fetchedAt !== marksFetchedAt) {
+    // maroon — R2 fail-safe); it never blanks the lanes.
+    //
+    // Advance the monotonicity marks ONLY when this build's runs generation is
+    // STRICTLY NEWER than the one the marks already reflect (gascity-dashboard-7u5a).
+    // An identity compare (`!== marksFetchedAt`) was insufficient: two reads
+    // straddling a generation boundary — an ambient GET poll capturing T1 and a
+    // POST /refresh capturing T2 — can enrich out of order, and a late older
+    // read (T1 !== T2) would re-run advanceProgressMarks with the OLDER lanes,
+    // resetting/double-counting the thrashStreak hysteresis (R8) the client
+    // cannot recompute (R1). With a strictly-newer compare a late older-or-equal
+    // read is a no-op for the marks. It still derives its own (older) lanes
+    // against the newer streak, which is fail-safe: thrashStreak is keyed by
+    // lane.id, and a lane absent from the newer generation reads 0 — so the skew
+    // can never fabricate a maroon One Mark (R2). The `=== null` arm seeds the
+    // cold start; Date.parse(null) is NaN and `x > NaN` is always false, which
+    // would otherwise silently disable thrash detection entirely.
+    const generationMs = Date.parse(wf.fetchedAt);
+    if (marksFetchedAt === null || generationMs > Date.parse(marksFetchedAt)) {
       progressMarks = advanceProgressMarks(progressMarks, wf.data.lanes);
       marksFetchedAt = wf.fetchedAt;
     }
