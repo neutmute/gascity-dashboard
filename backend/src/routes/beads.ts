@@ -14,6 +14,7 @@ import {
 import { GcClient } from '../gc-client.js';
 import { HTTP_STATUS } from '../lib/http-status.js';
 import { writeExecError } from '../lib/sanitise-error.js';
+import { stripNonPrintable } from '../lib/strip-non-printable.js';
 import { errorMessage, LOG_COMPONENT, logWarn } from '../logging.js';
 import {
   routeInternalError,
@@ -230,12 +231,19 @@ async function runBeadAction(
     writeRouteError(res, routeValidationError('invalid bead id'));
     return;
   }
+  // gascity-dashboard-htrz: the close-reason is the only operator-controlled
+  // free-text that reaches a subprocess arg (`bd close --reason`) and the
+  // audit log. Strip control/escape/bidi bytes here, BEFORE both sinks, so a
+  // browser-supplied reason cannot forge a terminal-escape sequence into the
+  // `gc bd` output or inject a fake line/row into .gc/events.jsonl.
+  const safeReason =
+    reason !== undefined ? stripNonPrintable(reason) : undefined;
   try {
-    const result = await execBeadAction(beadId, action, reason, cityPath);
+    const result = await execBeadAction(beadId, action, safeReason, cityPath);
     await recordAudit({
       type: 'dashboard.exec',
       endpoint: `POST /api/beads/:id/${action}`,
-      parsed_args: { bead_id: beadId, ...(reason ? { reason } : {}) },
+      parsed_args: { bead_id: beadId, ...(safeReason ? { reason: safeReason } : {}) },
       exit_code: result.exitCode,
       duration_ms: result.durationMs,
     });

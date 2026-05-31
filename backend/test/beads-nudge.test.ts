@@ -267,6 +267,52 @@ describe('POST /api/beads/:id/{claim,close,nudge}', { concurrency: false }, () =
     assert.equal(parsed.reason, 'shipped via pf2');
   });
 
+  // gascity-dashboard-htrz: the close-reason is operator-controlled free text
+  // that reaches BOTH a subprocess arg (`bd close --reason`) and the audit log.
+  // Control chars (ANSI/OSC escapes, C0/C1, newlines) + bidi/RTL overrides must
+  // be stripped before EITHER sink — otherwise a browser-supplied reason could
+  // forge a terminal-escape sequence in the gc output or inject a fake row into
+  // .gc/events.jsonl (log injection).
+  test('close reason: control/escape/bidi chars stripped before exec AND audit', async () => {
+    h = await buildApp();
+    // A reason carrying every stripped class: a CSI escape (\x1b[7m reverse),
+    // an OSC title set (\x1b]0;title BEL), an embedded newline + a forged JSON
+    // fragment that would inject a fake row into events.jsonl, a C1 control
+    // (\x9b), DEL (\x7f), and a bidi RLO override (‮). After sanitisation NONE
+    // of these byte classes may survive into either sink.
+    const dirty =
+      'safe\x1b[7m\x1b]0;evil\x07inject\n"type":"fake"\x9b\x7f‮rtl';
+    const res = await postJson(`${h.url}/api/beads/td-wisp-abc123/close`, {
+      reason: dirty,
+    });
+    assert.equal(res.status, 200);
+
+    // Property assertions (the contract): no control byte (C0/C1/DEL), no ESC,
+    // and no bidi override may reach EITHER the exec arg or the audit row.
+    const CONTROL_OR_BIDI = /[\x00-\x1f\x7f-\x9f‮]/;
+
+    assert.equal(h.calls.length, 1);
+    const sentReason = h.calls[0]!.reason!;
+    assert.ok(
+      !CONTROL_OR_BIDI.test(sentReason),
+      `exec reason still carries control/bidi bytes: ${JSON.stringify(sentReason)}`,
+    );
+    // The visible text survives; only the dangerous bytes are removed.
+    assert.ok(sentReason.includes('safe') && sentReason.includes('rtl'));
+
+    // The audit file stays exactly one well-formed row (the embedded newline +
+    // forged JSON did not split it) and its reason carries no dangerous bytes.
+    const rows = await readAudit(h.auditPath);
+    assert.equal(rows.length, 1);
+    const auditedReason = (rows[0]!.parsed_args as Record<string, string>)
+      .reason;
+    assert.equal(auditedReason, sentReason, 'exec + audit must see the same sanitized reason');
+    assert.ok(
+      !CONTROL_OR_BIDI.test(auditedReason),
+      `audit reason still carries control/bidi bytes: ${JSON.stringify(auditedReason)}`,
+    );
+  });
+
   test('invalid bead id returns 400 before reaching exec', async () => {
     h = await buildApp();
     const res = await postJson(`${h.url}/api/beads/bad%20id%20!!/nudge`);
