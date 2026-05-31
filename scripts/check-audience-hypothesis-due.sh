@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # CI gate for the modular-dashboard audience-hypothesis revisit
-# (docs/PRD-modular-dashboard.md §7, premortem #1).
+# (specs/requirements/modular-dashboard-prd.md §7, premortem #1).
 #
 # The PRD requires a documented decision on or before the target date:
 # either external Gas City operators have shown up wanting non-fork
 # extension (open a Phase 2 design bead) OR they haven't (write
-# docs/PLUGIN-API-DEFERRED.md tombstone and accept Phase 1 as the
+# specs/requirements/PLUGIN-API-DEFERRED.md tombstone and accept Phase 1 as the
 # permanent end-state). This script fails CI on the day after the target
 # date if neither path was taken.
 #
@@ -24,7 +24,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
-TOMBSTONE="${REPO_ROOT}/docs/PLUGIN-API-DEFERRED.md"
+TOMBSTONE="${REPO_ROOT}/specs/requirements/PLUGIN-API-DEFERRED.md"
 
 if [ -f "${TOMBSTONE}" ]; then
   echo "audience-hypothesis: tombstone present at ${TOMBSTONE} — gate passes"

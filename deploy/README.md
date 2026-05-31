@@ -53,6 +53,6 @@ For permanent disable: `systemctl --user disable --now gas-city-dashboard.servic
 
 ## Notes
 
-- Bound to `127.0.0.1:8081` only (not `0.0.0.0`); see [`../docs/SECURITY.md`](../docs/SECURITY.md) for the DNS-rebinding posture.
+- Bound to `127.0.0.1:8081` only (not `0.0.0.0`); see [`../specs/architecture/security.md`](../specs/architecture/security.md) for the DNS-rebinding posture.
 - A `gc-supervisor` outage takes the dashboard's live data with it; the dashboard SHELL stays up (renders the cached / empty state) until supervisor returns.
 - Audit log is appended to `~/.gc/events.jsonl` by default — durable channel that survives dolt-hq corruption. Override with `ADMIN_AUDIT_LOG_PATH`.

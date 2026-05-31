@@ -91,14 +91,14 @@ Built for **single-operator** use on a **trusted network**.
 - **Content Security Policy** — `script-src 'self'` plus a hash for the static theme bootstrap, no arbitrary inline scripts, no `eval`.
 - **Exec whitelist** — every shell-out is enumerated explicitly in [`backend/src/exec.ts`](backend/src/exec.ts). There is no general-purpose command execution path.
 
-Full threat model: [`docs/SECURITY.md`](docs/SECURITY.md).
+Full threat model: [`specs/architecture/security.md`](specs/architecture/security.md).
 
 ## Stack
 
 - **Backend** — Node 20 + Express + TypeScript. Single port serves API at `/api/*` and the SPA from `/`.
 - **Frontend** — React 18 + Vite + TypeScript + Tailwind, self-hosted Inter Variable. Single-page app, statically served by the backend in production.
 - **Shared types** — `gas-city-dashboard-shared` workspace package. Wire-shape drift becomes a compile error on both sides.
-- **Deploy** — systemd user unit. Deliberately _not_ managed by `gc [[services]]`; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for why the dashboard must outlive supervisor outages.
+- **Deploy** — systemd user unit. Deliberately _not_ managed by `gc [[services]]`; see [`specs/architecture/overview.md`](specs/architecture/overview.md) for why the dashboard must outlive supervisor outages.
 
 ## Layout
 
@@ -112,10 +112,9 @@ gas-city-dashboard/
 │   └── src/{server.ts,middleware,routes,gc-client.ts,exec.ts,audit.ts}
 ├── frontend/                 # React + Vite + Tailwind
 │   └── src/{components,routes,contexts,styles}
-├── specs/plans/              # implementation plans and design specs
+├── specs/                    # requirements, architecture, plans
 ├── scripts/                  # Playwright snap harness for design iteration
-├── deploy/                   # systemd unit + install README
-└── docs/                     # ARCHITECTURE, SECURITY, EXTENDING
+└── deploy/                   # systemd unit + install README
 ```
 
 ## Design context

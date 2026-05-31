@@ -2,7 +2,7 @@
 
 ## Adding a new view
 
-PR-A of the modular-dashboard PRD (`docs/PRD-modular-dashboard.md`) introduced a registry-driven path for new views; legacy explicit-wiring still exists for routes that haven't been ported yet. Prefer the registry path for anything new.
+PR-A of the modular-dashboard PRD (`specs/requirements/modular-dashboard-prd.md`) introduced a registry-driven path for new views; legacy explicit-wiring still exists for routes that haven't been ported yet. Prefer the registry path for anything new.
 
 ### Registry-driven (preferred — PR-A onwards, /health is the worked example)
 
@@ -139,6 +139,6 @@ module.
   ```
 - **Audience-hypothesis revisit (PR-A scheduled bead, PRD §7):** a
   `bd` task is created at PR-A merge with a 6-month target date. If the
-  date passes with no `docs/PLUGIN-API-DEFERRED.md` tombstone AND the bead
+  date passes with no `specs/requirements/PLUGIN-API-DEFERRED.md` tombstone AND the bead
   is still open, `scripts/check-audience-hypothesis-due.sh` exits 1.
   Not yet wired into CI — re-evaluate at PR-D land time.

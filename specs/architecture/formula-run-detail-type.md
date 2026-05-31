@@ -81,15 +81,16 @@ before any route, enrichment, or React code sees it. Likewise, event identity
 collection must normalize `workflow_id`/`gc.workflow_id` into run identity.
 
 `GcClient` is a thin policy facade over a **generated** supervisor SDK, not a
-hand-written HTTP client. The supervisor client, request/response types, and
-runtime response validators are generated from
+hand-written HTTP client. The supervisor client, endpoint SDK, and
+request/response types are generated from
 `backend/openapi/gc-supervisor.openapi.json` by `@hey-api/openapi-ts` (the same
-generator the upstream `gc dashboard` uses), with the Zod plugin wired into the
-SDK for per-call response validation. `GcClient` owns only what the generator
-cannot: single-flight URL-keyed coalescing, topology-safe error redaction,
-timeouts/output caps, the `workflow_id → run_id` vocabulary normalization, and
-sane method names. This boundary supersedes the earlier hand-written Zod
-decoders and the AJV component overlay. The migration and its phasing live in
+generator the upstream `gc dashboard` uses). `GcClient` owns only what the
+generator cannot: single-flight URL-keyed coalescing, topology-safe error
+redaction, timeouts/output caps, the `workflow_id → run_id` vocabulary
+normalization, and sane method names. Strict generated Zod response validation
+is the target boundary, but remains gated on upstream OpenAPI accuracy; until
+then, the legacy hand-Zod module is only a temporary dashboard DTO adapter over
+generated hey-api response types. The migration and its phasing live in
 `specs/plans/code-quality-remediation-plan.md` (WS-10).
 
 ## Design Goals
@@ -493,12 +494,12 @@ Visible refresh hooks have distinct responsibilities:
 
 ## Current Implementation Against The Ideal
 
-This list reflects the implementation **before** the WS-10 supervisor-client
-migration. The supervisor-edge items below — `openapi-fetch`, hand-written Zod
-decoders, and the AJV component overlay — are superseded by the generated
-`@hey-api/openapi-ts` SDK + Zod validators described in *Naming Boundary*,
-*Ideal Target State*, and *Invariants*. See
-`specs/plans/code-quality-remediation-plan.md` WS-10 for the migration.
+This list reflects the implementation after the WS-10 G-1b transport cutover.
+The old `openapi-fetch` client, old generated `openapi-typescript` artifacts,
+custom schema-map extractor, and AJV component overlay have been deleted.
+Strict generated Zod response validation remains a G-3 target after upstream
+OpenAPI accuracy fixes; the remaining hand-Zod module is a temporary dashboard
+DTO adapter over generated hey-api response types.
 
 Implemented:
 
@@ -534,20 +535,15 @@ Implemented:
   diff values
 - route validation for run id and scope query pairs
 - deterministic browser harness for the detail route
-- generated OpenAPI path/query/response types plus `openapi-fetch` for
-  supervisor snapshot endpoint calls
-- generated OpenAPI runtime validation for the supervisor payloads that feed
-  run detail projection: session lists, run snapshots, formula
-  details, transcripts, and health
-- runtime validator generation emits every OpenAPI component schema from
-  `backend/openapi/gc-supervisor.openapi.json` rather than relying on a
-  hand-maintained schema-root allowlist
-- generated OpenAPI runtime validation for bead, bead-list, mail-list, and
-  event-list payloads, with an explicit generated-schema overlay for the
-  observed nullable `Bead.priority` supervisor drift
-- strict runtime validation for generated numeric formats used by the
-  supervisor schema (`int64` and `double`) rather than treating those formats as
-  unknown annotations
+- generated hey-api endpoint SDK, request path/query handling, and response
+  types for supervisor calls
+- temporary hand-Zod dashboard DTO adapter for supervisor payloads that feed
+  run detail projection: session lists, run snapshots, formula details,
+  transcripts, and health
+- temporary hand-Zod dashboard DTO adapter for bead, bead-list, mail-list, and
+  event-list payloads, including currently-observed degraded supervisor shapes
+  that strict generated validation cannot accept until the upstream OpenAPI is
+  fixed
 - centralized client-error reporting for run detail load failures, diff
   failures, malformed city event payloads, and malformed selected-session
   stream events
@@ -816,7 +812,7 @@ stable backend boundaries:
    supervisor output (nullable `Bead.priority`, legacy bead fields, phantom
    event keys, `description`-required formula detail), generated strict
    validation would reject valid degraded payloads — the same gaps that forced
-   the legacy hand-Zod decoders to opt out of the OpenAPI gate in ~15 places.
+   the temporary hand-Zod DTO adapter to stay lenient in ~15 places.
 
    The fix lives **upstream in the Gas City OpenAPI source**, which this repo
    re-pulls via `npm run openapi:gc-supervisor:update`. That makes strict

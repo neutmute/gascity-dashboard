@@ -2,7 +2,7 @@
 
 Practical guide for anyone adding a view module to gas-city-dashboard, first-
 party (in this repo) or third-party (Phase 3 — capability-scoped sketch, not
-yet wired). The PRD (`docs/PRD-modular-dashboard.md`) covers the rationale;
+yet wired). The PRD (`specs/requirements/modular-dashboard-prd.md`) covers the rationale;
 this file is the actionable summary. If you are extending an existing module
 instead of adding a new one, only the invariants in §2 apply — skip §3.
 
@@ -43,7 +43,8 @@ iterator in `app.ts` never sees `Deps`.
 | `nav` | `{ label, order }` or `null`. `null` = routable but hidden from the header. See `ViewNavEntry` at `shared/src/views.ts:42`. |
 | `element` | Lazy-loaded component. The frontend re-types `TElement` as `LazyExoticComponent<ComponentType>` — keep your descriptor on `React.lazy(...)` so your chunk stays out of the first-paint bundle. |
 | `defaultRoute?` | Module's candidacy for `/`. Operators override via `DEFAULT_VIEW`. Validation: at most one ENABLED view should set this — the frontend resolver picks the lowest `nav.order` and warns when more than one is flagged. |
-| `legacyPaths?` | Optional 302-redirect inputs (e.g. an old `/kanban` → new `/workflows`). |
+
+Legacy route aliases are intentionally unsupported. Delete old routes instead of preserving redirects.
 
 ## 2. Invariants you MUST respect
 

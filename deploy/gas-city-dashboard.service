@@ -1,6 +1,6 @@
 [Unit]
 Description=gas-city-dashboard — editorial ambient dashboard for a single gc operator (localhost-only, port 8081)
-Documentation=file://%h/gas-city-dashboard/docs/ARCHITECTURE.md
+Documentation=file://%h/gas-city-dashboard/specs/architecture/overview.md
 After=network-online.target
 Wants=network-online.target
 
