@@ -9,6 +9,11 @@ This document identifies features present in the dashboard built into
 `~/Code/gastownhall/gascity` that are absent or materially narrower in this
 standalone `gascity-dashboard` repo.
 
+Upstream Gas City supervisor API and shared-presentation gaps are tracked
+separately in [`gc-supervisor-api-gaps.md`](gc-supervisor-api-gaps.md). This
+file is about dashboard product/UI parity, not changes that must be pushed
+into the Gas City supervisor API.
+
 The comparison is intentionally asymmetric: it is about what the built-in
 `gc dashboard` can do today that the standalone dashboard cannot yet do. A
 short non-gap section near the end captures important standalone-only

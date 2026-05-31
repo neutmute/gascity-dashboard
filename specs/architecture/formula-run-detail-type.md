@@ -1,8 +1,8 @@
 # Formula Run Detail Type Architecture
 
 Status: product naming boundary documented, current implementation aligned
-with dashboard run/formula-run vocabulary, and remaining data/API gaps called
-out.
+with dashboard run/formula-run vocabulary, and upstream GC supervisor gaps
+centralized in [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 Primary implementation files:
 
@@ -610,133 +610,31 @@ Aligned with this spec:
   GC/control-plane state, keeps non-ignored untracked files visible, and leaves
   `.runtime/**` visible until the upstream GC `.runtime` writer bug is fixed.
 
-Remaining implementation gaps against the updated spec:
+## Upstream Gap Tracking
 
-1. **Formula identity is still missing for the fixture/live demo run.**
+All Gas City supervisor API and shared-presentation gaps for this type are
+tracked in [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
+That file owns the consolidated list of future `gastownhall/gascity` work. For
+Formula Run Detail, the relevant items are formula identity in snapshots,
+canonical graph.v2 presentation output,
+rig-store runtime freshness, per-execution session identity, event identity,
+OpenAPI schema accuracy, optional execution-instance fields, and optional
+formula-detail status.
 
-   The fixture intentionally captures the current GC producer gap: the root
-   graph bead has `gc.formula_contract=graph.v2` but lacks
-   `gc.formula`/`gc.formula_name`. Gas City can recover a formula name from the
-   root bead `ref` in other feed projections, but `WorkflowSnapshotResponse`
-   bead rows do not expose `ref`. The dashboard therefore cannot
-   authoritatively fetch formula detail for that run until GC emits formula
-   identity, exposes root `ref`, or puts an equivalent typed formula field on
-   the snapshot.
+That gap file also records the explicit non-gaps: current `gc.*` graph metadata
+is authoritative producer data, run/root identity is usable when present,
+formula-detail target selection already has supervisor-owned sources, and local
+git diff evidence is intentionally outside the supervisor API.
 
-2. **Graph presentation ownership is still local.**
+Local dashboard limitations that are not upstream API gaps:
 
-   The dashboard derives semantic nodes, hidden-control badges, loop/retry
-   grouping, historical visibility, and display statuses from authoritative
-   graph.v2 metadata. That metadata is real GC data, not a weak fallback, but
-   the projection code itself is still dashboard-owned TypeScript. The cleaner
-   target is a Gas City/shared presentation package or populated
-   `logical_nodes`, `logical_edges`, and `scope_groups`.
-
-3. **Rig-store runtime freshness is snapshot-bound.**
-
-   City-store runs can refresh each bead through `/bead/{id}`. Rig-store runs
-   cannot, because the supervisor does not expose scoped rig-store bead reads
-   through the city bead endpoint. For rig-store runs the embedded snapshot is
-   authoritative for the detail request, but freshness depends on the snapshot
-   being current.
-
-4. **Session resolution still has an ambiguity path.**
-
-   When beads carry `session_id`/`session_name`, `gc.session_id`/
-   `gc.session_name`, or t3bridge `gc.sessionName`, the dashboard can resolve
-   sessions robustly. When those fields are absent, it still falls back to
-   assignee/name matching against session summaries and may surface
-   `session_unresolved`.
-
-5. **Event refresh still broad-invalidates identity-less events.**
-
-   Events with `workflow_id`, `run_id`, `root_bead_id`, or corresponding
-   metadata are filtered to the current detail. Events without identity remain
-   broad invalidation signals. This is deliberate, but it is still a gap from
-   the ideal event contract where every run-affecting event carries canonical
-   run/root identity.
-
-6. **OpenAPI drift is reduced, not eliminated.**
-
-   Endpoint paths, request parameters, SDK calls, and supervisor response
-   types now come from the generated `@hey-api/openapi-ts` client, generated
-   Zod response validators run in the SDK, and the generated client is no
-   longer hidden from `tsc` or ESLint. Drift remains at the source-of-truth and
-   ownership layers: the nullable `Bead.priority` OpenAPI correction must be
-   made in Gas City's upstream Huma/OpenAPI source, and the temporary hand-Zod
-   DTO adapter still needs to be reduced to typed mapping instead of acting as
-   a second validator.
-
-7. **Diff is dashboard-local evidence, not supervisor run state.**
-
-   The diff view is now an OSS-backed rendering of local git state. It is
-   intentionally outside the GC supervisor API. It can be unavailable when the
-   execution path is unknown or not a git work tree, and large generated
-   untracked patches can be capped/truncated by the backend. The dashboard
-   applies only two hard visibility exclusions: `.beads/**` and `.gc/**`.
-   Everything else follows git visibility, including non-ignored untracked
-   files.
-
-## Gas City And Shared Change Tracker
-
-These are the changes outside this repository that would move the architecture
-from dashboard-owned projection to an even cleaner target boundary:
-
-1. **Canonical graph.v2 presentation package.** Gas City or a shared package
-   should own semantic node ids, construct kinds, external display names,
-   hidden-control collapsing, control badge targeting, loop/retry grouping,
-   visible graph nodes, logical edges, scope groups, and compiled display order.
-   The dashboard should consume that shape instead of deriving it from bead
-   metadata in TypeScript.
-2. **Formula identity in supervisor snapshots.** Gas City already knows the root
-   bead `ref` and uses it as the first-choice formula name in feed projections,
-   but `WorkflowBeadResponse` does not expose `ref`. Expose root `ref`, a typed
-   `formula_name`, or equivalent on `WorkflowSnapshotResponse` so dashboard
-   formula-detail lookup does not depend on optional metadata.
-3. **Scoped runtime bead reads or fresh scoped snapshots.** The supervisor
-   should expose rig-store bead reads or guarantee that scoped run
-   snapshots include current runtime status for non-city stores.
-4. **OpenAPI schema alignment.** These are GC supervisor API gaps to fix
-   upstream in Gas City's Huma/OpenAPI source, not by dashboard-side patching:
-   `Bead.priority` is nullable in read responses; legacy bead response fields
-   observed by current dashboard fixtures must either be explicitly modeled or
-   intentionally removed from supervisor output; phantom event fields such as
-   `next` must match the emitted event payloads; formula detail required fields
-   must match degraded/missing-formula responses. Generated response validators
-   are active against the committed dashboard schema; the remaining external
-   work is to land schema-accuracy fixes upstream and then delete the temporary
-   hand-Zod adapter.
-5. **Optional canonical execution-instance fields.** Existing metadata is
-   sufficient for the current detail page, but a canonical upstream/shared
-   presentation shape could expose execution instance ids, semantic node ids,
-   loop iteration, retry attempt, current/historical flags, and attached
-   session identity directly so the dashboard no longer derives them.
-
-Items that are not current supervisor API gaps after validating the Gas City and
-Gasworks implementations:
-
-- Run/root identity for projection invalidation is available from
-  top-level supervisor data or bead metadata `gc.workflow_id`/`gc.run_id`/
-  `gc.root_bead_id`;
-  events without identity still fall back to broad refresh.
-- Session identity is usable through `session_id`/`session_name`, current
-  session summaries, and t3bridge `gc.sessionName`; the dashboard also accepts
-  downstream/Gasworks `gc.session_id`/`gc.session_name`.
-- Formula detail target selection can use root-bead `gc.run_target`,
-  `gc.routed_to`, or assignee; no local formula-file parsing is required. The
-  remaining formula gap is identity exposure when only root `ref` knows the
-  formula name.
-- Logical grouping, loop scope, retry attempts, and hidden-control targeting
-  have usable metadata sources: `gc.logical_bead_id`, `gc.step_ref`,
-  `gc.scope_ref`, `gc.control_for`, `gc.iteration`, `gc.attempt`, and
-  `gc.max_attempts`.
-
-Intentionally outside the current dashboard-owned implementation target:
-
-- Incremental event application to the run projection. This is intentionally
-  not a goal until the backend can own the event reducer.
-- Durable analytics or metrics beyond the existing centralized client-error
-  log.
+- Incremental event application to the run projection is intentionally not a
+  goal until the backend owns an event reducer.
+- Durable analytics or metrics beyond the existing centralized client-error log
+  are out of scope for the current dashboard-owned implementation target.
+- Diff rendering is dashboard-local evidence from the execution folder. It can
+  be unavailable when the execution path is unknown or not a git work tree, and
+  large generated untracked patches can be capped/truncated by the backend.
 
 ## Ideal Target State
 
@@ -751,10 +649,10 @@ stable backend boundaries:
 2. Runtime deserialization at `GcClient` rejects malformed supervisor payloads
    before run projection sees them, via the generated Zod response validators
    wired into the SDK (`validator: { response: 'zod' }`) — not hand-written
-   decoders. Schema-accuracy gaps (e.g. nullable `Bead.priority`, legacy bead
-   fields, phantom event keys) are fixed **upstream in the Gas City OpenAPI
+   decoders. Schema-accuracy gaps are fixed **upstream in the Gas City OpenAPI
    source** so generation stays faithful, rather than papered over with a
-   dashboard-side validation overlay.
+   dashboard-side validation overlay; the consolidated list lives in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 3. Gas City or a shared presentation package owns graph.v2 display semantics:
    semantic nodes, logical edges, scope groups, display graph, loop/retry
    collapsing, and session-link hints.
@@ -823,31 +721,26 @@ stable backend boundaries:
 
    When beads do not carry stable session metadata, the dashboard falls back to
    assignee/name matching. That is inherently weaker than a supervisor-owned
-   session id attached to each execution instance.
+   session id attached to each execution instance. The upstream fix is tracked
+   as GC-4 in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 4. Rig-store freshness.
 
    Rig-store run details cannot currently refresh each bead independently
    through the city bead endpoint. The embedded run snapshot needs to be
    fresh enough or the supervisor needs an API for scoped runtime bead reads.
+   The upstream fix is tracked as GC-3 in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 5. Supervisor schema drift and the cross-repo accuracy dependency.
 
    The target boundary generates the supervisor client, types, and Zod response
    validators from the committed OpenAPI (`@hey-api/openapi-ts`). The dominant
-   risk is schema *accuracy*: if the upstream Gas City OpenAPI source is
-   stricter than observed supervisor output (for example nullable
-   `Bead.priority`), a future schema refresh can make generated strict
-   validation reject valid degraded payloads. The dashboard's committed schema
-   has been corrected enough for generated response validation to run today,
-   but that correction still needs to land upstream.
-
-   The fix lives **upstream in the Gas City OpenAPI source**, which this repo
-   re-pulls via `npm run openapi:gc-supervisor:update`. That makes future
-   generated validation stability a cross-repo dependency: the migration (see
-   `specs/plans/code-quality-remediation-plan.md` WS-10) has flipped on strict
-   generated response validation in this repo, and now must prevent future
-   schema refreshes from reverting the local accuracy fix.
+   risk is schema *accuracy*: future schema refreshes must not make generated
+   validators reject valid degraded payloads. The upstream source-of-truth work
+   is tracked as GC-6 in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 6. Formula detail diagnostics live at the dashboard boundary.
 
@@ -868,11 +761,6 @@ stable backend boundaries:
 
 1. Capture real graph.v2 supervisor snapshots for completed, running, blocked,
    retried, and looped runs; use them as backend enrichment fixtures.
-2. Replace local graph.v2 presentation derivation with the canonical Gas City or
-   shared package once available.
-3. Delete the temporary hand-Zod supervisor adapter/`SchemaOutputFor` machinery
-   after upstream supervisor OpenAPI source accuracy is synced and the generated
-   response validators are the only malformed-payload authority.
-4. Remove broad run-detail invalidation for identity-less city events once
-   the supervisor guarantees canonical run/root identity on all
-   run-affecting events.
+2. Work through the upstream gaps in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md), then delete
+   local projection/adapter code that those upstream capabilities replace.
