@@ -15,6 +15,35 @@ interface ClientErrorsRouterOptions {
 
 const MAX_FIELD_LENGTH = 240;
 
+// Strip ANSI escape sequences (OSC + CSI) and control characters before
+// whitespace normalization. Otherwise a browser-supplied error string
+// containing `\x1b[31m... [admin] CRITICAL ...\x1b[0m` would survive the
+// `\s+ → ' '` collapse below and forge a fake `[component] message`
+// operator log line. Mirrors backend/src/exec.ts::sanitiseTerminalOutput;
+// the threat model here is browser-originated input rather than
+// supervisor output, but the same control-char surface applies.
+const OSC_RE = /\x1b\][^\x07]*\x07/g;
+const CSI_RE = /\x1b\[[?0-9;]*[a-zA-Z]/g;
+// All control chars: C0 (<0x20), DEL (\x7f), and C1 (\x80-\x9f). \t/\n/\r
+// are dropped here too because the whitespace normalize below would
+// collapse them anyway, and dropping them up front makes the
+// strip-before-normalize ordering invariant uniform regardless of which
+// control bytes the input carries. gascity-dashboard-3sxy added the C1
+// range (\x80-\x9f) — legacy 8-bit controls some terminals still
+// interpret as alternative escape introducers, same threat class as C0.
+const CTRL_RE = /[\x00-\x1f\x7f-\x9f]/g;
+// See exec.ts BIDI_RE — same 12-codepoint trojan-source set from
+// CVE-2021-42574 (U+061C, U+200E, U+200F, U+202A-202E, U+2066-2069).
+const BIDI_RE = /[؜‎‏‪-‮⁦-⁩]/g;
+
+function stripNonPrintable(value: string): string {
+  return value
+    .replace(OSC_RE, '')
+    .replace(CSI_RE, '')
+    .replace(CTRL_RE, '')
+    .replace(BIDI_RE, '');
+}
+
 export function clientErrorsRouter(opts: ClientErrorsRouterOptions = {}): Router {
   const router = Router();
   const log = opts.log ?? logWarn;
@@ -75,7 +104,8 @@ function parseField(value: unknown, name: string): ParseFieldResult {
   if (typeof value !== 'string') {
     return { status: 'invalid', error: `${name} must be a non-empty string` };
   }
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const stripped = stripNonPrintable(value);
+  const normalized = stripped.replace(/\s+/g, ' ').trim();
   if (normalized.length === 0) {
     return { status: 'invalid', error: `${name} must be a non-empty string` };
   }

@@ -16,6 +16,7 @@ import type {
   RunSnapshotSequence,
 } from 'gas-city-dashboard-shared';
 import { meta } from './bead-fields.js';
+import { resolveRunFormulaName } from './formula-name.js';
 import { applyDisplayNodeStates } from './display-state.js';
 import { buildRunDisplayEdges } from './edges.js';
 import {
@@ -169,8 +170,20 @@ function runFormulaState(
   root: GcRunBead | undefined,
   formulaDetail: GcFormulaDetail | undefined,
 ): RunFormula {
-  const name = root ? runFormula(root) ?? formulaDetail?.name : formulaDetail?.name;
-  if (name) return { kind: 'known', name };
+  // Provenance precedence (gascity-dashboard-e7hj + sadp). The supervisor's
+  // canonical signals win over the graph.v2 bead-title heuristic; the title
+  // fallback only fires when none of them are present:
+  //   1. `gc.formula` / `gc.formula_name` metadata   → source: 'metadata'
+  //   2. supervisor formula detail name               → source: 'metadata'
+  //      (canonical even when the root metadata key is absent)
+  //   3. graph.v2 title fallback (resolveRunFormulaName) → 'title_fallback'
+  // The title fallback shares resolveRunFormulaName with the route-side
+  // formula-detail fetch (routes/runs.ts) so both agree on which graph.v2
+  // roots get a title-derived name. See gascity-dashboard-sadp.
+  const metadataName = (root ? runFormula(root) : null) ?? formulaDetail?.name;
+  if (metadataName) return { kind: 'known', name: metadataName, source: 'metadata' };
+  const resolved = resolveRunFormulaName(root);
+  if (resolved !== null) return { kind: 'known', name: resolved.name, source: resolved.source };
   return {
     kind: 'unavailable',
     reason: 'missing_formula_metadata',

@@ -309,7 +309,6 @@ async function installApiFixtureRoutes(context) {
       body: JSON.stringify({
         cityName: 'racoon-city',
         cityRoot: '/tmp/gascity',
-        githubRepo: 'sjarmak/gascity-dashboard',
         useFixtures: false,
       }),
     });
@@ -524,7 +523,6 @@ function snapshotFixture() {
     config: {
       cityName: 'racoon-city',
       cityRoot: '/tmp/gascity',
-      githubRepo: 'sjarmak/gascity-dashboard',
       useFixtures: false,
     },
     headline: {
@@ -538,6 +536,10 @@ function snapshotFixture() {
       resources: sourceUnavailable('resources', 'resources unavailable in fixture'),
       runs: sourceFixture('runs', {
         totalActive: 1,
+        // yh5i: shared WorkflowSummary now carries totalHistorical +
+        // historicalLanes. This is a .mjs fixture and isn't typechecked,
+        // so the shape must be kept in lockstep with shared/src by hand.
+        totalHistorical: 0,
         runCounts: {
           total: 1,
           visible: 1,
@@ -548,6 +550,7 @@ function snapshotFixture() {
           other: 0,
         },
         lanes: [runLaneFixture()],
+        historicalLanes: [],
         recentChanges: [],
         census: {
           status: 'unavailable',

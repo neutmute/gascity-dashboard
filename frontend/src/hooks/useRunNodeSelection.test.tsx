@@ -152,7 +152,7 @@ function detailWithNodes(nodeIds: string[]): FormulaRunDetail {
     scopeKind: "city",
     scopeRef: "racoon-city",
     title: "Adopt PR",
-    formula: { kind: "known", name: "mol-adopt-pr-v2" },
+    formula: { kind: "known", name: "mol-adopt-pr-v2", source: "metadata" },
     formulaDetail: {
       kind: "available",
       name: "mol-adopt-pr-v2",

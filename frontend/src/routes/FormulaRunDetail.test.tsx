@@ -499,6 +499,20 @@ describe('FormulaRunDetailPage', () => {
     expect(screen.getByText(/partial run data/i)).toBeTruthy();
   });
 
+  it('renders a back-link to the maintainer needs-you view when from=triage (gascity-dashboard-djpk)', async () => {
+    renderPage('/runs/gc-adopt-pr-active?from=triage');
+
+    const back = await screen.findByRole('link', { name: /triage/i });
+    expect(back.getAttribute('href')).toBe('/maintainer?view=needs-you');
+  });
+
+  it('renders no triage back-link when from=triage is absent', async () => {
+    renderPage('/runs/gc-adopt-pr-active');
+
+    await screen.findByRole('heading', { name: /adopt pr #42/i });
+    expect(screen.queryByRole('link', { name: /triage/i })).toBeNull();
+  });
+
   it('shows no-graph and selected-node-without-session empty states', async () => {
     currentDetail = {
       ...detail,
@@ -522,6 +536,62 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: /pre-approval ci repair loop/i }));
     expect(screen.getByText(/session unresolved for this node/i)).toBeTruthy();
+  });
+
+  it('renders the formula name in a warn tone with provenance copy when source is title_fallback', async () => {
+    // gascity-dashboard-e7hj: a title-derived formula name is a SILENT
+    // fallback if it's rendered as if it were canonical metadata. The
+    // warn tone + textual aside mirror the Health.tsx "not reported by
+    // supervisor" precedent (PR #36 / dashboard-h1) so the operator
+    // can see the supervisor did not set gc.formula on this root.
+    currentDetail = {
+      ...detail,
+      formula: {
+        kind: 'known',
+        name: 'mol-from-title',
+        source: 'title_fallback',
+      },
+    };
+
+    const { container } = renderPage();
+    await screen.findByRole('heading', { name: /adopt pr #42/i });
+
+    const formulaTerms = Array.from(container.querySelectorAll('dt')).filter(
+      (dt) => dt.textContent?.trim() === 'Formula',
+    );
+    expect(formulaTerms).toHaveLength(1);
+    const formulaValue = formulaTerms[0]?.nextElementSibling as HTMLElement | null;
+    expect(formulaValue).not.toBeNull();
+    expect(formulaValue?.className).toMatch(/text-warn/);
+    expect(formulaValue?.textContent).toContain('mol-from-title');
+    expect(formulaValue?.textContent?.toLowerCase()).toContain('inferred from bead title');
+    expect(formulaValue?.getAttribute('title')?.toLowerCase()).toContain(
+      'supervisor did not set gc.formula',
+    );
+  });
+
+  it('renders the formula name without a warn tone when source is metadata', async () => {
+    currentDetail = {
+      ...detail,
+      formula: {
+        kind: 'known',
+        name: 'mol-adopt-pr-v2',
+        source: 'metadata',
+      },
+    };
+
+    const { container } = renderPage();
+    await screen.findByRole('heading', { name: /adopt pr #42/i });
+
+    const formulaTerms = Array.from(container.querySelectorAll('dt')).filter(
+      (dt) => dt.textContent?.trim() === 'Formula',
+    );
+    expect(formulaTerms).toHaveLength(1);
+    const formulaValue = formulaTerms[0]?.nextElementSibling as HTMLElement | null;
+    expect(formulaValue).not.toBeNull();
+    expect(formulaValue?.className).not.toMatch(/text-warn/);
+    expect(formulaValue?.textContent).toBe('mol-adopt-pr-v2');
+    expect(formulaValue?.getAttribute('title')).toBeNull();
   });
 
   it('shows retry attempt tabs for multiple attempts in the selected execution context', async () => {

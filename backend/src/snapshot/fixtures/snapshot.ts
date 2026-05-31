@@ -12,6 +12,8 @@ export const fixtureSessions: GcSessionList = {
       id: 'agent-1',
       template: 'codex',
       alias: 'agent-1',
+      session_name: 'agent-1',
+      title: 'agent-1',
       state: 'active',
       created_at: '2026-05-22T20:00:00.000Z',
       last_active: '2026-05-22T21:59:30.000Z',
@@ -24,6 +26,8 @@ export const fixtureSessions: GcSessionList = {
       id: 'agent-2',
       template: 'claude',
       alias: 'agent-2',
+      session_name: 'agent-2',
+      title: 'agent-2',
       state: 'active',
       created_at: '2026-05-22T20:05:00.000Z',
       last_active: '2026-05-22T21:58:10.000Z',
@@ -33,6 +37,7 @@ export const fixtureSessions: GcSessionList = {
       provider: 'claude',
     },
   ],
+  total: 2,
 };
 
 // Committed sample data for SNAPSHOT_USE_FIXTURES=1 runtime mode. This is
@@ -49,8 +54,9 @@ export const fixtureSnapshot = {
   config: {
     cityName: 'example-city',
     cityRoot: '/tmp/example-city',
-    githubRepo: 'example-org/example-repo',
     useFixtures: true,
+    enabledModules: null,
+    defaultView: null,
   },
   headline: {
     activeAgents: { status: 'available', value: 12 },
@@ -122,6 +128,7 @@ export const fixtureSnapshot = {
       error: { kind: 'none' },
       data: {
         totalActive: 6,
+        totalHistorical: 0,
         runCounts: {
           total: 6,
           visible: 1,
@@ -131,6 +138,7 @@ export const fixtureSnapshot = {
           blocked: 1,
           other: 0,
         },
+        historicalLanes: [],
         lanes: [
           {
             id: 'lane-1',

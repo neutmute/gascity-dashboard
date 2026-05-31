@@ -65,7 +65,7 @@ export function buildsRouter(cfg: BuildsConfig = {}): Router {
         logWarn(LOG_COMPONENT.builds, `failed to read deploy failure marker: ${errorMessage(err)}`);
       }
     }
-    void recordAudit({
+    await recordAudit({
       type: 'dashboard.fetch',
       endpoint: 'GET /api/builds',
       parsed_args: { records: String(items.length), failed_marker: String(failedMarker) },

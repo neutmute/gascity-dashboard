@@ -6,7 +6,7 @@ import {
 } from 'gas-city-dashboard-shared';
 import { GcClient } from '../gc-client.js';
 import { recordAudit } from '../audit.js';
-import { LOG_COMPONENT } from '../logging.js';
+import { LOG_COMPONENT, logWarn, sanitizeForLog } from '../logging.js';
 import {
   routeUpstreamError,
   routeValidationError,
@@ -54,7 +54,22 @@ export function mailRouter(gc: GcClient): Router {
       // sent = from===alias. Filtering here keeps each box's results
       // independent under as-identity switching, which is what the
       // operator actually wants from the UI.
-      const { items: rawItems } = await gc.listMail(undefined, { limit: FETCH_LIMIT });
+      const mailList = await gc.listMail(undefined, { limit: FETCH_LIMIT });
+      const rawItems = mailList.items;
+      // izgc F3: surface supervisor-reported partial-list degradation
+      // (one or more rig providers failed during aggregation) — without
+      // this OR-in the operator only sees the count, not the fact that
+      // the underlying source was degraded. Per CLAUDE.md
+      // "Don't Swallow Errors".
+      if (mailList.partial === true || (mailList.partial_errors?.length ?? 0) > 0) {
+        const detail = mailList.partial_errors && mailList.partial_errors.length > 0
+          ? mailList.partial_errors.map(sanitizeForLog).join(', ')
+          : 'no detail';
+        logWarn(
+          LOG_COMPONENT.mail,
+          `supervisor reported partial mail list (${detail}); some rig providers degraded`,
+        );
+      }
       const filtered = filterByBox(rawItems, box, alias);
       // Newest first — td-liky3d default sort, applied at the source so
       // the API contract is stable independent of any table sort UI.
@@ -65,7 +80,7 @@ export function mailRouter(gc: GcClient): Router {
         total: filtered.length,
         upstream_total: rawItems.length,
       });
-      void recordAudit({
+      await recordAudit({
         type: 'dashboard.fetch',
         endpoint: 'GET /api/mail',
         viewing_as: alias,
@@ -111,7 +126,7 @@ export function mailRouter(gc: GcClient): Router {
       });
       res.setHeader('Cache-Control', 'no-store');
       res.json({ items: deduped });
-      void recordAudit({
+      await recordAudit({
         type: 'dashboard.fetch',
         endpoint: 'GET /api/mail/threads/:id',
         viewing_as: alias,

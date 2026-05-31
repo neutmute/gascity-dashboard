@@ -48,6 +48,12 @@ describe('run formula detail lookup reasons', () => {
     const root = rootBead(snapshot);
     delete root.metadata['gc.formula'];
     delete root.metadata['gc.formula_name'];
+    // gascity-dashboard-xfb7: a CLOSED graph.v2 root is excluded from the
+    // title fallback (a completed run cannot be re-fetched to refute a bad
+    // name), so with no gc.formula metadata it resolves to
+    // missing_formula_metadata — the honest "no metadata" case this test
+    // pins, distinct from a fetch failure.
+    root.status = 'closed';
 
     fake.setHandler((req, res) => {
       json(res);
@@ -93,7 +99,7 @@ describe('run formula detail lookup reasons', () => {
 
     const body = await fetchRunDetail(fake.baseUrl);
 
-    assert.deepEqual(body.formula, { kind: 'known', name: 'mol-adopt-pr-v2' });
+    assert.deepEqual(body.formula, { kind: 'known', name: 'mol-adopt-pr-v2', source: 'metadata' });
     assert.deepEqual(body.formulaDetail, {
       kind: 'unavailable',
       reason: 'missing_run_target',
@@ -125,7 +131,7 @@ describe('run formula detail lookup reasons', () => {
 
     const body = await fetchRunDetail(fake.baseUrl);
 
-    assert.deepEqual(body.formula, { kind: 'known', name: 'mol-adopt-pr-v2' });
+    assert.deepEqual(body.formula, { kind: 'known', name: 'mol-adopt-pr-v2', source: 'metadata' });
     assert.deepEqual(body.formulaDetail, {
       kind: 'unavailable',
       reason: 'fetch_failed',
@@ -157,7 +163,7 @@ describe('run formula detail lookup reasons', () => {
 
     const body = await fetchRunDetail(fake.baseUrl);
 
-    assert.deepEqual(body.formula, { kind: 'known', name: 'mol-adopt-pr-v2' });
+    assert.deepEqual(body.formula, { kind: 'known', name: 'mol-adopt-pr-v2', source: 'metadata' });
     assert.deepEqual(body.formulaDetail, {
       kind: 'available',
       name: 'mol-adopt-pr-v2',

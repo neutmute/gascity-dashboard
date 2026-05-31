@@ -91,7 +91,7 @@ function detail(): FormulaRunDetail {
     scopeKind: "city",
     scopeRef: "racoon-city",
     title: "Run",
-    formula: { kind: "known", name: "mol-test" },
+    formula: { kind: "known", name: "mol-test", source: "metadata" },
     formulaDetail: {
       kind: "available",
       name: "mol-test",

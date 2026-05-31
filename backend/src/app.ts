@@ -1,18 +1,16 @@
 import express, { type Express } from 'express';
-import type { DashboardRuntimeConfig } from 'gas-city-dashboard-shared';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type {
+  BackgroundWorker,
+  DashboardRuntimeConfig,
+} from 'gas-city-dashboard-shared';
 
 import type { AdminConfig } from './config.js';
 import { GcClient } from './gc-client.js';
-import { raceWithTimeout } from './lib/race-with-timeout.js';
 import { LOG_COMPONENT, logInfo } from './logging.js';
-import { MaintainerSseHub } from './maintainer/sse.js';
-import {
-  createMaintainerRefresher,
-  type MaintainerRefresher,
-} from './maintainer/worker.js';
 import { apiErrorHandler } from './middleware/api-error-handler.js';
 import { csrfIssueCookie, csrfValidate, getCsrfToken } from './middleware/csrf.js';
 import { requestLog } from './middleware/request-log.js';
@@ -28,26 +26,27 @@ import { clientErrorsRouter } from './routes/client-errors.js';
 import { createDoltNomsSampler, doltRouter } from './routes/dolt.js';
 import { eventsRouter } from './routes/events.js';
 import { gitRouter } from './routes/git.js';
-import { healthRouter } from './routes/health.js';
 import { linksRouter } from './routes/links.js';
 import { mailSendRouter } from './routes/mail-send.js';
 import { mailRouter } from './routes/mail.js';
-import { maintainerRouter } from './routes/maintainer.js';
 import { runsRouter } from './routes/runs.js';
 import { sessionStreamRouter } from './routes/session-stream.js';
 import { sessionsRouter } from './routes/sessions.js';
 import { snapshotRouter } from './routes/snapshot.js';
 import { createSnapshotService } from './snapshot/service.js';
+import { ALL_MODULES } from './views/registry.js';
+import { resolveEnabledFirstPartyIds } from './views/enabled.js';
+import { bind, type CityContext } from './views/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-type RefresherServerState =
-  | { status: 'disabled' }
-  | { status: 'active'; refresher: MaintainerRefresher };
-
 export interface DashboardRuntime {
   start(): void;
-  stop(): void;
+  /** Stop all background workers. Returns a Promise so workers that drain
+   *  in-flight work (e.g. an SSE registry close in PR-B) can await cleanly.
+   *  Callers without an await still benefit because the promise resolves
+   *  synchronously when all workers' stop()s are synchronous. */
+  stop(): Promise<void>;
 }
 
 export interface DashboardApp {
@@ -78,11 +77,28 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
     baseUrl: config.gcSupervisorUrl,
     cityName: config.cityName,
   });
+  // PR-C: resolve which firstParty modules are mounted BEFORE building the
+  // wire-shape config so the frontend sees the same set the backend will
+  // actually bind. `core` modules ignore the filter entirely. Compute once
+  // here so the iterator below and the `/api/config` response cannot drift.
+  const enabledFirstPartyIds = resolveEnabledFirstPartyIds(
+    ALL_MODULES,
+    config.enabledModules,
+  );
+  const mountedModules = ALL_MODULES.filter(
+    (m) => m.kind === 'core' || enabledFirstPartyIds.has(m.id),
+  );
   const dashboardConfig: DashboardRuntimeConfig = {
     cityName: config.cityName,
     cityRoot: config.cityPath,
-    githubRepo: config.maintainerRepo,
     useFixtures: config.useFixtures,
+    // null preserves the pre-PR-C "all firstParty enabled" semantics for the
+    // frontend (it sees null → does not filter). When the operator sets
+    // MODULES_ENABLED (even to empty) we ship the resolved list so the
+    // frontend's filter matches the backend's mount set exactly.
+    enabledModules:
+      config.enabledModules === null ? null : [...enabledFirstPartyIds],
+    defaultView: config.defaultView,
   };
 
   const writeRouter = express.Router();
@@ -91,9 +107,16 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
     res.json(dashboardConfig);
   });
   writeRouter.use('/sessions', sessionsRouter(gc));
-  writeRouter.use('/runs', runsRouter(gc, { rigRoot: config.cityPath }));
+  // gascity-dashboard-a9yi: do NOT pass config.cityPath as the execution-path
+  // fallback. cityPath is the city config/runtime dir, never a per-run worktree,
+  // and it is not a git repo — injecting it made resolveRunExecutionPath
+  // return a known-but-useless path, so every run with no worktree metadata
+  // rendered the misleading "Execution folder is not a git work tree." With no
+  // fallback the run resolves to {unavailable, missing_cwd_and_rig_root} and the
+  // diff panel honestly says "Execution folder is unknown for this run."
+  writeRouter.use('/runs', runsRouter(gc));
   writeRouter.use('/links', linksRouter(gc));
-  writeRouter.use('/agents', agentsRouter(config.cityPath));
+  writeRouter.use('/agents', agentsRouter({ cityPath: config.cityPath, gc }));
   writeRouter.use('/beads', beadsRouter(gc, config.cityPath));
   writeRouter.use('/mail', mailRouter(gc));
   writeRouter.use(
@@ -105,38 +128,74 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
   );
   writeRouter.use('/git', gitRouter());
   writeRouter.use('/builds', buildsRouter());
-  writeRouter.use('/system', healthRouter(gc));
   writeRouter.use('/client-errors', clientErrorsRouter());
 
-  const doltNomsSampler = createDoltNomsSampler({ cityPath: config.cityPath });
-  writeRouter.use('/dolt-noms', doltRouter(doltNomsSampler));
+  // Modular-dashboard registry iterator (docs/PRD-modular-dashboard.md §2).
+  // PR-A wired health via this loop; PR-B2 adds maintainer and deletes the
+  // last explicit module mount. Remaining routes (sessions, workflows,
+  // mail, ...) stay explicitly mounted above pending later phases. The
+  // CityContext is constructed once and threaded through the existential
+  // bind<D>() wrapper, so the iterator never sees Deps — premortem #3
+  // mitigation (forbids the type-erasure cast pattern in this file).
+  const cityDataDir = path.join(
+    os.homedir(),
+    '.gascity-dashboard',
+    'cities',
+    config.cityName,
+  );
+  const cityContext: CityContext = {
+    cityName: config.cityName,
+    cityPath: config.cityPath,
+    cityDataDir,
+    gc,
+    // audit-C8: modules read their slice via `ctx.config.modules.<id>`.
+    // AdminConfig stays host-side only; never serialized.
+    config,
+  };
+  const moduleWorkers: BackgroundWorker[] = [];
+  for (const mod of mountedModules) {
+    const bound = bind(mod, config);
+    writeRouter.use(`/${bound.id}`, bound.mount(cityContext));
+    const w = bound.worker?.(cityContext);
+    if (w) moduleWorkers.push(w);
+  }
+  // Boot-time signal (premortem #4 + maintainer-coupling C7): log the
+  // ACTUAL enabled/disabled module split AFTER the filter resolves so the
+  // operator sees what mounted, not just what was requested. Emitted from
+  // app.ts (not config.ts) because the registry-vs-env intersection is the
+  // authoritative answer — config.ts only knows the env, not the registry.
+  //
+  // PR-C Phase-4 fix (MED-1 from security review): the log lists ALL
+  // mounted modules (core + firstParty); the wire field
+  // `/api/config.enabledModules` carries only the firstParty subset
+  // (core always mounts and is not part of the operator's opt-in surface).
+  // The trailing parenthetical is here so an operator comparing the log
+  // line to the wire response sees both shapes at the same site.
+  logInfo(
+    LOG_COMPONENT.admin,
+    `modules mounted=[${mountedModules.map((m) => m.id).join(',')}]` +
+      ` disabled=[${ALL_MODULES.filter((m) => !mountedModules.includes(m))
+        .map((m) => m.id)
+        .join(',')}]` +
+      ` (wire /api/config.enabledModules = firstParty subset only)`,
+  );
+  logInfo(
+    LOG_COMPONENT.admin,
+    `default-view: env=${config.defaultView ?? '(unset)'}` +
+      ` — resolution applied on the frontend (descriptor / fallback chain)`,
+  );
 
-  const maintainerSlungStatePath = path.join(
-    path.dirname(config.maintainerCachePath),
-    'slung-state.json',
-  );
-  const maintainerSseHub = new MaintainerSseHub();
-  writeRouter.use(
-    '/maintainer',
-    maintainerRouter({
-      repo: config.maintainerRepo,
-      cachePath: config.maintainerCachePath,
-      slungStatePath: maintainerSlungStatePath,
-      slingTarget: config.maintainerSlingTarget,
-      triageTarget: config.maintainerTriageTarget,
-      sling: (input) => gc.sling(input),
-      listSessions: async () => {
-        const { items } = await raceWithTimeout(gc.listSessions(), 3_000, 'maintainer sessions lookup');
-        return items;
-      },
-      sseHub: maintainerSseHub,
-    }),
-  );
+  // dolt-noms trend source is the supervisor's store_health.size_bytes
+  // (GET /v0/city/{name}/status), read via the typed GcClient
+  // (gascity-dashboard-x82). No host-FS access.
+  const doltNomsSampler = createDoltNomsSampler({
+    fetchStatus: () => gc.getStatus(),
+  });
+  writeRouter.use('/dolt-noms', doltRouter(doltNomsSampler));
 
   const snapshotService = createSnapshotService({
     gc,
     config: dashboardConfig,
-    cityPath: config.cityPath,
   });
   writeRouter.use('/snapshot', snapshotRouter(snapshotService));
 
@@ -145,20 +204,6 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
   app.use('/api/events', eventsRouter({ gc }));
   app.use(apiErrorHandler());
 
-  const refresherState: RefresherServerState =
-    config.maintainerRefreshIntervalMs > 0
-      ? {
-        status: 'active',
-        refresher: createMaintainerRefresher({
-          repo: config.maintainerRepo,
-          cachePath: config.maintainerCachePath,
-          slungStatePath: maintainerSlungStatePath,
-          intervalMs: config.maintainerRefreshIntervalMs,
-          sseHub: maintainerSseHub,
-        }),
-      }
-      : { status: 'disabled' };
-
   mountFrontend(app, config.frontendDistPath);
 
   return {
@@ -166,10 +211,10 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
     runtime: {
       start() {
         doltNomsSampler.start();
-        if (refresherState.status === 'active') refresherState.refresher.start();
+        for (const w of moduleWorkers) w.start();
       },
-      stop() {
-        if (refresherState.status === 'active') refresherState.refresher.stop();
+      async stop() {
+        await Promise.all(moduleWorkers.map((w) => w.stop()));
         doltNomsSampler.stop();
       },
     },

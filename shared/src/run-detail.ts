@@ -172,9 +172,25 @@ export interface FormulaRunDetail {
   lanes: RunDisplayLane[];
 }
 
+/**
+ * `source` records where the formula `name` came from:
+ *
+ * - `metadata` — the supervisor reported the formula identity. Either the
+ *   run root carries `gc.formula`, OR the formula-detail fetch from the
+ *   supervisor returned a name (the supervisor is canonical even when the
+ *   root metadata key is absent).
+ * - `title_fallback` — the supervisor did NOT set `gc.formula` on a
+ *   graph.v2 root and the formula-detail fetch yielded nothing, so the
+ *   resolver derived the name from the bead title. Per the project's
+ *   "Don't Swallow Errors" posture this case is surfaced to the operator
+ *   in a warn tone rather than rendered as if it were canonical metadata.
+ *   See gascity-dashboard-e7hj for the precedent.
+ */
 export type RunFormula =
-  | { kind: 'known'; name: string }
+  | { kind: 'known'; name: string; source: WorkflowFormulaSource }
   | { kind: 'unavailable'; reason: 'missing_formula_metadata' };
+
+export type WorkflowFormulaSource = 'metadata' | 'title_fallback';
 
 export type RunFormulaDetailFetchFailure =
   | 'timeout'

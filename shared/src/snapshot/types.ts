@@ -45,8 +45,34 @@ export interface DashboardSnapshot {
 export interface DashboardRuntimeConfig {
   cityName: string;
   cityRoot: string;
-  githubRepo: string;
   useFixtures: boolean;
+  /**
+   * Operator-enabled `firstParty` module ids (PRD §2 / bead 9yj.5).
+   * `null` = unset, i.e. ALL firstParty modules are enabled (backwards-compat
+   * default — preserves pre-PR-C behaviour). `[]` = explicitly disabled all
+   * firstParty modules. A CSV-ish set like `['health','maintainer']` enables
+   * exactly those firstParty ids. `core` modules are ALWAYS mounted and never
+   * appear in this filter — operators cannot disable a core module by leaving
+   * it off this list.
+   *
+   * The frontend's view registry filters `ALL_VIEWS` by this set so a
+   * backend-disabled module's route does not render a React Router 404; the
+   * route + nav entry are simply absent. The backend's module iterator
+   * applies the same filter to `ALL_MODULES` before `bind()`-ing.
+   */
+  enabledModules: string[] | null;
+  /**
+   * Operator override for the `/` route (PRD §6 / bead 9yj.5).
+   * Set via the `DEFAULT_VIEW=<module-id>` env. `null` when unset. The
+   * frontend's `resolveDefaultView()` honours this value when it points at
+   * an ENABLED view; otherwise it falls back to the descriptor's
+   * `defaultRoute: true` flag, then to the kb3 ambient home.
+   *
+   * Operator wins over descriptor by design — premortem #5's "default-view
+   * shadowing" signal is emitted from the resolver on the frontend when the
+   * env points at an unknown or disabled module.
+   */
+  defaultView: string | null;
 }
 
 export type DashboardMetric =
@@ -97,6 +123,32 @@ export interface CityStatusSummary {
   maxSessions: DashboardMetric;
   sessionsByProvider: CitySessionProvider[];
   rigs: CityRig[];
+  /**
+   * True when the supervisor's listRigs response was degraded
+   * (one or more rig backends failed during aggregation; signalled by
+   * GcRigList.partial === true or non-empty partial_errors). Optional —
+   * absent on a clean response. gascity-dashboard-19w.1: mirrors the
+   * partial-handling convention in backend/src/routes/links.ts and
+   * routes/mail.ts so operators see a degraded indicator instead of
+   * an apparent "no rigs configured" report.
+   *
+   * Typed as optional literal `true` (gascity-dashboard-19w.1.1): the
+   * collector only ever assigns `true` (else leaves the field absent),
+   * so `false` was never a real wire value. Tightening closes the
+   * type-lie window — consumers must check truthiness/presence, never
+   * `=== false`.
+   */
+  rigsPartial?: true;
+  /**
+   * Same degradation signal for the agent roster. sd4.1: since sd4 made
+   * /agents the authoritative source for sessionsByProvider, a partial
+   * agent list silently produces an under-counted breakdown. Surfacing
+   * this lets the operator distinguish "no agents configured" from "agent
+   * backends degraded." Optional literal `true` per the rigsPartial
+   * convention (gascity-dashboard-19w.1.1) — the collector only assigns
+   * `true` or omits the field.
+   */
+  agentsPartial?: true;
 }
 
 export interface CitySessionProvider {
@@ -141,9 +193,24 @@ export interface ResourceSample {
 // ── runs ─────────────────────────────────────────────────────────────
 
 export interface RunSummary {
+  /** Count of ACTIVE lanes (`phase !== 'complete'`). Blocked lanes ARE
+   *  included — a blocked lane still needs operator attention and is not
+   *  "done". Aligns with `RunCensus.totalInFlight`, which also
+   *  excludes only complete. The headline `activeRuns` metric
+   *  counts this set (via census when available, this field as fallback). */
   totalActive: number;
+  /** Count of HISTORICAL lanes (phase === 'complete'). gascity-dashboard-yh5i:
+   *  /runs defaults to showing the active set; toggling `?history=1`
+   *  reveals the historical section so the user can see recently-completed
+   *  runs without complete lanes crowding active out of the 8-cap window. */
+  totalHistorical: number;
   runCounts: RunCounts;
+  /** Active lanes, sorted by compareLanes, capped at MAX_VISIBLE_ACTIVE_LANES. */
   lanes: RunLane[];
+  /** Historical (phase === 'complete') lanes, sorted by compareLanes, capped at
+   *  MAX_VISIBLE_HISTORICAL_LANES. Frontend renders these only when the user
+   *  toggles ?history=1; backend always returns the array. */
+  historicalLanes: RunLane[];
   recentChanges: RunChange[];
   /**
    * City-level health census (gascity-dashboard-3ax). Threshold-INDEPENDENT

@@ -105,8 +105,10 @@ function buildCaches(runs: RunSummary): SourceCacheMap {
 function summary(lanes: RunLane[]): RunSummary {
   return {
     totalActive: lanes.length,
+    totalHistorical: 0,
     runCounts: { total: lanes.length, visible: lanes.length, prReview: 0, designReview: 0, bugfix: 0, blocked: 0, other: 0 },
     lanes,
+    historicalLanes: [],
     recentChanges: [],
     census: { status: 'unavailable', error: 'run health has not been derived' },
   };
@@ -122,8 +124,9 @@ function requireAvailableHealth(lane: RunLane | undefined): RunLaneHealth {
 const CONFIG = {
   cityName: 'test-city',
   cityRoot: '/tmp/x',
-  githubRepo: 'o/r',
   useFixtures: false,
+  enabledModules: null,
+  defaultView: null,
 };
 
 describe('health engine wiring on /api/snapshot', () => {
@@ -142,6 +145,9 @@ describe('health engine wiring on /api/snapshot', () => {
         {
           id: 's1',
           template: 'claude',
+          session_name: 's1',
+          title: 's1',
+          provider: 'claude',
           pool: 'mayor',
           state: 'active',
           created_at: '2026-05-25T00:00:00.000Z',
@@ -151,6 +157,7 @@ describe('health engine wiring on /api/snapshot', () => {
           activity: 'tool_use',
         },
       ],
+      total: 1,
     });
 
     const service = createSnapshotService({
@@ -224,7 +231,7 @@ describe('health engine wiring on /api/snapshot', () => {
     });
     const service = createSnapshotService({
       caches: buildCaches(summary([completed])),
-      sessions: fresh<GcSessionList>('city', { items: [] }),
+      sessions: fresh<GcSessionList>('city', { items: [], total: 0 }),
       config: CONFIG,
     });
 

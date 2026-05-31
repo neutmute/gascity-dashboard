@@ -170,21 +170,23 @@ interface RunMeta {
 }
 
 function readRunMeta(bead: GcBead): RunMeta {
+  // 6bv7 F11 narrowed GcBead.metadata to Record<string, string> per
+  // OpenAPI, so values are guaranteed strings. Truthy check on the key
+  // suffices — no widening cast or typeof guards needed.
   const md = bead.metadata;
-  if (!md || typeof md !== "object") return {};
-  const r = md as Record<string, unknown>;
+  if (!md) return {};
   const runMeta: RunMeta = {};
-  if (typeof r["gc.kind"] === "string") runMeta.kind = r["gc.kind"];
-  if (typeof r["gc.source_bead_id"] === "string") {
-    runMeta.originBeadId = r["gc.source_bead_id"];
+  if (md['gc.kind']) runMeta.kind = md['gc.kind'];
+  if (md['gc.source_bead_id']) {
+    runMeta.originBeadId = md['gc.source_bead_id'];
   }
-  if (typeof r["gc.formula_contract"] === "string") {
-    runMeta.formulaContract = r["gc.formula_contract"];
+  if (md['gc.formula_contract']) {
+    runMeta.formulaContract = md['gc.formula_contract'];
   }
-  if (typeof r["gc.run_target"] === "string") {
-    runMeta.runTarget = r["gc.run_target"];
-  } else if (typeof r["gc.routed_to"] === "string") {
-    runMeta.runTarget = r["gc.routed_to"];
+  if (md['gc.run_target']) {
+    runMeta.runTarget = md['gc.run_target'];
+  } else if (md['gc.routed_to']) {
+    runMeta.runTarget = md['gc.routed_to'];
   }
   return runMeta;
 }
@@ -245,33 +247,10 @@ function BeadBody({ bead }: { bead: GcBead }) {
           <StatusBadge tone={statusTone(bead.status)} label={bead.status} />
         </Field>
         <Field label="Type">{bead.issue_type}</Field>
-        <Field label="Assignee">{bead.assignee || "·"}</Field>
-        <Field label="Owner">{bead.owner || "·"}</Field>
+        <Field label="Assignee">{bead.assignee || '·'}</Field>
         <Field label="Created">
           <span className="tnum">{formatDateTime(bead.created_at)}</span>
         </Field>
-        {bead.updated_at && (
-          <Field label="Updated">
-            <span className="tnum">{formatDateTime(bead.updated_at)}</span>
-          </Field>
-        )}
-        {bead.closed_at && (
-          <Field label="Closed">
-            <span className="tnum">{formatDateTime(bead.closed_at)}</span>
-          </Field>
-        )}
-        {typeof bead.dependency_count === "number" &&
-          bead.dependency_count > 0 && (
-            <Field label="Blocked by">
-              <span className="tnum">{bead.dependency_count}</span>
-            </Field>
-          )}
-        {typeof bead.dependent_count === "number" &&
-          bead.dependent_count > 0 && (
-            <Field label="Blocks">
-              <span className="tnum">{bead.dependent_count}</span>
-            </Field>
-          )}
       </dl>
 
       {kind === "template" &&

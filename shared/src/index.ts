@@ -6,17 +6,31 @@
 // Comments mark fields that gc supervisor MAY omit; treat them as
 // optional and never assume presence in render code.
 
-export * from './links.js';
+// 9yj.1.1: explicit `import type` for names this file references in its
+// own interface bodies. `export type * from './gc-client-types.js'` below
+// re-exports them for downstream consumers but does NOT bring them into
+// THIS file's scope. Lives at the top per the `import/first` lint rule.
+import type { GcSession, IsoTimestamp, SessionId } from './gc-client-types.js';
+
+export type * from './snapshot/types.js';
+export {
+  resolveSessionForTarget,
+  matchesSessionTarget,
+  lastSegment,
+} from './session-resolve.js';
 export * from './run-detail.js';
 export type * from './run-snapshot.js';
-export {
-  lastSegment, matchesSessionTarget, resolveSessionForTarget
-} from './session-resolve.js';
-export type * from './snapshot/types.js';
+export * from './links.js';
+export type * from './views.js';
+// 9yj.1.1: gc-client types live in their own file so views.ts can import
+// them without going through this barrel and creating a type-only cycle.
+// External consumers continue to see IsoTimestamp / SessionId / GcSession /
+// GcSessionState / GcSessionList / SlingInput / SlingResponse via this
+// re-export — no API change.
+export type * from './gc-client-types.js';
 
-export type IsoTimestamp = string;
+// BeadId stays here — it's not part of the gc-client subset.
 export type BeadId = string;
-export type SessionId = string;
 
 export const OPERATOR_DISPLAY_ALIAS = 'stephanie';
 export const OPERATOR_WIRE_ALIAS = 'human';
@@ -42,59 +56,9 @@ export function errorMessage(error: unknown): string {
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────
-
-export interface GcSession {
-  id: SessionId;
-  template: string;
-  alias?: string;
-  title?: string;
-  state: GcSessionState;
-  /** Set when state transition has a structured reason (e.g. "city-stop"). */
-  reason?: string;
-  /** Human-readable display name from the provider (e.g. "Claude Code"). */
-  display_name?: string;
-  /** tmux/screen session name on disk. */
-  session_name?: string;
-  created_at: IsoTimestamp;
-  /** Last time the session emitted activity; only set after first activity. */
-  last_active?: IsoTimestamp;
-  /** Whether a human is currently attached to the tmux session. */
-  attached: boolean;
-  rig?: string;
-  pool?: string;
-  agent_kind?: 'pool' | 'role' | string;
-  /** Process-running state independent of session.state (which is gc-level). */
-  running?: boolean;
-  model?: string;
-  context_pct?: number;
-  context_window?: number;
-  /** Coarse activity hint: 'idle' | 'thinking' | 'tool_use' | ... */
-  activity?: string;
-  /**
-   * Session provider (e.g. 'codex', 'claude', 'gemini'). Supervisor
-   * already has `provider_kind` in session metadata and should populate
-   * this field for all sessions; absence is a transitional gap pending
-   * gastownhall/gascity#2508. Consumers MUST tolerate undefined
-   * (treat the session as "unknown provider") rather than inferring
-   * from title text — title-parsing is a brittle heuristic and a
-   * violation of ZFC; sessionsByProvider aggregation just undercounts
-   * until upstream lands the fix (dkb Q4).
-   */
-  provider?: string;
-}
-
-export type GcSessionState =
-  | 'creating'
-  | 'active'
-  | 'asleep'
-  | 'detached'
-  | 'failed'
-  | 'closed'
-  | string;
-
-export interface GcSessionList {
-  items: GcSession[];
-}
+// GcSession, GcSessionState, GcSessionList moved to ./gc-client-types.ts
+// (9yj.1.1) to break a type-only cycle with views.ts. Still exported via
+// the barrel above (`export type * from './gc-client-types.js'`).
 
 // ── Context-window derivation (wj8) ──────────────────────────────────────
 //
@@ -187,6 +151,106 @@ export interface TranscriptResult {
   truncated: boolean;
 }
 
+// ── Agents (gascity-dashboard-ay6) ───────────────────────────────────────
+
+/**
+ * One entry from `GET /v0/city/{name}/agents`. Mirrors the supervisor's
+ * `AgentResponse` schema narrowed to the fields the Agents list view
+ * actually consumes — adding a field means widening both the decoder
+ * Zod schema (backend/src/gc-supervisor-decoders.ts) and this type.
+ *
+ * The agents endpoint is the canonical roster: it surfaces every
+ * configured agent regardless of whether a session is currently
+ * running, which the previous session-derived path under-counted.
+ * `session` is present only when an agent currently has a running
+ * supervisor session; orphan agents (configured but not running) carry
+ * everything except `session`.
+ */
+export interface GcAgent {
+  /** Stable alias (e.g. 'mayor', 'thriva/devpipeline.architect'). Required. */
+  name: string;
+  /** Human-readable display name when supervisor sets one. */
+  display_name?: string;
+  /** Whether the agent is currently available to dispatch (config + runtime). */
+  available: boolean;
+  /** Whether the underlying process is running. Independent of `state`. */
+  running: boolean;
+  /** Whether the agent is suspended in city config. */
+  suspended: boolean;
+  /** gc-level lifecycle state (e.g. 'active', 'asleep', 'closed'). */
+  state: string;
+  /** Provider (e.g. 'codex', 'claude', 'gemini'). Optional per OpenAPI. */
+  provider?: string;
+  /** Model identifier (e.g. 'claude-opus-4-7'). */
+  model?: string;
+  /** Pool / role bucket (e.g. 'orchestration', 'research'). */
+  pool?: string;
+  /** Rig the agent is scoped to. Empty string for cross-rig agents (mayor). */
+  rig?: string;
+  /** Coarse activity hint ('idle' | 'thinking' | 'tool_use' | ...). */
+  activity?: string;
+  /** Raw context-pct as gc reports it. Use effectiveContextPct() for display. */
+  context_pct?: number;
+  /** gc's reported context-window denominator for the pct above. */
+  context_window?: number;
+  /** When available===false, the reason string the supervisor surfaces. */
+  unavailable_reason?: string;
+  /** Embedded SessionInfo when a session is currently bound to this agent. */
+  session?: GcAgentSession;
+}
+
+/**
+ * Subset of supervisor `SessionInfo` carried under `GcAgent.session`. Used to
+ * drive the Agents view's peek-modal target + last-activity column when an
+ * agent has a running session.
+ */
+export interface GcAgentSession {
+  /** Session id / name on the supervisor (peek-modal target). Required. */
+  name: string;
+  /** True when a human is currently attached to the tmux session. Required. */
+  attached: boolean;
+  /** ISO timestamp of the session's most recent activity. */
+  last_activity?: IsoTimestamp;
+}
+
+export interface GcAgentList {
+  items: GcAgent[];
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; the decoder normalizes items to `[]` so consumers
+   *  always have an array, but the degradation signal survives here. */
+  partial?: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
+// ── Rigs (gascity-dashboard-19w) ─────────────────────────────────────────
+
+/**
+ * Per-rig shape returned by `GET /v0/city/{name}/rigs`. The supervisor's
+ * RigResponse carries more fields (agent_count, running_count, git status,
+ * suspended, last_activity, default_branch, prefix); only name + path are
+ * exposed here because that's all the snapshot collector's CityRig
+ * downstream contract needs. Other fields are intentionally dropped at
+ * the decoder edge — adding one means widening both the decoder Zod
+ * schema and the consumer (CityRig in snapshot/types.ts).
+ */
+export interface GcRig {
+  name: string;
+  path: string;
+}
+
+export interface GcRigList {
+  items: GcRig[];
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; the decoder normalizes items to `[]` so consumers
+   *  always have an array, but the degradation signal survives here. */
+  partial?: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
 // ── Beads ─────────────────────────────────────────────────────────────────
 
 export type BeadStatus =
@@ -207,6 +271,17 @@ export type BeadIssueType =
   | 'convoy'
   | string;
 
+/**
+ * Dependency edge inside the OpenAPI `Bead.dependencies` list. Mirrors the
+ * supervisor's `Dep` schema. Surfaced so workflow-graph collectors can read
+ * dependencies without an `as any` cast.
+ */
+export interface GcBeadDep {
+  depends_on_id: string;
+  issue_id: string;
+  type: string;
+}
+
 export interface GcBead {
   id: BeadId;
   title: string;
@@ -218,25 +293,40 @@ export interface GcBead {
    *  coalesce. */
   priority: number | null;
   description?: string;
-  owner?: string;
   assignee?: string;
   created_at: IsoTimestamp;
-  updated_at?: IsoTimestamp;
-  closed_at?: IsoTimestamp;
   labels?: string[];
-  dependency_count?: number;
-  dependent_count?: number;
-  comment_count?: number;
-  metadata?: Record<string, unknown>;
+  /** OpenAPI Bead.metadata is declared as `{[key: string]: string}` — values
+   *  are strings only. Callers needing typed numbers/booleans must parse
+   *  explicitly. */
+  metadata?: Record<string, string>;
   /** Supervisor-supplied reference handle. On formula templates this is
    *  the formula name (e.g. "mol-focus-review"). Absent on most beads. */
   ref?: string;
+  /** Parent bead id (OpenAPI Bead.parent). */
+  parent?: string;
+  /** Originating actor / source id (OpenAPI Bead.from). */
+  from?: string;
+  /** True when the supervisor marks the bead as ephemeral. */
+  ephemeral?: boolean;
+  /** Bead ids this bead needs before it can run (OpenAPI Bead.needs). */
+  needs?: string[] | null;
+  /** Structured dependency rows (OpenAPI Bead.dependencies). */
+  dependencies?: GcBeadDep[] | null;
 }
 
 export interface GcBeadList {
   items: GcBead[];
-  /** gc supervisor's own total count for the requested scope (independent of the fetch limit). */
-  total?: number;
+  /** gc supervisor's own total count for the requested scope (independent of
+   *  the fetch limit). Required per OpenAPI ListBodyBead. */
+  total: number;
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; the decoder normalizes items to `[]` so consumers
+   *  always have an array, but the degradation signal survives here. */
+  partial?: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
 }
 
 /** Frontend-side filter contract. v0 hardcodes; ?showAll=1 disables. */
@@ -258,32 +348,8 @@ export interface BeadActionRequest {
 // the supervisor's OpenAPI), distinct from the browser↔backend shapes; the
 // GcClient is the only consumer.
 
-/**
- * Body for `POST /v0/city/{city}/sling`. Only `target` is required
- * upstream; `bead` carries the free-text bead body (what the `gc sling
- * <target> <text>` CLI passed positionally). The formula/scope fields are
- * part of the upstream schema but unused by v1 text-only slings — kept off
- * this type until the formula-driven follow-up (bead 6fp) needs them.
- */
-export interface SlingInput {
-  target: string;
-  /** Free-text bead body. */
-  bead?: string;
-}
-
-/**
- * Response from `POST /v0/city/{city}/sling`. `root_bead_id` is the routed
- * bead the dashboard records in slung-state (replaces the `^Slung <id>`
- * stdout parse). Other fields are surfaced by the supervisor but unused
- * here; typed optional so a schema addition upstream doesn't break parsing.
- */
-export interface SlingResponse {
-  root_bead_id?: string;
-  bead?: string;
-  run_id?: string;
-  target?: string;
-  status?: string;
-}
+// SlingInput, SlingResponse moved to ./gc-client-types.ts (9yj.1.1).
+// Still exported via the barrel above.
 
 /**
  * Body for `PATCH /v0/city/{city}/bead/{id}` (gascity-dashboard-mq2;
@@ -331,6 +397,12 @@ export interface MailSendResponse {
   read?: boolean;
   thread_id?: string;
   rig?: string;
+  /** Optional supervisor-assigned priority (OpenAPI Message.priority). */
+  priority?: number;
+  /** Optional CC list (OpenAPI Message.cc). */
+  cc?: string[] | null;
+  /** Optional reply-to header (OpenAPI Message.reply_to). */
+  reply_to?: string;
 }
 
 // ── Mail (Phase B but type-locked now so Phase A frontend compiles) ──────
@@ -345,11 +417,25 @@ export interface GcMailItem {
   read: boolean;
   thread_id?: string;
   rig?: string;
+  /** Optional supervisor-assigned priority (OpenAPI Message.priority). */
+  priority?: number;
+  /** Optional CC list (OpenAPI Message.cc). */
+  cc?: string[] | null;
+  /** Optional reply-to header (OpenAPI Message.reply_to). */
+  reply_to?: string;
 }
 
 export interface GcMailList {
   items: GcMailItem[];
-  total?: number;
+  /** Supervisor's own total count for the requested scope. Required per
+   *  OpenAPI MailListBody. */
+  total: number;
+  /** True when one or more rig providers failed and the list is not
+   *  authoritative. Wire shape is `items: null` + `partial: true`; decoder
+   *  normalizes items to `[]` so consumers always have an array. */
+  partial?: boolean;
+  /** Per-provider errors when partial is true. */
+  partial_errors?: readonly string[];
 }
 
 /** Frontend "viewing as" context state. Default identity is the operator ('stephanie'). */
@@ -441,8 +527,14 @@ export interface SystemHealth {
 
 export interface SupervisorHealth {
   status: string;
-  version: string;
-  city: string;
+  /** Supervisor version. Optional per the supervisor's OpenAPI; present in
+   *  practice today. Absence is itself a wire-drift signal — surface it
+   *  rather than coalescing silently. */
+  version?: string;
+  /** City name. Optional per the supervisor's OpenAPI; present in practice
+   *  today. Absence is itself a wire-drift signal — surface it rather than
+   *  coalescing silently. */
+  city?: string;
   uptime_sec: number;
 }
 
@@ -456,16 +548,33 @@ export type SupervisorHealthState =
     error: string;
   };
 
+/**
+ * Dolt store on-disk health, as reported under `store_health` by the
+ * supervisor's `GET /v0/city/{name}/status`. `size_bytes` is the
+ * dolt-noms on-disk size the dashboard samples for its trend; the other
+ * fields are surfaced for completeness (single source of truth) but are
+ * not consumed dashboard-side yet. The whole block is optional because a
+ * degraded supervisor may omit it.
+ */
+export interface StatusStoreHealth {
+  size_bytes: number;
+  live_rows?: number;
+  ratio_mb_per_row?: number;
+  last_gc_at?: IsoTimestamp;
+}
+
+/** `GET /v0/city/{name}/status` — only the fields the dashboard reads. */
+export interface GcStatus {
+  store_health?: StatusStoreHealth;
+}
+
 export interface DoltNomsSample {
   ts: IsoTimestamp;
   bytes: number;
 }
 
 export type DoltNomsUnavailableReason =
-  | 'city_path_missing'
-  | 'city_path_not_absolute'
-  | 'noms_directory_missing'
-  | 'noms_path_not_directory'
+  | 'store_health_absent'
   | 'sample_failed';
 
 export type DoltNomsTrend =
@@ -488,16 +597,207 @@ export interface GcEvent {
   seq: number;
   type: string;
   ts: IsoTimestamp;
-  actor?: string;
+  /** Required across every TypedEventStreamEnvelope variant in OpenAPI;
+   *  present in 200/200 sampled live events. */
+  actor: string;
+  /** Required across every TypedEventStreamEnvelope variant in OpenAPI;
+   *  per-variant payload shape varies (BeadEventPayload, NoPayload, …)
+   *  so the surface type stays a generic record. */
+  payload: Record<string, unknown>;
   subject?: string;
   message?: string;
-  payload?: Record<string, unknown>;
 }
 
 export interface GcEventList {
   items: GcEvent[];
-  /** Cursor to pass back as ?after=<cursor> to resume. */
-  next?: number;
+  /** Supervisor's own total count for the requested scope. Required per
+   *  OpenAPI ListBodyWireEvent. */
+  total: number;
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; decoder normalizes items to `[]` so consumers always
+   *  have an array. */
+  partial?: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
+/**
+ * One entry from the supervisor's `/v0/city/<city>/formulas/feed` endpoint —
+ * a cross-rig view of every formula run the supervisor knows about, including
+ * runs whose root beads live in rig stores (which `/v0/city/<city>/beads`
+ * does NOT return). The dashboard uses this to discover rig-stored workflow
+ * roots that listBeads alone would miss — see gascity-dashboard-ej9y. The
+ * shape mirrors the supervisor's `MonitorFeedItemResponse`.
+ */
+export interface GcFormulaRun {
+  id: string;
+  /** Always `'formula'` for items in this feed. */
+  type: string;
+  /** Lifecycle status (e.g. `'pending'`, `'done'`). */
+  status: string;
+  /** Formula name (e.g. `'mol-focus-review'`). */
+  title: string;
+  scope_kind: 'city' | 'rig' | (string & {});
+  scope_ref: string;
+  /** Absolute workspace path the formula is operating on. */
+  target: string;
+  started_at: IsoTimestamp;
+  updated_at: IsoTimestamp;
+  /** Workflow root bead id (when the formula instantiated a workflow). */
+  workflow_id?: string;
+  root_bead_id?: string;
+  /** e.g. `'rig:gascity'` — needed to discover which rig's bead store the
+   *  workflow lives in for downstream listBeads queries. */
+  root_store_ref?: string;
+  attached_bead_id?: string;
+  logical_bead_id?: string;
+  bead_id?: string;
+  store_ref?: string;
+  detail_available?: boolean;
+  run_detail_available?: boolean;
+}
+
+export interface GcFormulaRunList {
+  items: GcFormulaRun[];
+  /** True when the supervisor reports the list is incomplete (one or more
+   *  backends failed during aggregation). Wire shape is `items: null` +
+   *  `partial: true`; decoder normalizes items to `[]` so consumers always
+   *  have an array.
+   *
+   *  Required (not optional) because the supervisor's OpenAPI declares
+   *  `FormulaFeedBody.partial` as required `boolean` — distinct from the
+   *  other List* envelopes whose `partial` is optional. Tracked in
+   *  gascity-dashboard-mfb9. */
+  partial: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
+// ── Supervisor formula/order run-history feeds (gascity-dashboard-hvx) ───
+//
+// The supervisor exposes per-formula run history, order feeds, and per-order
+// run history alongside the cross-rig /formulas/feed already used by the
+// workflows collector. These wire shapes mirror the supervisor's
+// FormulaRunsResponse / OrdersFeedBody / OrderHistoryListBody /
+// OrderHistoryDetailResponse so consumers can read run history from the
+// supervisor's authoritative source instead of deriving it from the flat
+// bead list. Aligned with the editorial-typographic ambient dashboard's
+// SSOT contract: shapes here ⊆ supervisor OpenAPI, and the decoder edge
+// validates each field.
+
+/** One entry from FormulaRunsResponse.recent_runs — minimal per-run summary. */
+export interface GcFormulaRecentRun {
+  /** Workflow root bead id of the run. */
+  workflow_id: string;
+  /** Absolute workspace path the formula was operating on. */
+  target: string;
+  /** Lifecycle status (e.g. `'pending'`, `'in_progress'`, `'done'`). */
+  status: string;
+  started_at: IsoTimestamp;
+  updated_at: IsoTimestamp;
+}
+
+/**
+ * Mirrors `GET /v0/city/<city>/formulas/{name}/runs` — recent runs for one
+ * named formula. Distinct from `GcFormulaRunList` (the cross-formula
+ * `/formulas/feed`) — this endpoint is keyed by formula name and is the
+ * source-of-truth for a formula's own run history page.
+ */
+export interface GcFormulaRunsResponse {
+  /** Formula name the run list was queried for. */
+  formula: string;
+  /** Total runs the supervisor knows about for this formula (may exceed
+   *  `recent_runs.length` when `limit` is in effect). */
+  run_count: number;
+  /** Most-recent first; bounded by the `limit` query param. */
+  recent_runs: GcFormulaRecentRun[];
+  /** True when one or more backends failed during aggregation. Wire shape
+   *  may carry `recent_runs: null` + `partial: true`; the decoder
+   *  normalizes `recent_runs` to `[]` so consumers always have an array.
+   *  Required (not optional) because the supervisor's OpenAPI declares
+   *  `FormulaRunsResponse.partial` as required `boolean`. */
+  partial: boolean;
+  /** Human-readable errors from backends that failed during aggregation. */
+  partial_errors?: readonly string[];
+}
+
+/**
+ * Mirrors `GET /v0/city/<city>/orders/feed` — currently-active order runs
+ * across the city. The supervisor reuses `MonitorFeedItemResponse` (the
+ * same per-item shape as `formulas/feed`), so the dashboard reuses
+ * `GcFormulaRun` for items — each item's `type` discriminates
+ * (`'formula'` vs `'order'`) so consumers can filter when both feeds
+ * surface mixed traffic.
+ */
+export interface GcOrdersFeedResponse {
+  items: GcFormulaRun[];
+  /** True when one or more backends failed during aggregation. Wire shape
+   *  may carry `items: null` + `partial: true`; the decoder normalizes
+   *  `items` to `[]` so consumers always have an array. Required because
+   *  the supervisor's OpenAPI declares `OrdersFeedBody.partial` as
+   *  required `boolean` (mirrors `FormulaFeedBody`). */
+  partial: boolean;
+  partial_errors?: readonly string[];
+}
+
+/**
+ * One entry from `OrderHistoryListBody.entries` — one historical run of a
+ * scheduled/triggered order. Mirrors the supervisor's `OrderHistoryEntry`
+ * schema. `duration_ms` / `exit_code` / `signal` are strings on the wire
+ * (the supervisor formats numerics for downstream consumers); leave them
+ * as-is rather than parse at the edge so the SSOT shape ⊆ supervisor
+ * exactly.
+ */
+export interface GcOrderHistoryEntry {
+  /** Root bead id for the order run; deep-link key for `/order/history/{bead_id}`. */
+  bead_id: string;
+  /** Order name (unscoped). */
+  name: string;
+  /** Scoped order name (e.g. `'city:check-mail'` or `'rig:gascity:check-mail'`). */
+  scoped_name: string;
+  created_at: IsoTimestamp;
+  capture_output: boolean;
+  has_output: boolean;
+  /** `null` when the supervisor returns no labels (wire emits `null` rather
+   *  than `[]`); the decoder preserves this — see partial-vs-empty
+   *  semantics. */
+  labels: readonly string[] | null;
+  store_ref: string;
+  duration_ms?: string;
+  exit_code?: string;
+  signal?: string;
+  error?: string;
+  rig?: string;
+  wisp_root_id?: string;
+}
+
+/**
+ * Mirrors `GET /v0/city/<city>/orders/history?scoped_name=<...>` — the full
+ * history of one named order. The supervisor wraps the entries in a single
+ * envelope. Unlike the other List* bodies in this surface, the supervisor's
+ * `OrderHistoryListBody` does NOT carry `partial` / `partial_errors` /
+ * `total` — surfacing only the entries array.
+ */
+export interface GcOrderHistoryList {
+  entries: GcOrderHistoryEntry[];
+}
+
+/**
+ * Mirrors `GET /v0/city/<city>/order/history/{bead_id}` — full detail for
+ * one historical order run, including its captured output. The wire shape
+ * is `OrderHistoryDetailResponse`. `output` is the captured stdout/stderr
+ * concatenation as emitted by the supervisor.
+ */
+export interface GcOrderHistoryDetail {
+  bead_id: string;
+  store_ref: string;
+  created_at: IsoTimestamp;
+  /** `null` when the supervisor returns no labels (wire emits `null`); the
+   *  decoder preserves this so consumers can distinguish "no labels" from
+   *  "unknown". */
+  labels: readonly string[] | null;
+  output: string;
 }
 
 // ── Admin-dashboard internal API responses ───────────────────────────────
@@ -554,17 +854,53 @@ export type TriageItemStatus =
  * `vetted_score` lives on the SAME numeric scale as `TriageItem.triage_score`
  * so comparators sort correctly when a tier mixes vetted + unvetted items.
  *
- * `source` records whether the assessment came from an agent-applied label set
- * or an operator acknowledgement.
+ * `source` is `'agent'` for every path that lands in this bead today
+ * (gascity-dashboard-lmr). A future maintainer-ack path would widen
+ * the union when (and only when) a manual signal actually flows; the
+ * `'manual'` arm was reserved speculatively and went unused, so it
+ * was dropped per YAGNI.
  *
- * `notes` is third-party-author controllable when present. Treat it as
- * untrusted: consumers MUST render it as plain text, never via
- * `dangerouslySetInnerHTML`, markdown, or HTML. The ingest side must
- * length-cap and strip control chars before this field is populated.
+ * `notes` is currently always empty string. When the gh ingest path wires
+ * it up (see ParseTriageAssessmentOptions.notes), the contents will be
+ * extracted from PR/issue comment bodies, which are third-party-author
+ * controllable on incoming PRs. Treat as untrusted: any consumer MUST
+ * render it as plain text — React auto-escapes HTML but does NOT strip
+ * Unicode formatting characters; Bidi/RTL stripping must happen at the
+ * ingest writer per the field-level JSDoc below. Never render via
+ * `dangerouslySetInnerHTML`; never render as unescaped markdown or HTML.
+ * Non-React consumers (logs, downloads, copy-to-clipboard) inherit the
+ * same untrusted-input posture and must apply their own stripping if
+ * the ingest contract is bypassed. See gascity-dashboard-8h3 for the
+ * full contract.
  */
 export interface TriageAssessment {
   vetted_score: number;
-  source: 'agent' | 'manual';
+  source: 'agent';
+  /**
+   * Free-form agent-authored note about the assessment. Currently always
+   * empty string; populated by the gh ingest path (see
+   * ParseTriageAssessmentOptions.notes) from PR/issue comment bodies,
+   * which are third-party-author controllable on incoming PRs.
+   *
+   * Sanitisation contract (gascity-dashboard-8h3 + gascity-dashboard-cnu) —
+   * the ingest writer is responsible, every reader assumes it has been
+   * enforced:
+   *
+   *   1. Length-cap (~2000 chars).
+   *   2. Strip C0 control bytes (\x00-\x1f except \t/\n), DEL (\x7f),
+   *      and C1 control bytes (\x80-\x9f).
+   *   3. Strip ALL 12 Unicode Bidi / RTL codepoints from CVE-2021-42574:
+   *      U+061C (ALM), U+200E (LRM), U+200F (RLM), U+202A-202E (LRE/RLE/
+   *      PDF/LRO/RLO), U+2066-2069 (LRI/RLI/FSI/PDI) — the "trojan
+   *      source" vector.
+   *   4. Strip ANSI CSI / OSC escape sequences.
+   *
+   * Every consumer MUST render this as plain text only — never via
+   * `dangerouslySetInnerHTML`, never as unescaped markdown or HTML.
+   * React's default JSX text rendering satisfies this; any non-React
+   * surface (logs, downloads, copy-to-clipboard) inherits the same
+   * untrusted-input posture.
+   */
   notes: string;
   vetted_at: IsoTimestamp;
 }
@@ -616,6 +952,16 @@ export interface SlungState {
    *
    * Null means the sling succeeded but no running session could be resolved
    * for the target role at write time.
+   *
+   * Stale-after-restart: this field is captured at sling time and never
+   * refreshed. If the resolved session is killed and re-spawned (operator
+   * restart, supervisor crash recovery, role re-pool), the persisted id
+   * may point at a now-dead session. The frontend's `/agents/<id>` route
+   * is expected to fall back gracefully on a 404 — the sling record itself
+   * is intentionally NOT re-resolved on read, because the historical
+   * sling-time mapping is what the operator slung against and re-resolving
+   * would silently rewrite history. Treat this value as "best-known
+   * session at sling time", not "currently live session for the role".
    */
   resolved_session_name: string | null;
 }
@@ -661,13 +1007,34 @@ export interface TriageItem {
    *  when present (gascity-dashboard-are). Null means the item has not been
    *  vetted; the frontend then renders the heuristic `triage_score` in the
    *  faint italic register. Populated by the label parser in
-   *  backend/src/maintainer/triage-assessment.ts. */
+   *  backend/src/views/modules/maintainer/triage-assessment.ts. */
   triage_assessment: TriageAssessment | null;
   /** Active sling state (gascity-dashboard-9qs). Non-null while the item
    *  is in flight to a triage agent and not yet vetted. Excludes the
    *  item from the One Mark candidate set and surfaces an inline link
    *  to the target agent's detail view. See `SlungState` JSDoc. */
   slung: SlungState | null;
+  /**
+   * Cross-link to this item's workflow run-detail route, when one is
+   * known (gascity-dashboard-djpk). Tri-state:
+   *   - `undefined` — the item was never associated with a workflow run
+   *     (the common case: it has never been slung). Absent on the wire.
+   *   - `null` — the item IS actively slung but the sling carried no
+   *     bead id, so there is no `rootBeadId`-keyed run to link to yet.
+   *   - `string` — the slung bead id, usable directly as the
+   *     `/workflows/<id>` route key (run-detail is keyed by the run's
+   *     `rootBeadId`, which is exactly `SlungState.bead_id`).
+   *
+   * Populated at serve time in applySlungOverlay from the persisted
+   * `SlungState.bead_id` on active-slung items only — mapIssue/mapPr
+   * carry no run id, so non-slung items always leave this `undefined`.
+   *
+   * Best-known-at-sling-time, NOT live: like `SlungState.bead_id` itself,
+   * this is captured when the sling fired and never re-resolved on read.
+   * Treat it as "the run this item was slung against", which is what the
+   * operator means to navigate to.
+   */
+  workflow_run_id?: string | null;
   /** Primary file-overlap cluster id; items sharing this id sit together. Null when uncomputed. */
   cluster_id: string | null;
   /** Files this item touches / is predicted to touch. Empty array when uncomputed. */

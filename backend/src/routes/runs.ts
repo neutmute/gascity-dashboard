@@ -21,6 +21,7 @@ import {
   writeRouteError,
 } from '../route-errors.js';
 import { meta, nonEmpty } from '../runs/bead-fields.js';
+import { resolveRunFormulaName } from '../runs/formula-name.js';
 import { readRunGitDiff } from '../runs/diff.js';
 import {
   enrichFormulaRun,
@@ -105,9 +106,22 @@ async function getRunFormulaDetail(
   scope: { scopeKind: RunScopeKind; scopeRef: string },
 ): Promise<RunFormulaDetailLookup> {
   const root = raw.beads?.find((bead) => nonEmpty(bead.id) === raw.root_bead_id);
-  const formula = root
-    ? meta(root, 'gc.formula') ?? meta(root, 'gc.formula_name')
-    : undefined;
+  // Resolution precedence for the formula-detail fetch:
+  //   1. explicit `gc.formula`         (resolver `metadata` path)
+  //   2. `gc.formula_name`             (pre-graph.v2 metadata key the
+  //                                     resolver does not cover)
+  //   3. graph.v2 title fallback       (resolver `title_fallback` path)
+  // gc.formula_name MUST win over the title fallback: the live graph.v2
+  // roots carry the formula name in the title rather than `gc.formula`, so
+  // the title fallback lets us fetch the registered formula detail when the
+  // supervisor has it (gascity-dashboard-sadp) — but when the supervisor
+  // DID report an explicit `gc.formula_name` that is canonical and must not
+  // be shadowed by the bead title.
+  const resolved = resolveRunFormulaName(root);
+  const formula =
+    (resolved?.source === 'metadata' ? resolved.name : undefined) ??
+    (root ? meta(root, 'gc.formula_name') : undefined) ??
+    resolved?.name;
   const target = root
     ? meta(root, 'gc.run_target') ?? meta(root, 'gc.routed_to') ?? nonEmpty(root.assignee)
     : undefined;

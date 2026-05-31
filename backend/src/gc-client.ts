@@ -1,12 +1,21 @@
 import type {
   BeadUpdateInput,
+  GcAgent,
+  GcAgentList,
   GcBead,
   GcBeadList,
   GcEventList,
   GcFormulaDetail,
+  GcFormulaRunList,
+  GcFormulaRunsResponse,
   GcMailList,
+  GcOrderHistoryDetail,
+  GcOrderHistoryList,
+  GcOrdersFeedResponse,
+  GcRigList,
   GcRunSnapshot,
   GcSessionList,
+  GcStatus,
   MailSendInput,
   MailSendResponse,
   RunScopeKind,
@@ -49,16 +58,25 @@ const DEFAULT_TIMEOUT_MS = (() => {
 const SLING_TIMEOUT_MS = 60_000;
 
 const SUPERVISOR_PATHS = {
+  agent: '/v0/city/{cityName}/agent/{base}',
+  agents: '/v0/city/{cityName}/agents',
   bead: '/v0/city/{cityName}/bead/{id}',
   beads: '/v0/city/{cityName}/beads',
   events: '/v0/city/{cityName}/events',
   eventsStream: '/v0/city/{cityName}/events/stream',
   formulaDetail: '/v0/city/{cityName}/formulas/{name}',
+  formulaRuns: '/v0/city/{cityName}/formulas/{name}/runs',
+  formulasFeed: '/v0/city/{cityName}/formulas/feed',
   health: '/v0/city/{cityName}/health',
   mail: '/v0/city/{cityName}/mail',
+  orderHistoryDetail: '/v0/city/{cityName}/order/history/{bead_id}',
+  ordersFeed: '/v0/city/{cityName}/orders/feed',
+  ordersHistory: '/v0/city/{cityName}/orders/history',
+  rigs: '/v0/city/{cityName}/rigs',
   sessionStream: '/v0/city/{cityName}/session/{id}/stream',
   sessions: '/v0/city/{cityName}/sessions',
   sling: '/v0/city/{cityName}/sling',
+  status: '/v0/city/{cityName}/status',
   transcript: '/v0/city/{cityName}/session/{id}/transcript',
   workflow: '/v0/city/{cityName}/workflow/{workflow_id}',
 } as const satisfies Record<string, keyof paths>;
@@ -264,7 +282,11 @@ export class GcClient {
    * record slung-state.
    */
   async sling(input: SlingInput): Promise<SlingResponse> {
-    return this.writeJson<SlingResponse>('/sling', input, SLING_TIMEOUT_MS);
+    const raw = await this.writeJson<unknown>('/sling', input, SLING_TIMEOUT_MS);
+    // Decode at the write edge: the supervisor emits the wire field
+    // `workflow_id`, which the decoder maps onto the renamed `run_id`
+    // property (#61). A raw cast would silently drop the routed run id.
+    return gcSupervisorDecoders.decodeSling(raw);
   }
 
   /**
@@ -301,6 +323,89 @@ export class GcClient {
       gcSupervisorDecoders.listSessions,
       (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.sessions, {
         params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/status` — supervisor city status. The dashboard
+   * reads `store_health.size_bytes` off this for the dolt-noms on-disk size
+   * trend (gascity-dashboard-x82). Mirrors `listSessions`: coalesced GET
+   * through the typed client, decoded at the wire-shape edge, default
+   * timeout. `store_health` is optional — a degraded supervisor omits it,
+   * and the sampler signals unavailable rather than reporting a fake zero.
+   */
+  async getStatus(signal?: AbortSignal): Promise<GcStatus> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.status),
+      gcSupervisorDecoders.getStatus,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.status, {
+        params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/rigs` — list of configured rigs for this city.
+   * Used by the cityStatus snapshot collector to source rigs from the
+   * HTTP API instead of parsing city.toml off the host filesystem
+   * (gascity-dashboard-19w). The supervisor's RigResponse carries more
+   * fields (agent_count, running_count, git status, etc.); the decoder
+   * narrows to name+path which is all the dashboard's CityRig contract
+   * uses today.
+   */
+  async listRigs(signal?: AbortSignal): Promise<GcRigList> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.rigs),
+      gcSupervisorDecoders.listRigs,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.rigs, {
+        params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/agents` — first-class agent roster
+   * (gascity-dashboard-ay6). Supersedes the previous derive-from-sessions
+   * path which under-counted agents that are configured but not currently
+   * bound to a running session. Alias-keyed (each item's `name` is the
+   * stable alias the operator types into `gc sling`). The Agents view
+   * consumes this directly; the cityStatus snapshot collector now also
+   * consumes this for sessionsByProvider (gascity-dashboard-sd4) because
+   * /sessions doesn't carry provider for every entry.
+   */
+  async listAgents(signal?: AbortSignal): Promise<GcAgentList> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.agents),
+      gcSupervisorDecoders.listAgents,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.agents, {
+        params: { path: this.cityPathParams() },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/agent/{base}` — per-agent detail keyed by the
+   * agent's alias (`base` in the supervisor's path naming, but it is the
+   * agent's `name`, not a session id). gascity-dashboard-ay6. The caller
+   * is responsible for URL-encoding any '/' inside qualified names
+   * (e.g. 'thriva/devpipeline.architect') — openapi-fetch handles the
+   * `{base}` substitution and applies encodeURIComponent.
+   */
+  async getAgent(base: string, signal?: AbortSignal): Promise<GcAgent> {
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.agent, [base]),
+      gcSupervisorDecoders.getAgent,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.agent, {
+        params: { path: { ...this.cityPathParams(), base } },
         signal: upstreamSignal,
       }),
       signal,
@@ -376,6 +481,12 @@ export class GcClient {
     signal?: AbortSignal,
     params?: { box?: 'inbox' | 'sent'; alias?: string; limit?: number },
   ): Promise<GcMailList> {
+    // td-h3n2ar: the supervisor's `/mail` endpoint silently ignores `box`
+    // and `alias` query params today. We still accept them in the method
+    // signature (and key the operation cache by them) so callers don't
+    // need to change when a future supervisor version starts honoring the
+    // filter upstream — the no-op today is harmless. The actual
+    // sender/recipient filter happens in routes/mail.ts::filterByBox.
     const query: { limit?: number } = {};
     if (params?.limit !== undefined) query.limit = params.limit;
     return this.getOperation(
@@ -435,6 +546,36 @@ export class GcClient {
     );
   }
 
+  /**
+   * Cross-rig discovery of formula runs the supervisor knows about.
+   * Mirrors `GET /v0/city/<city>/formulas/feed`. Returns rig-stored
+   * workflow roots that `listBeads` (city-scoped) does NOT return —
+   * see gascity-dashboard-ej9y. The dashboard's workflows snapshot
+   * collector uses this to bootstrap its rig set for downstream
+   * per-rig listBeads queries.
+   */
+  async listFormulaRuns(
+    scope: { scopeKind: RunScopeKind; scopeRef: string },
+    signal?: AbortSignal,
+  ): Promise<GcFormulaRunList> {
+    const query = {
+      scope_kind: scope.scopeKind,
+      scope_ref: scope.scopeRef,
+    };
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.formulasFeed, [
+        scope.scopeKind,
+        scope.scopeRef,
+      ]),
+      gcSupervisorDecoders.listFormulaRuns,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.formulasFeed, {
+        params: { path: this.cityPathParams(), query },
+        signal: upstreamSignal,
+      }),
+      signal,
+    );
+  }
+
   async getFormulaDetail(
     formulaName: string,
     scope: { scopeKind: RunScopeKind; scopeRef: string },
@@ -462,6 +603,155 @@ export class GcClient {
         signal: upstreamSignal,
       }),
       signal,
+    );
+  }
+
+  // ── hvx: formula/order run history feeds ────────────────────────────
+  //
+  // These four methods mirror the supervisor's per-formula and order
+  // history endpoints. They have no consumer in the dashboard today; they
+  // pin the GcClient boundary so future formula-detail / orders pages
+  // don't reinvent the decoder edge or duplicate scope+pagination
+  // handling. Aligned with the existing listFormulaRuns (ej9y) pattern
+  // for the cross-formula feed.
+  //
+  // SD4 coexistence: kept under a single named region so a parallel
+  // worktree adding sibling methods to this class can merge into a
+  // distinct block (or below) without textual conflict.
+
+  /**
+   * `GET /v0/city/{name}/formulas/{name}/runs` — recent runs for one named
+   * formula (e.g. 'mol-adopt-pr-v2'). Distinct from `listFormulaRuns`
+   * (the cross-formula `/formulas/feed`). Used by future formula-detail
+   * pages and any reporting surface that needs per-formula history.
+   * `scope` is optional in the supervisor's OpenAPI but always passed
+   * here — runs are scope-keyed and unscoped requests return the city's
+   * default scope, which is not what consumers reading a formula's
+   * history want. `limit` accepts 0 to mean "supervisor default".
+   */
+  async listFormulaRunsByName(
+    formulaName: string,
+    scope: { scopeKind: RunScopeKind; scopeRef: string },
+    options: { limit?: number; signal?: AbortSignal } = {},
+  ): Promise<GcFormulaRunsResponse> {
+    const query: { scope_kind: string; scope_ref: string; limit?: number } = {
+      scope_kind: scope.scopeKind,
+      scope_ref: scope.scopeRef,
+    };
+    if (options.limit !== undefined) query.limit = options.limit;
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.formulaRuns, [
+        formulaName,
+        scope.scopeKind,
+        scope.scopeRef,
+        options.limit,
+      ]),
+      gcSupervisorDecoders.listFormulaRunsByName,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.formulaRuns, {
+        params: {
+          path: { ...this.cityPathParams(), name: formulaName },
+          query,
+        },
+        signal: upstreamSignal,
+      }),
+      options.signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/orders/feed` — currently-active order runs (the
+   * supervisor's recurring-job feed). Per-item shape is the same
+   * `MonitorFeedItemResponse` as `/formulas/feed`; `type` discriminates
+   * (`'order'` vs `'formula'`). Scope is optional — omitting it asks the
+   * supervisor for the city-wide feed.
+   */
+  async listOrdersFeed(
+    options: {
+      scope?: { scopeKind: RunScopeKind; scopeRef: string };
+      limit?: number;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<GcOrdersFeedResponse> {
+    const query: { scope_kind?: string; scope_ref?: string; limit?: number } = {};
+    if (options.scope !== undefined) {
+      query.scope_kind = options.scope.scopeKind;
+      query.scope_ref = options.scope.scopeRef;
+    }
+    if (options.limit !== undefined) query.limit = options.limit;
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.ordersFeed, [
+        options.scope?.scopeKind,
+        options.scope?.scopeRef,
+        options.limit,
+      ]),
+      gcSupervisorDecoders.listOrdersFeed,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.ordersFeed, {
+        params: { path: this.cityPathParams(), query },
+        signal: upstreamSignal,
+      }),
+      options.signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/orders/history?scoped_name=<...>` — full history
+   * for one named order. `scopedName` is the supervisor's scoped form
+   * (e.g. `'city:check-mail'` or `'rig:gascity:check-mail'`); the
+   * unscoped `name` alone is not enough because two rigs may register the
+   * same order. `before` is an RFC3339 timestamp pagination cursor;
+   * `limit=0` asks the supervisor for its default.
+   */
+  async listOrderHistory(
+    scopedName: string,
+    options: { limit?: number; before?: string; signal?: AbortSignal } = {},
+  ): Promise<GcOrderHistoryList> {
+    const query: { scoped_name: string; limit?: number; before?: string } = {
+      scoped_name: scopedName,
+    };
+    if (options.limit !== undefined) query.limit = options.limit;
+    if (options.before !== undefined) query.before = options.before;
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.ordersHistory, [
+        scopedName,
+        options.limit,
+        options.before,
+      ]),
+      gcSupervisorDecoders.listOrderHistory,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.ordersHistory, {
+        params: { path: this.cityPathParams(), query },
+        signal: upstreamSignal,
+      }),
+      options.signal,
+    );
+  }
+
+  /**
+   * `GET /v0/city/{name}/order/history/{bead_id}` — single historical
+   * order-run detail (captured output + labels). `storeRef` is optional
+   * but recommended: bead IDs are store-local, so without `store_ref` the
+   * supervisor disambiguates against the city store by default and can
+   * 404 on rig-stored runs.
+   */
+  async getOrderHistoryDetail(
+    beadId: string,
+    options: { storeRef?: string; signal?: AbortSignal } = {},
+  ): Promise<GcOrderHistoryDetail> {
+    const query: { store_ref?: string } = {};
+    if (options.storeRef !== undefined) query.store_ref = options.storeRef;
+    return this.getOperation(
+      this.operationKey(SUPERVISOR_PATHS.orderHistoryDetail, [
+        beadId,
+        options.storeRef,
+      ]),
+      gcSupervisorDecoders.getOrderHistoryDetail,
+      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.orderHistoryDetail, {
+        params: {
+          path: { ...this.cityPathParams(), bead_id: beadId },
+          query,
+        },
+        signal: upstreamSignal,
+      }),
+      options.signal,
     );
   }
 

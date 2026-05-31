@@ -1,18 +1,35 @@
+import { useMemo } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
 import { useViewingAs, OPERATOR_ALIAS } from '../contexts/ViewingAsContext';
 import { displayLabel } from '../hooks/aliasPriority';
 import { useCachedData } from '../hooks/useCachedData';
+import { ALL_VIEWS } from '../views/registry';
+import { filterEnabledViews } from '../views/resolve';
 
-const ROUTES: { to: string; label: string }[] = [
-  { to: '/agents', label: 'Agents' },
-  { to: '/beads', label: 'Beads' },
-  { to: '/runs', label: 'Runs' },
-  { to: '/mail', label: 'Mail' },
-  { to: '/activity', label: 'Activity' },
-  { to: '/health', label: 'Health' },
-  { to: '/maintainer', label: 'Triage' },
+interface NavRoute {
+  to: string;
+  label: string;
+  end?: boolean;
+  order: number;
+}
+
+// Hand-maintained routes for the views that PR-A has NOT yet ported to
+// the modular registry. Each entry carries an explicit `order` so the
+// registry-driven entries (currently /health at 60) interleave cleanly
+// here without a separate "where does Health go" decision. PR-B+ will
+// move entries out of this list as they land in ALL_VIEWS.
+const EXPLICIT_ROUTES: ReadonlyArray<NavRoute> = [
+  // gascity-dashboard-kb3: Home is the L0 ambient page at `/`.
+  // `end: true` so the NavLink active-state matches `/` exactly
+  // (otherwise every nested route would also be 'active').
+  { to: '/', label: 'Home', end: true, order: 10 },
+  { to: '/agents', label: 'Agents', order: 20 },
+  { to: '/beads', label: 'Beads', order: 30 },
+  { to: '/runs', label: 'Runs', order: 40 },
+  { to: '/mail', label: 'Mail', order: 50 },
+  { to: '/activity', label: 'Activity', order: 55 },
 ];
 
 // The header is page furniture, not chrome. A small wordmark, the
@@ -23,6 +40,22 @@ export function Header() {
   const { resolved, toggle } = useTheme();
   const { viewingAs } = useViewingAs();
   const { data: config } = useCachedData('config', () => api.config());
+  // PR-C: filter the registry views by the backend-advertised
+  // enabledModules so a disabled module's nav entry disappears in lockstep
+  // with its route. While the config fetch is in flight `enabledModules`
+  // is null — meaning every firstParty view appears, matching the
+  // first-paint route tree in App.tsx.
+  const ROUTES: ReadonlyArray<NavRoute> = useMemo(() => {
+    const enabled = filterEnabledViews(ALL_VIEWS, config?.enabledModules ?? null);
+    const registry: NavRoute[] = enabled.flatMap((v) =>
+      v.nav === null
+        ? []
+        : [{ to: v.path, label: v.nav.label, end: v.path === '/', order: v.nav.order }],
+    );
+    // Spread already allocates a new mutable array, so .sort() in-place is
+    // safe — no .slice() needed (PR-A Phase-4 TS M4).
+    return [...EXPLICIT_ROUTES, ...registry].sort((a, b) => a.order - b.order);
+  }, [config?.enabledModules]);
   const { pathname } = useLocation();
   // "Reading as" is a Mail-only concept — the value persists across views
   // (for Maintainer's impersonation guard + AgentDetail's chat filter) but
@@ -53,6 +86,7 @@ export function Header() {
               <li key={r.to}>
                 <NavLink
                   to={r.to}
+                  end={r.end ?? false}
                   className={({ isActive }) =>
                     [
                       'text-title transition-colors duration-150 ease-out-quart focus-mark',

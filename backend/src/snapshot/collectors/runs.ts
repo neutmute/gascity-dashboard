@@ -1,13 +1,15 @@
-import type {
-  GcBead,
-  RunChange,
-  RunLane,
-  RunCounts,
-  RunStage,
-  RunSummary,
+import {
+  SCOPE_REF_RE,
+  type GcBead,
+  type RunChange,
+  type RunLane,
+  type RunCounts,
+  type RunStage,
+  type RunSummary,
 } from 'gas-city-dashboard-shared';
 
 import type { GcClient } from '../../gc-client.js';
+import { LOG_COMPONENT, errorMessage, logWarn } from '../../logging.js';
 import { SourceCache } from '../cache.js';
 import {
   mapRunPhase,
@@ -17,24 +19,37 @@ import {
   type RunIssue,
 } from './phaseMapping.js';
 
-// Runs collector — gascity-dashboard-0t6. Owns lane building, run-count
-// aggregation, formula stage progression, and recent-change ordering.
+// Workflows collector — gascity-dashboard-0t6. Ported from demo-dash
+// src/server/collectors/workflows.ts (the lane builder, run-count
+// aggregation, formula stage progression, and recent-change ordering).
 //
-// The gc supervisor HTTP API (GcClient.listBeads) returns the unified bead set
-// for the configured city. A single `gc.listBeads({ limit })` is the canonical
-// contract here (dkb Q1).
+// Transport divergence from demo-dash: gc supervisor's HTTP API
+// (GcClient.listBeads) returns the unified bead set for the configured
+// city; no rig-vs-city split is exposed through HTTP. demo-dash's two
+// subprocess calls (city + rig bd directories) merged by workflow_root_id
+// were a CLI-side workaround for the subprocess transport — not load-bearing
+// for the gascity dashboard. A single `gc.listBeads({ limit })` is the
+// canonical contract here (dkb Q1).
 //
-// Filter divergence from /api/beads (plan review C1): the runs
+// Filter divergence from /api/beads (plan review C1): the workflows
 // collector keeps the gc:* label exclusion but ALSO admits issue_type
 // 'molecule' and beads with metadata['gc.kind'] === 'run' so graph.v2
 // root groups have enough context to build lanes. The final lane list is
 // intentionally graph.v2-only; non-graph formula molecules are filtered out
 // after grouping because the detail route cannot render them.
 
-export const RunS_CACHE_TTL_MS = 60 * 1000;
-export const RunS_FETCH_LIMIT = 1_000;
-export const RECENT_Run_FETCH_LIMIT = 80;
-export const MAX_VISIBLE_Run_LANES = 8;
+export const RUNS_CACHE_TTL_MS = 60 * 1000;
+export const RUNS_FETCH_LIMIT = 1_000;
+export const RECENT_RUN_FETCH_LIMIT = 80;
+/**
+ * gascity-dashboard-yh5i: the lane set is split into active (default
+ * visible) and historical (toggle-visible). Each side has its own cap so
+ * complete lanes can never crowd active out of the visible window.
+ * Historical cap is intentionally smaller — the toggle is a "skim recent
+ * completions" tool, not a full archive.
+ */
+export const MAX_VISIBLE_ACTIVE_LANES = 8;
+export const MAX_VISIBLE_HISTORICAL_LANES = 5;
 const RECENT_CHANGES_CAP = 12;
 
 const ENGINEERING_TYPES = new Set([
@@ -56,9 +71,9 @@ const runStages = [
 // ── Filter + adapter ──────────────────────────────────────────────────────
 
 /**
- * Co-located filter for the runs view. Differs from
+ * Co-located filter for the workflows view. Differs from
  * routes/beads.ts::defaultBeadFilter by admitting molecule and
- * gc.kind='run' beads so the lane builder has its root beads to
+ * gc.kind='workflow' beads so the lane builder has its root beads to
  * key on. Still excludes gc:* labels (session/message noise).
  */
 export function runBeadFilter(bead: GcBead): boolean {
@@ -75,29 +90,51 @@ export function runBeadFilter(bead: GcBead): boolean {
 }
 
 /**
- * Adapt the supervisor wire shape to the lane builder's input. GcBead has
- * no first-class `parent` field, so it is populated from
- * metadata['gc.parent_bead_id'] when present; falls back to undefined.
+ * Adapt the supervisor wire shape to the lane builder's input. GcBead now
+ * carries a first-class `parent` field (6bv7 F15); the metadata fallback
+ * survives because formula scaffolding still writes the older
+ * `gc.parent_bead_id` key on synthetic beads.
  */
 export function fromGcBead(bead: GcBead): RunIssue {
-  const parent = stringValue(bead.metadata?.['gc.parent_bead_id']) || undefined;
+  const parent = bead.parent ?? stringValue(bead.metadata?.['gc.parent_bead_id']);
   const issue: RunIssue = {
     id: bead.id,
     title: bead.title,
     status: bead.status,
     issue_type: bead.issue_type,
-    updated_at: bead.updated_at ?? bead.closed_at ?? bead.created_at,
+    // 6bv7 F16: OpenAPI Bead exposes no updated_at / closed_at — created_at
+    // is the only timestamp the supervisor emits, so the fallback chain
+    // collapses to it.
+    updated_at: bead.created_at,
   };
   if (bead.description !== undefined) issue.description = bead.description;
   if (bead.assignee !== undefined) issue.assignee = bead.assignee;
-  if (parent !== undefined) issue.parent = parent;
+  if (parent) issue.parent = parent;
   if (bead.metadata !== undefined) issue.metadata = bead.metadata;
   return issue;
 }
 
 // ── Lane builder ──────────────────────────────────────────────────────────
 
-export function buildRunSummary(issues: RunIssue[]): RunSummary {
+/**
+ * Per-root supervisor query scope sourced from /v0/city/<city>/formulas/feed.
+ * gascity-dashboard-d3xp: a rig-stored workflow root surfaced by the ej9y
+ * feed-discovery path typically does NOT carry gc.scope_kind/gc.scope_ref
+ * in its bead metadata, but the feed's own scope_kind/scope_ref IS the
+ * supervisor's authoritative query scope for the run. This map carries
+ * that authority to the lane builder so the deep-link qs is correct.
+ */
+export interface RunFeedScope {
+  scopeKind: 'city' | 'rig';
+  scopeRef: string;
+  rootStoreRef: string;
+}
+export type RunFeedScopeMap = ReadonlyMap<string, RunFeedScope>;
+
+export function buildRunSummary(
+  issues: RunIssue[],
+  feedScopes: RunFeedScopeMap = new Map(),
+): RunSummary {
   const groups = new Map<string, RunIssue[]>();
 
   for (const i of issues) {
@@ -111,15 +148,28 @@ export function buildRunSummary(issues: RunIssue[]): RunSummary {
     isGraphV2RunGroup(rootId, groupIssues),
   );
   const laneIssues = runGroups.flatMap(([, groupIssues]) => groupIssues);
-  const lanes = runGroups
-    .map(([rootId, groupIssues]) => runLane(rootId, groupIssues))
+  const sortedLanes = runGroups
+    .map(([rootId, groupIssues]) => runLane(rootId, groupIssues, feedScopes))
     .sort(compareLanes);
-  const visibleLanes = lanes.slice(0, MAX_VISIBLE_Run_LANES);
+
+  // gascity-dashboard-yh5i: split by phase so the /workflows view can
+  // default to active lanes with historical behind a toggle. The split
+  // happens AFTER sorting so each side's visible window remains in
+  // compareLanes order (most-recent-first within each group). Blocked
+  // lanes go into ACTIVE (not historical) — they still need operator
+  // attention; the in-flight census disagrees only because totalInFlight
+  // is a different concept (currently-progressing work).
+  const activeLanes = sortedLanes.filter((lane) => lane.phase !== 'complete');
+  const historicalLanes = sortedLanes.filter((lane) => lane.phase === 'complete');
+  const visibleActive = activeLanes.slice(0, MAX_VISIBLE_ACTIVE_LANES);
+  const visibleHistorical = historicalLanes.slice(0, MAX_VISIBLE_HISTORICAL_LANES);
 
   return {
-    totalActive: lanes.length,
-    runCounts: runCounts(lanes, visibleLanes.length),
-    lanes: visibleLanes,
+    totalActive: activeLanes.length,
+    totalHistorical: historicalLanes.length,
+    runCounts: runCounts(activeLanes, visibleActive.length),
+    lanes: visibleActive,
+    historicalLanes: visibleHistorical,
     recentChanges: recentChanges(laneIssues),
     // census is engine-derived (gascity-dashboard-3ax) — the lane builder
     // has no session data and no phaseConfidence yet. deriveRunHealth
@@ -179,16 +229,20 @@ function runKind(
   return 'other';
 }
 
-function runLane(rootId: string, issues: RunIssue[]): RunLane {
+function runLane(
+  rootId: string,
+  issues: RunIssue[],
+  feedScopes: RunFeedScopeMap,
+): RunLane {
   const phase = mapRunPhase(issues);
   const updatedAt = latestUpdatedAt(issues);
-  const formula = runFormula(issues);
+  const formula = runFormula(rootId, issues);
   const formulaName = runFormulaName(formula);
   const stages = stageProgress(phase, formulaName, issues);
   const foundStageIndex = stages.findIndex((s) => s.status === 'active');
   const activeStage = foundStageIndex >= 0 ? stages[foundStageIndex] : undefined;
 
-  // Engine inputs for the run-health derivation (gascity-dashboard-3ax).
+  // Engine inputs for the workflow-health derivation (gascity-dashboard-3ax).
   // activeStepId is the raw gc.step_id of the in-progress primary step — the
   // semantic node id L2 keys on and the `?node=` deep-link target — NOT the
   // coarse stage key. activeStepAttempt is the attempt count of THAT step
@@ -210,7 +264,7 @@ function runLane(rootId: string, issues: RunIssue[]): RunLane {
     formulaStages.length > 0 &&
     progress.status === 'active_step' &&
     formulaStages.some((s) => s.steps.includes(progress.stepId));
-  const scope = runScope(rootId, issues);
+  const scope = runScope(rootId, issues, feedScopes);
 
   const lane: RunLane = {
     id: rootId,
@@ -255,6 +309,7 @@ function runRootId(issue: RunIssue): string {
 function runScope(
   rootId: string,
   issues: RunIssue[],
+  feedScopes: RunFeedScopeMap,
 ): RunScopeInfo {
   const root = issues.find((i) => i.id === rootId);
   const ordered = root
@@ -263,14 +318,22 @@ function runScope(
   const rootStoreRef = metadataString(ordered, 'gc.root_store_ref');
   const rootScopeKind = stringValue(root?.metadata?.['gc.scope_kind']);
   const rootScopeRef = stringValue(root?.metadata?.['gc.scope_ref']);
-  // The query scope (scopeKind/scopeRef) drives the run-detail deep-link, so it
-  // must come ONLY from explicit gc.scope_kind / gc.scope_ref. root_store_ref is
-  // a STORAGE location, not a query scope: deriving the scope from it produces a
-  // deep-link the supervisor's /run/{id} endpoint 404s for rig-store-backed
-  // runs, whose root id actually resolves under the city (gascity-dashboard-sd9).
-  // When explicit scope metadata is absent, leave the scope null so the deep-link
-  // carries no scope and the run resolves by id under the city. rootStoreRef
-  // is still surfaced as a display-only field.
+  // The query scope (scopeKind/scopeRef) drives the run-detail deep-link. It
+  // has TWO authoritative sources, in priority order:
+  //   1. Explicit bead metadata gc.scope_kind / gc.scope_ref — stamped by the
+  //      supervisor at workflow-root creation. Strongest signal.
+  //   2. GcFormulaRun.scope_kind / scope_ref from /v0/city/<city>/formulas/feed —
+  //      the supervisor's own query-scope record for the run. Authoritative for
+  //      rig-stored workflow roots surfaced by the ej9y feed-discovery path,
+  //      which typically do NOT carry gc.scope_kind on the bead itself
+  //      (gascity-dashboard-d3xp).
+  // Critically, gc.root_store_ref is NOT a valid scope source: it is a STORAGE
+  // location, not a query scope. Deriving scope from it produced a deep-link
+  // the supervisor's /workflow/{id} endpoint 404s for rig-store-backed workflows
+  // whose run actually resolves under the city (gascity-dashboard-sd9). When
+  // both authoritative sources are absent, leave the scope unavailable so the
+  // deep-link carries no scope and the workflow resolves by id under the city.
+  // rootStoreRef remains a display-only field on available scopes.
   const scopeKind = parseRunScopeKind(rootScopeKind);
   const scopeRef =
     scopeKind !== null
@@ -286,9 +349,19 @@ function runScope(
     };
   }
 
+  const feedScope = feedScopes.get(rootId);
+  if (feedScope !== undefined) {
+    return {
+      status: 'available',
+      kind: feedScope.scopeKind,
+      ref: feedScope.scopeRef,
+      rootStoreRef: rootStoreRef || feedScope.rootStoreRef,
+    };
+  }
+
   return {
     status: 'unavailable',
-    error: 'run scope metadata unavailable',
+    error: 'workflow scope metadata unavailable',
   };
 }
 
@@ -312,9 +385,15 @@ function scopeRefFromStoreRef(rootStoreRef: string | null): string | null {
 function sourceRunRootId(issue: RunIssue): string {
   return (
     stringValue(issue.metadata?.['pr_review.run_root_id']) ||
+    stringValue(issue.metadata?.['pr_review.workflow_root_id']) ||
     stringValue(issue.metadata?.['bugflow.active_run_id']) ||
     stringValue(issue.metadata?.['bugflow.implementation_run_id']) ||
-    stringValue(issue.metadata?.['design_review.run_root_id'])
+    // The supervisor emits the implementation run id under the legacy
+    // `workflow_id` key on bugflow issues; read it as a fallback so the
+    // run link is not silently dropped when only the legacy key is set.
+    stringValue(issue.metadata?.['bugflow.implementation_workflow_id']) ||
+    stringValue(issue.metadata?.['design_review.run_root_id']) ||
+    stringValue(issue.metadata?.['design_review.workflow_root_id'])
   );
 }
 
@@ -360,7 +439,7 @@ function latestUpdatedAt(issues: RunIssue[]): RunLane['updatedAt'] {
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
 
   return at === undefined
-    ? { status: 'unavailable', error: 'run update time unavailable' }
+    ? { status: 'unavailable', error: 'workflow update time unavailable' }
     : { status: 'available', at };
 }
 
@@ -666,11 +745,11 @@ function runProgress(
     return {
       status: 'stage_only',
       stage,
-      error: 'active run step unavailable',
+      error: 'active workflow step unavailable',
     };
   }
 
-  return { status: 'unavailable', error: 'run progress unavailable' };
+  return { status: 'unavailable', error: 'workflow progress unavailable' };
 }
 
 function runStagePosition(
@@ -679,13 +758,13 @@ function runStagePosition(
 ): Extract<RunLane['progress'], { status: 'active_step' }>['stage'] {
   const stage = stages[activeStageIndex];
   return stage === undefined
-    ? { status: 'unavailable', error: 'active run stage unavailable' }
+    ? { status: 'unavailable', error: 'active workflow stage unavailable' }
     : {
-      status: 'available',
-      index: activeStageIndex,
-      key: stage.key,
-      label: stage.label,
-    };
+        status: 'available',
+        index: activeStageIndex,
+        key: stage.key,
+        label: stage.label,
+      };
 }
 
 function runStepAttempt(
@@ -694,7 +773,7 @@ function runStepAttempt(
 ): Extract<RunLane['progress'], { status: 'active_step' }>['attempt'] {
   const value = reviewRoundForIssues(stepIssues(issues, stepId));
   return value === null
-    ? { status: 'unavailable', error: 'run step attempt unavailable' }
+    ? { status: 'unavailable', error: 'workflow step attempt unavailable' }
     : { status: 'available', value };
 }
 
@@ -706,7 +785,7 @@ function stepIssues(issues: RunIssue[], step: string): RunIssue[] {
 
 function isPrimaryStepIssue(issue: RunIssue): boolean {
   const kind = stringValue(issue.metadata?.['gc.kind']);
-  return kind !== 'spec' && kind !== 'scope-check' && kind !== 'run-finalize';
+  return kind !== 'spec' && kind !== 'scope-check' && kind !== 'workflow-finalize';
 }
 
 function compareLanes(a: RunLane, b: RunLane): number {
@@ -715,16 +794,50 @@ function compareLanes(a: RunLane, b: RunLane): number {
   return bTime - aTime || a.id.localeCompare(b.id);
 }
 
-function runFormula(issues: RunIssue[]): RunLane['formula'] {
-  const name =
-    metadataString(issues, 'pr_review.run_formula') ||
-    metadataString(issues, 'gc.formula') ||
-    metadataString(issues, 'gc.formula_name') ||
-    issues.map((i) => i.title).find((t) => t.startsWith('mol-')) ||
-    null;
-  return name === null
-    ? { status: 'unavailable', error: 'run formula unavailable' }
-    : { status: 'known', name };
+// gascity-dashboard-3vaz (follow-up to e7hj): the title-startswith-'mol-'
+// fallback only fires when the root bead is a fully-instantiated runnable
+// graph.v2 root (has both gc.formula_contract='graph.v2' and gc.run_target).
+// Uses the same gc.formula_contract+gc.run_target guard as
+// resolveWorkflowFormulaName and reads from the SAME source (the root
+// bead's own title) — a child-task title that happens to start with 'mol-'
+// must never displace the root's identity on the lane card. The 'mol-'
+// prefix is the lane builder's additional conservative gate: the run-detail
+// page surfaces title-fallback in a warn tone (e7hj), but RunLaneFormula
+// has no `source` discriminant so the lane card needs a tighter constraint
+// to avoid an operator-edited descriptive title leaking as a canonical
+// formula name. Phase 4 review finding (wave-3vaz-4lzn-e0hh-aqf8): prior
+// implementation scanned `issues.map(...).find(...)` for any 'mol-' title,
+// which would silently pick a child bead's title when the root's title
+// didn't match — caught by the multi-issue regression test below.
+//
+// gascity-dashboard-xfb7 (sadp follow-up): closed graph.v2 roots are
+// additionally excluded from the title fallback. Operators retitle roots
+// post-run to descriptive summaries; a closed lane card surfacing a
+// retitled string as the canonical formula is a false attribution. Mirrors
+// the resolveWorkflowFormulaName closed-status guard so the lane card and
+// the run-detail page stay consistent.
+function runFormula(
+  rootId: string,
+  issues: RunIssue[],
+): RunLane['formula'] {
+  const explicit =
+    metadataString(issues, 'pr_review.workflow_formula') ||
+    metadataString(issues, 'gc.formula');
+  if (explicit) return { status: 'known', name: explicit };
+
+  const root = issues.find((i) => i.id === rootId);
+  if (
+    stringValue(root?.metadata?.['gc.formula_contract']) === 'graph.v2' &&
+    stringValue(root?.metadata?.['gc.run_target']).length > 0 &&
+    root?.status !== 'closed'
+  ) {
+    const rootTitle = root?.title.trim();
+    if (rootTitle && rootTitle.startsWith('mol-')) {
+      return { status: 'known', name: rootTitle };
+    }
+  }
+
+  return { status: 'unavailable', error: 'workflow formula unavailable' };
 }
 
 function runFormulaName(formula: RunLane['formula']): string | null {
@@ -777,6 +890,7 @@ function metadataString(issues: RunIssue[], key: string): string {
 export function emptyRunSummary(): RunSummary {
   return {
     totalActive: 0,
+    totalHistorical: 0,
     runCounts: {
       total: 0,
       visible: 0,
@@ -787,6 +901,7 @@ export function emptyRunSummary(): RunSummary {
       other: 0,
     },
     lanes: [],
+    historicalLanes: [],
     recentChanges: [],
     census: runCensusUnavailable(),
   };
@@ -795,21 +910,21 @@ export function emptyRunSummary(): RunSummary {
 function runCensusUnavailable(): RunSummary['census'] {
   return {
     status: 'unavailable',
-    error: 'run health has not been derived',
+    error: 'workflow health has not been derived',
   };
 }
 
 function runHealthUnavailable(): RunLane['health'] {
   return {
     status: 'unavailable',
-    error: 'run health has not been derived',
+    error: 'workflow health has not been derived',
   };
 }
 
 export interface CreateRunsSourceCacheOptions {
   /** Live source for beads. Required unless `load` is injected directly. */
   gc?: GcClient | undefined;
-  /** Per-call fetch cap. Defaults to RunS_FETCH_LIMIT. */
+  /** Per-call fetch cap. Defaults to RUNS_FETCH_LIMIT. */
   limit?: number | undefined;
   now?: (() => Date) | undefined;
   loadFixture?: (() => Promise<RunSummary> | RunSummary) | undefined;
@@ -825,12 +940,12 @@ export function createRunsSourceCache(
 
   // sanitizeErrorMessage: null — GcClient.listBeads throws messages of
   // the shape `gc supervisor returned ${status}` which are already
-  // operator-safe; collapsing them to "runs collection failed"
+  // operator-safe; collapsing them to "workflows collection failed"
   // would discard signal. Internal logic bugs in buildRunSummary
   // are operator-meaningful too. Mirrors the city collector's posture.
   return new SourceCache<RunSummary>({
     source: 'runs',
-    ttlMs: RunS_CACHE_TTL_MS,
+    ttlMs: RUNS_CACHE_TTL_MS,
     now: options.now,
     sanitizeErrorMessage: null,
     load,
@@ -848,41 +963,152 @@ function buildDefaultLoad(
       'createRunsSourceCache requires either { gc } or { load } (test seam).',
     );
   }
-  const limit = options.limit ?? RunS_FETCH_LIMIT;
+  const limit = options.limit ?? RUNS_FETCH_LIMIT;
   return async () => {
-    const items = await loadRunBeads(gc, limit);
-    const filtered = items.filter(runBeadFilter);
+    const { beads, feedScopes } = await loadRunBeads(gc, limit);
+    const filtered = beads.filter(runBeadFilter);
     const adapted = filtered.map(fromGcBead);
-    return buildRunSummary(adapted);
+    return buildRunSummary(adapted, feedScopes);
   };
+}
+
+interface LoadedWorkflowBeads {
+  beads: GcBead[];
+  /**
+   * Authoritative per-root supervisor query scope harvested from the
+   * /formulas/feed call alongside the rig-name discovery. Used as a
+   * fallback source for lane scope when bead metadata lacks
+   * gc.scope_kind / gc.scope_ref (gascity-dashboard-d3xp).
+   */
+  feedScopes: RunFeedScopeMap;
 }
 
 async function loadRunBeads(
   gc: GcClient,
   limit: number,
-): Promise<GcBead[]> {
-  const active = await gc.listBeads(undefined, { limit });
-  const rigNames = runRigNames(active.items);
+): Promise<LoadedWorkflowBeads> {
+  // gascity-dashboard-ej9y: the city-scoped /v0/city/<city>/beads endpoint
+  // does NOT include rig-stored workflow roots, contrary to this
+  // collector's older assumption. Bootstrap the rig set from BOTH listBeads
+  // AND /v0/city/<city>/formulas/feed so rig-stored workflows (gascity
+  // maintenance, zeldascension, etc.) are visible to the dashboard. The
+  // feed fetch is best-effort: if it fails, the collector falls back to
+  // listBeads-only rig discovery rather than failing the whole snapshot.
+  const [active, feedDiscovery] = await Promise.all([
+    gc.listBeads(undefined, { limit }),
+    discoverFromFeed(gc),
+  ]);
+  const rigNames = unionRigNames(runRigNames(active.items), feedDiscovery.rigNames);
   const recentLists = await Promise.all([
     ...rigNames.map((rig) =>
       gc.listBeads(undefined, {
-        limit: RECENT_Run_FETCH_LIMIT,
+        limit: RECENT_RUN_FETCH_LIMIT,
         type: 'task',
         rig,
         all: true,
       }),
     ),
     gc.listBeads(undefined, {
-      limit: RECENT_Run_FETCH_LIMIT,
+      limit: RECENT_RUN_FETCH_LIMIT,
       type: 'molecule',
       all: true,
     }),
   ]);
 
-  return uniqueBeads([
-    ...active.items,
-    ...recentLists.flatMap((list) => list.items),
-  ]);
+  return {
+    beads: uniqueBeads([
+      ...active.items,
+      ...recentLists.flatMap((list) => list.items),
+    ]),
+    feedScopes: feedDiscovery.scopes,
+  };
+}
+
+interface FeedDiscovery {
+  rigNames: string[];
+  scopes: RunFeedScopeMap;
+}
+
+/**
+ * Discover rigs hosting active formula runs AND harvest the per-run
+ * supervisor query scope via the cross-rig /v0/city/<city>/formulas/feed
+ * endpoint. Returns empty data (not a thrown error) on failure so a
+ * degraded feed doesn't black out the entire workflows view — the city
+ * listBeads call covers the city-stored runs, and that path remains
+ * intact even if the feed is unavailable. A degraded feed is loudly
+ * logged so operators can see the soft fallback rather than silently
+ * regressing to pre-ej9y behavior (per CLAUDE.md "Don't Swallow Errors"
+ * + the wire-partial surfacing pattern PR #36 established).
+ *
+ * gascity-dashboard-d3xp: harvests scope_kind / scope_ref into a
+ * per-root map alongside the rig names. Rig-stored workflow roots
+ * surfaced by this discovery path typically lack gc.scope_kind on the
+ * bead itself; the feed's own scope_kind is the supervisor's
+ * authoritative query scope for the run and feeds the lane scope when
+ * the bead has nothing explicit.
+ */
+async function discoverFromFeed(gc: GcClient): Promise<FeedDiscovery> {
+  try {
+    const runs = await gc.listFormulaRuns({
+      scopeKind: 'city',
+      scopeRef: gc.cityName,
+    });
+    const rigNames = new Set<string>();
+    const scopes = new Map<string, RunFeedScope>();
+    for (const run of runs.items) {
+      // Filter by type so a future supervisor that broadens the feed
+      // (e.g. `'session'` or `'wisp'` items) can't accidentally inject
+      // unrelated rigs into the per-rig listBeads fan-out. The
+      // shared JSDoc on GcFormulaRun.type already promises 'formula';
+      // this enforces it at the consumer edge.
+      if (run.type !== 'formula') continue;
+      const storeRef = run.root_store_ref ?? null;
+      const rig = scopeRefFromStoreRef(storeRef);
+      if (rig !== null && scopeKindFromStoreRef(storeRef) === 'rig') {
+        rigNames.add(rig);
+      }
+      const rootId = run.root_bead_id ?? run.workflow_id ?? null;
+      const scopeKind = parseRunScopeKind(run.scope_kind);
+      // Gate on SCOPE_REF_RE so a malformed supervisor scope_ref can't be
+      // propagated into a lane that the routes layer would reject when the
+      // user clicks the deep-link. Validation here matches the inbound gate
+      // at backend/src/routes/workflows.ts; SSOT regex lives in shared.
+      if (
+        rootId !== null &&
+        scopeKind !== null &&
+        run.scope_ref.length > 0 &&
+        SCOPE_REF_RE.test(run.scope_ref)
+      ) {
+        scopes.set(rootId, {
+          scopeKind,
+          scopeRef: run.scope_ref,
+          rootStoreRef: storeRef ?? `${scopeKind}:${run.scope_ref}`,
+        });
+      }
+    }
+    return { rigNames: [...rigNames], scopes };
+  } catch (err) {
+    logWarn(
+      LOG_COMPONENT.snapshot,
+      `feed-based rig discovery failed: ${errorMessage(err)}; falling back to listBeads-only discovery`,
+    );
+    return { rigNames: [], scopes: new Map() };
+  }
+}
+
+/**
+ * Merge rig sets from listBeads (city-stored bead provenance) and
+ * /formulas/feed (cross-rig formula-run discovery). UNION (not
+ * intersection or fallback) is correct because the two sources answer
+ * different questions: listBeads finds rigs whose city beads reference
+ * them via gc.root_store_ref; the feed finds rigs hosting active formula
+ * runs regardless of where their beads live. Neither subsumes the other.
+ */
+function unionRigNames(a: readonly string[], b: readonly string[]): string[] {
+  const all = new Set<string>();
+  for (const name of a) all.add(name);
+  for (const name of b) all.add(name);
+  return [...all];
 }
 
 function runRigNames(beads: readonly GcBead[]): string[] {

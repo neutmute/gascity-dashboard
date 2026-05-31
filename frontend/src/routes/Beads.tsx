@@ -14,7 +14,7 @@ import { useCachedData } from '../hooks/useCachedData';
 import { useGcEventRefresh } from '../hooks/useGcEvents';
 import { useListFilters, type FilterChip } from '../hooks/useListFilters';
 import { beadProject } from '../hooks/projectOf';
-import { formatDateTime } from '../lib/format';
+import { formatDate } from '../lib/format';
 
 const BEAD_CHIPS: ReadonlyArray<FilterChip<GcBead>> = [
   { id: 'open', label: 'open', match: (b) => b.status === 'open' },
@@ -27,7 +27,6 @@ const BEAD_SEARCH_FIELDS = (b: GcBead): ReadonlyArray<string | undefined> => [
   b.id,
   b.title,
   b.assignee,
-  b.owner,
   ...(b.labels ?? []),
 ];
 
@@ -176,12 +175,14 @@ export function BeadsPage() {
       className: 'w-32',
     },
     {
-      key: 'updated',
-      label: 'Updated',
+      // 6bv7 F16: OpenAPI Bead has no updated_at; the column reflects the
+      // only timestamp the supervisor actually emits — created_at.
+      key: 'created',
+      label: 'Created',
       sortable: true,
-      sortValue: (r) => r.updated_at ?? r.created_at,
+      sortValue: (r) => r.created_at,
       render: (r) => (
-        <span className="text-fg-muted tnum">{formatBeadTimestamp(r.updated_at ?? r.created_at)}</span>
+        <span className="text-fg-muted tnum">{formatDate(r.created_at)}</span>
       ),
       className: 'w-28',
     },
@@ -414,8 +415,4 @@ function buildSynopsis(filtered: ReadonlyArray<GcBead>, totalShown: number, labe
   let s = parts.join(', ') + '.';
   if (totalShown > filtered.length) s += ` Showing ${filtered.length} of ${totalShown}.`;
   return s;
-}
-
-function formatBeadTimestamp(timestamp: string | undefined): string {
-  return timestamp ? formatDateTime(timestamp) : '·';
 }

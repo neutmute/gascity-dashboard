@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntityLinkView } from 'gas-city-dashboard-shared';
 import { RelatedEntities, isStale } from './RelatedEntities';
+import { assertExactlyOneMark } from '../test/assertions/oneMarkRule';
 
 afterEach(() => cleanup());
 
@@ -72,10 +73,11 @@ describe('RelatedEntities (R5/R6/RK3)', () => {
     });
     const { container } = renderRelated(v);
     fireEvent.click(screen.getByRole('button', { name: /show detail/i }));
-    const accents = container.querySelectorAll('.text-accent');
-    expect(accents.length).toBeLessThanOrEqual(1);
-    // The summary line carries the one maroon.
-    expect(accents.length).toBe(1);
+    // One Mark Rule (DESIGN.md): three unresolved links cross the
+    // threshold → exactly one aggregate maroon. The exact-1 claim is
+    // load-bearing — a broken aggregation that paints zero maroon must
+    // not pass silently.
+    assertExactlyOneMark(container);
   });
 
   it('clicking a resolved bead row invokes the open handler', () => {

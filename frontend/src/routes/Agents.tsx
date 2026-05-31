@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   GC_EVENT_PREFIX,
   effectiveContextPct,
-  type GcSession,
-  type GcSessionState,
+  type GcAgent,
 } from 'gas-city-dashboard-shared';
 import { api } from '../api/client';
 import { Button } from '../components/Button';
@@ -13,7 +12,7 @@ import { GroupedTable } from '../components/GroupedTable';
 import { ListSearchBar } from '../components/ListSearchBar';
 import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
-import { LiveSessionPeek, isSessionStreamable } from '../components/LiveSessionPeek';
+import { LiveSessionPeek, isAgentStreamable } from '../components/LiveSessionPeek';
 import { SortToggle } from '../components/SortToggle';
 import { SseIndicator } from '../components/SseIndicator';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
@@ -25,20 +24,29 @@ import { formatRelative } from '../hooks/time';
 import { useVisibleInterval } from '../hooks/useVisibleInterval';
 import {
   ORCHESTRATION_PROJECT,
-  isPerRigDispatcher,
-  sessionProject,
+  agentProject,
+  isPerRigDispatcherAgent,
 } from '../hooks/projectOf';
-import { sessionSlug } from '../hooks/sessionSlug';
+import { agentSlug } from '../hooks/sessionSlug';
+
+// gascity-dashboard-ay6: the Agents view consumes the supervisor's
+// first-class /v0/city/{name}/agents roster (via /api/agents). The
+// previous implementation derived agents from /api/sessions, which
+// undercounted any agent that wasn't currently running a session
+// (orphan / configured-but-asleep agents simply didn't appear).
+//
+// The cityStatus snapshot collector continues to aggregate over sessions
+// for now — sessionsByProvider migration is sd4's territory.
 
 const PINNED_PROJECTS = [ORCHESTRATION_PROJECT];
 const NON_COLLAPSIBLE_PROJECTS = new Set([ORCHESTRATION_PROJECT]);
 
-// Activity = the most recent timestamp on the session, used both for
-// the rig-group sort and as the column sort value. Returns undefined
-// when neither field is parseable so the hook can sink such rigs to
-// the bottom in activity-sort mode rather than ranking them at epoch 0.
-function sessionActivity(s: GcSession): number | undefined {
-  const raw = s.last_active ?? s.created_at;
+// Activity ordering uses the agent's bound session's last_activity. Agents
+// with no session (orphans) return undefined so the list-filter sink sends
+// them to the bottom under activity-sort rather than ranking them at the
+// epoch.
+function agentActivity(a: GcAgent): number | undefined {
+  const raw = a.session?.last_activity;
   if (!raw) return undefined;
   const t = Date.parse(raw);
   return Number.isFinite(t) ? t : undefined;
@@ -49,91 +57,131 @@ const SORT_OPTIONS: ReadonlyArray<{ id: SortMode; label: string }> = [
   { id: 'alpha', label: 'alphabetical' },
 ];
 
-// Session state chips collapse the gc supervisor's many states into
-// buckets the operator actually filters by. Every named GcSessionState
-// must map to at least one chip — otherwise sessions in that state
-// vanish silently when any chip is active (see gascity-dashboard-9yb).
-// Detached gets its own chip because it is semantically distinct: the
-// session may still be running, just disconnected from tmux, so
-// bucketing it under idle or stopped would misrepresent its state.
-// Exported so tests can assert full state coverage.
-export const SESSION_CHIPS: ReadonlyArray<FilterChip<GcSession>> = [
+// Agent state chips collapse the gc supervisor's many states into buckets
+// the operator actually filters by. Every state an agent can carry must
+// match at least one chip — otherwise agents in that state vanish silently
+// when any chip is active (parallels gascity-dashboard-9yb's invariant for
+// sessions). Exported so tests can assert full state coverage.
+// Non-suspended chips all gate on `!a.suspended` so the chip filter
+// matches `stateBucket`'s priority order — `stateBucket` returns
+// 'suspended' before checking state, so a suspended-asleep agent is
+// counted in the suspended bucket only. Without the guard, the idle
+// chip would also surface suspended-asleep agents and the operator's
+// "what's idle?" filter would be over-broad. Same reasoning applies
+// to running/detached/stopped (a suspended agent that also reads as
+// running/detached/stopped via raw state should still only count as
+// suspended).
+export const AGENT_CHIPS: ReadonlyArray<FilterChip<GcAgent>> = [
   {
     id: 'running',
     label: 'running',
-    match: (s) => s.state === 'active' || s.state === 'running' || s.running === true,
+    match: (a) =>
+      !a.suspended &&
+      (a.state === 'active' || a.state === 'running' || a.running === true),
   },
   {
     id: 'idle',
     label: 'idle',
-    match: (s) => s.state === 'asleep' || s.state === 'idle' || s.state === 'creating',
+    match: (a) =>
+      !a.suspended &&
+      (a.state === 'asleep' || a.state === 'idle' || a.state === 'creating'),
   },
   {
     id: 'detached',
     label: 'detached',
-    match: (s) => s.state === 'detached',
+    match: (a) => !a.suspended && a.state === 'detached',
   },
   {
     id: 'stopped',
     label: 'stopped',
-    match: (s) =>
-      s.state === 'failed' || s.state === 'closed' || s.state === 'errored' || s.state === 'stuck',
+    match: (a) =>
+      !a.suspended &&
+      (a.state === 'failed' ||
+        a.state === 'closed' ||
+        a.state === 'errored' ||
+        a.state === 'stuck'),
+  },
+  {
+    id: 'suspended',
+    label: 'suspended',
+    // The agent roster surfaces suspended agents that the session list
+    // never did — a distinct chip lets the operator slice by them
+    // without conflating with stopped/idle.
+    match: (a) => a.suspended === true,
   },
 ];
 
-const SESSION_SEARCH_FIELDS = (s: GcSession): ReadonlyArray<string | undefined> => [
-  s.id,
-  s.alias,
-  s.title,
-  s.template,
-  s.pool,
-  s.rig,
-  s.provider,
-  s.model,
+const AGENT_SEARCH_FIELDS = (a: GcAgent): ReadonlyArray<string | undefined> => [
+  a.name,
+  a.display_name,
+  a.pool,
+  a.rig,
+  a.provider,
+  a.model,
 ];
 
 export function AgentsPage() {
   const { data, loading, error, refresh } = useCachedData(
-    'sessions',
-    () => api.listSessions(),
+    'agents',
+    () => api.listAgents(),
   );
-  const rows = useMemo(() => data?.items ?? [], [data]);
+  // The supervisor's AgentResponse.session (SessionInfo) carries only
+  // `name`/`attached`/`last_activity` — NOT the session id. Peek needs
+  // the session id (gc-XXX format) per SESSION_ID_RE on the backend.
+  // Fetch the sessions list in parallel so we can map agent.session.name
+  // -> session.id at peek time.
+  const sessionsCache = useCachedData('sessions', () => api.listSessions());
+  const rows = useMemo<GcAgent[]>(() => data?.items ?? [], [data]);
+  const sessionsById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of sessionsCache.data?.items ?? []) {
+      if (s.session_name) map.set(s.session_name, s.id);
+    }
+    return map;
+  }, [sessionsCache.data]);
   const [now, setNow] = useState(() => Date.now());
 
-  const [peekId, setPeekId] = useState<string | null>(null);
-  // Derive the peeked session from the live rows by id rather than from a
-  // click-time snapshot, so its streamable state stays current as the
-  // session list refreshes while the modal is open.
-  const peekSession = useMemo(
-    () => (peekId === null ? null : rows.find((s) => s.id === peekId) ?? null),
-    [rows, peekId],
+  // Peek key is the agent alias (`name`); modal resolves the live session
+  // by mapping agent.session.name -> session.id via the sessions cache.
+  const [peekAlias, setPeekAlias] = useState<string | null>(null);
+  const peekAgent = useMemo(
+    () => (peekAlias === null ? null : rows.find((a) => a.name === peekAlias) ?? null),
+    [rows, peekAlias],
   );
+  const peekSessionId = useMemo(() => {
+    const sessionName = peekAgent?.session?.name;
+    if (!sessionName) return null;
+    return sessionsById.get(sessionName) ?? null;
+  }, [peekAgent, sessionsById]);
 
   useVisibleInterval(() => setNow(Date.now()), 15_000);
 
-  const sseState = useGcEventRefresh([GC_EVENT_PREFIX.session], () => void refresh());
+  const sseState = useGcEventRefresh([GC_EVENT_PREFIX.session, 'agent.'], () => void refresh());
 
-  const synopsis = useMemo(() => buildSynopsis(rows), [rows]);
+  const synopsis = useMemo(() => buildAgentSynopsis(rows), [rows]);
 
-  const filters = useListFilters<GcSession>({
+  const filters = useListFilters<GcAgent>({
     viewKey: 'agents',
     rows,
-    projectOf: sessionProject,
-    searchOf: SESSION_SEARCH_FIELDS,
-    chips: SESSION_CHIPS,
+    projectOf: agentProject,
+    searchOf: AGENT_SEARCH_FIELDS,
+    chips: AGENT_CHIPS,
     defaultCollapsed: true,
-    activityOf: sessionActivity,
+    activityOf: agentActivity,
     defaultSortMode: 'activity',
     pinnedProjects: PINNED_PROJECTS,
     nonCollapsibleProjects: NON_COLLAPSIBLE_PROJECTS,
   });
 
-  const columns = useMemo<ReadonlyArray<TableColumn<GcSession>>>(() => [
+  const columns = useMemo<ReadonlyArray<TableColumn<GcAgent>>>(() => [
     {
-      key: 'alias',
+      key: 'name',
       label: 'Agent',
       sortable: true,
-      sortValue: (r) => r.alias ?? r.title ?? r.id,
+      // Sort by alias (the identity), not the display_name. Two agents
+      // with the same provider label ("Claude (Account 5)") would
+      // otherwise collide; alias is unique.
+      sortValue: (r) => r.name,
       render: (r) => {
         // Per-rig dispatchers (alias '<rig>/control-dispatcher') live
         // inside their rig group but perform an orchestration role.
@@ -141,22 +189,43 @@ export function AgentsPage() {
         // without lifting them out of their rig (cross-rig
         // orchestration is handled separately by the Orchestration
         // pinned group).
-        const dispatcher = isPerRigDispatcher(r);
-        const label = r.alias ?? r.title ?? r.id;
+        const dispatcher = isPerRigDispatcherAgent(r);
+        // Primary label is the alias (`name`) — that's the identity the
+        // operator dispatches with (`gc sling <alias> ...`) and the only
+        // field guaranteed unique. display_name is the provider's
+        // human-readable label (e.g. "Claude (Account 5)") and is
+        // useful as secondary context but not as a primary identifier.
+        const secondary = r.display_name && r.display_name !== r.name
+          ? r.display_name
+          : (r.provider ?? r.model ?? '');
+        // ay6.2: orphan agents (no bound session) still render a link
+        // to /agents/<slug>, but AgentDetail will resolve nothing and
+        // show "no session matches" — a confusing dead-end if the
+        // operator clicks expecting a drilldown. A distinct title
+        // tooltip and a muted color pre-empt the surprise without
+        // disabling the link (the configured-but-not-running detail
+        // page is sd4's scope). Dispatchers keep their italic cue.
+        const orphan = !r.session;
+        const linkTitle = orphan
+          ? `${r.name} — configured but not running; detail will show no live session`
+          : `Open drilldown for ${r.name}`;
+        const linkColor = orphan ? 'text-fg-muted' : 'text-fg';
         return (
           <div className="min-w-0">
             <Link
-              to={`/agents/${encodeURIComponent(sessionSlug(r))}`}
-              className={`block text-fg truncate hover:text-accent focus-mark ${
+              to={`/agents/${encodeURIComponent(agentSlug(r))}`}
+              className={`block ${linkColor} truncate hover:text-accent focus-mark ${
                 dispatcher ? 'font-normal italic' : 'font-medium'
               }`}
-              title={`Open drilldown for ${label}`}
+              title={linkTitle}
             >
-              {label}
+              {r.name}
             </Link>
-            <div className="text-label uppercase tracking-wider text-fg-faint mt-1 truncate">
-              {r.template ?? r.provider ?? ''}
-            </div>
+            {secondary && (
+              <div className="text-label uppercase tracking-wider text-fg-faint mt-1 truncate">
+                {secondary}
+              </div>
+            )}
           </div>
         );
       },
@@ -170,8 +239,8 @@ export function AgentsPage() {
         <StatusBadge
           tone={stateTone(r.state)}
           label={r.state}
-          {...(r.attached ? { trailing: 'att' } : {})}
-          {...(r.reason ? { title: `reason: ${r.reason}` } : {})}
+          {...(r.session?.attached ? { trailing: 'att' } : {})}
+          {...(r.unavailable_reason ? { title: `unavailable: ${r.unavailable_reason}` } : {})}
         />
       ),
       className: 'w-32',
@@ -194,7 +263,7 @@ export function AgentsPage() {
       sortable: true,
       // Sort by the value we DISPLAY, not the raw gc value — otherwise
       // mayor (raw 89%, effective 18%) would sort above a true-90%
-      // session that looks calmer.
+      // agent that looks calmer.
       sortValue: (r) => effectiveContextPct(r) ?? -1,
       align: 'right',
       render: (r) => {
@@ -229,22 +298,33 @@ export function AgentsPage() {
       key: 'last_active',
       label: 'Last active',
       sortable: true,
-      sortValue: (r) => r.last_active ?? r.created_at,
-      render: (r) => (
-        <span className="tnum text-fg-muted">
-          {formatRelative(r.last_active ?? r.created_at, now)}
-        </span>
-      ),
+      sortValue: (r) => r.session?.last_activity ?? '',
+      render: (r) => {
+        const ts = r.session?.last_activity;
+        if (!ts) return <span className="text-fg-faint tnum">·</span>;
+        return (
+          <span className="tnum text-fg-muted">
+            {formatRelative(ts, now)}
+          </span>
+        );
+      },
       className: 'w-32',
     },
     {
       key: 'actions',
       label: '',
-      render: (r) => (
-        <Button size="sm" tone="quiet" onClick={() => setPeekId(r.id)}>
-          Peek
-        </Button>
-      ),
+      render: (r) => {
+        // Orphan agents (no bound session) have nothing to peek into.
+        // Hide the button so the operator doesn't get a 404 from the
+        // transcript fetch. Use visibility:hidden equivalent (render the
+        // empty cell) rather than collapsing the column width.
+        if (!r.session) return null;
+        return (
+          <Button size="sm" tone="quiet" onClick={() => setPeekAlias(r.name)}>
+            Peek
+          </Button>
+        );
+      },
       align: 'right',
       className: 'w-20',
     },
@@ -263,6 +343,20 @@ export function AgentsPage() {
                 {error}
               </span>
             )}
+            {/* Mirror cityStatus's `rigsPartial` surfacing (gascity-dashboard-19w.1).
+                When the supervisor's agent aggregation partially failed
+                (one or more agent backends unreachable), the items list
+                is incomplete — call that out so the operator doesn't
+                read an empty/short roster as "everything's gone." */}
+            {data?.partial === true && (
+              <span
+                className="normal-case text-body text-warn"
+                role="status"
+                title={data.partial_errors?.join('\n') ?? 'one or more agent backends unavailable'}
+              >
+                roster partial
+              </span>
+            )}
             <Button size="sm" onClick={() => void refresh()} disabled={loading}>
               {loading ? 'Refreshing' : 'Refresh'}
             </Button>
@@ -274,14 +368,14 @@ export function AgentsPage() {
         <ListSearchBar
           value={filters.search}
           onChange={filters.setSearch}
-          placeholder="Search agents by alias, rig, pool, template"
+          placeholder="Search agents by alias, rig, pool, provider"
           matchCount={filters.totalMatches}
           totalCount={rows.length}
           ariaLabel="Search agents"
         />
         <div className="flex flex-wrap items-baseline gap-x-8 gap-y-3">
           <FilterChips
-            chips={SESSION_CHIPS}
+            chips={AGENT_CHIPS}
             activeIds={filters.activeChipIds}
             onToggle={filters.toggleChip}
             legend="State"
@@ -298,35 +392,41 @@ export function AgentsPage() {
       <GroupedTable
         groups={filters.groups}
         columns={columns}
-        rowKey={(r) => r.id}
+        rowKey={(r) => r.name}
         onToggleProject={filters.toggleProject}
         emptyMessage={
           filters.search.length > 0 || filters.activeChipIds.size > 0
-            ? 'No sessions match the current search or filter.'
-            : 'No sessions running.'
+            ? 'No agents match the current search or filter.'
+            : 'No agents configured.'
         }
-        perProjectEmpty="No sessions in this project."
+        perProjectEmpty="No agents in this project."
         initialSort={{ key: 'last_active', dir: 'desc' }}
       />
 
       <Modal
-        open={peekId !== null}
-        onClose={() => setPeekId(null)}
-        title={
-          peekSession
-            ? `${peekSession.alias ?? peekSession.title ?? peekSession.id}`
-            : (peekId ?? 'Transcript')
-        }
+        open={peekAlias !== null}
+        onClose={() => setPeekAlias(null)}
+        title={peekAgent?.name ?? peekAlias ?? 'Transcript'}
         caption={
-          isSessionStreamable(peekSession)
-            ? "Live transcript from the supervisor's session stream."
-            : "Snapshot from the supervisor's transcript API."
+          // SessionInfo on the supervisor side carries only name/attached/
+          // last_activity — no session id — so we resolve agent.session.name
+          // -> session.id through the sessions cache. If sessions hasn't
+          // loaded yet (or the agent's session is missing from it), surface
+          // that explicitly instead of letting peek hit the route with an
+          // invalid id and degrade to "invalid session id".
+          peekAgent && peekAgent.session && !peekSessionId
+            ? sessionsCache.loading
+              ? 'Resolving session…'
+              : `No live session matches "${peekAgent.session.name}".`
+            : isAgentStreamable(peekAgent)
+              ? "Live transcript from the supervisor's session stream."
+              : "Snapshot from the supervisor's transcript API."
         }
         widthClass="max-w-5xl"
       >
         <LiveSessionPeek
-          sessionId={peekId}
-          stream={isSessionStreamable(peekSession)}
+          sessionId={peekSessionId}
+          stream={isAgentStreamable(peekAgent)}
           showBadge
           showCaption
         />
@@ -335,12 +435,11 @@ export function AgentsPage() {
   );
 }
 
-// Single source of truth for state → tone mapping. Aligned with how
-// the gc supervisor emits session states. Unknown states default to
-// neutral so we don't lie about them. 'detached' is explicit (not a
-// silent default) so reviewers see the intent — it's paused-alive,
-// same palette as idle/asleep but tracked distinctly in the synopsis.
-export function stateTone(state: GcSessionState): StatusTone {
+// Single source of truth for state → tone mapping. Aligned with how the
+// gc supervisor emits agent (and session) states. Unknown states default
+// to neutral so we don't lie about them. 'detached' is explicit (not a
+// silent default) so reviewers see the intent.
+export function stateTone(state: string): StatusTone {
   switch (state) {
     case 'active':
     case 'running':
@@ -364,12 +463,19 @@ export function stateTone(state: GcSessionState): StatusTone {
 }
 
 // Buckets a raw state into the synopsis category. Distinct from
-// stateTone because 'detached' and 'idle' share a tone (neutral) but
-// the header text breaks them out — surfaced in gascity-dashboard-x4k.
-export type SynopsisBucket = 'active' | 'idle' | 'detached' | 'rate-limited' | 'stuck';
+// stateTone because 'detached' and 'idle' share a tone (neutral) but the
+// header text breaks them out.
+export type SynopsisBucket =
+  | 'active'
+  | 'idle'
+  | 'detached'
+  | 'rate-limited'
+  | 'stuck'
+  | 'suspended';
 
-function stateBucket(state: GcSessionState): SynopsisBucket {
-  switch (state) {
+function stateBucket(agent: GcAgent): SynopsisBucket {
+  if (agent.suspended) return 'suspended';
+  switch (agent.state) {
     case 'active':
     case 'running':
       return 'active';
@@ -389,11 +495,11 @@ function stateBucket(state: GcSessionState): SynopsisBucket {
   }
 }
 
-export function buildSynopsis(rows: ReadonlyArray<GcSession>): string {
-  if (rows.length === 0) return 'No sessions running.';
+export function buildAgentSynopsis(rows: ReadonlyArray<GcAgent>): string {
+  if (rows.length === 0) return 'No agents configured.';
   const counts = new Map<SynopsisBucket, number>();
   for (const r of rows) {
-    const b = stateBucket(r.state);
+    const b = stateBucket(r);
     counts.set(b, (counts.get(b) ?? 0) + 1);
   }
   const parts: string[] = [];
@@ -402,10 +508,12 @@ export function buildSynopsis(rows: ReadonlyArray<GcSession>): string {
   const detached = counts.get('detached') ?? 0;
   const rateLimited = counts.get('rate-limited') ?? 0;
   const stuck = counts.get('stuck') ?? 0;
+  const suspended = counts.get('suspended') ?? 0;
   if (active > 0) parts.push(`${active} active`);
   if (idle > 0) parts.push(`${idle} idle`);
   if (detached > 0) parts.push(`${detached} detached`);
   if (rateLimited > 0) parts.push(`${rateLimited} rate-limited`);
   if (stuck > 0) parts.push(`${stuck} stuck`);
+  if (suspended > 0) parts.push(`${suspended} suspended`);
   return parts.join(', ') + '.';
 }

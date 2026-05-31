@@ -85,8 +85,6 @@ export interface CreateSnapshotServiceOptions {
    */
   sessions?: SourceCache<GcSessionList> | undefined;
   config: DashboardRuntimeConfig;
-  /** Optional path to city.toml directory (for cityStatus collector). */
-  cityPath?: string | undefined;
   now?: (() => Date) | undefined;
   uptimeSeconds?: (() => number) | undefined;
 }
@@ -239,7 +237,7 @@ function buildSessionsCache(options: CreateSnapshotServiceOptions): SourceCache<
       ttlMs: SESSIONS_CACHE_TTL_MS,
       now,
       sanitizeErrorMessage: null,
-      load: () => ({ items: [] }),
+      load: () => ({ items: [], total: 0 }),
     });
   }
 
@@ -263,13 +261,12 @@ function buildDefaultCaches(
       'createSnapshotService requires either { gc } (to build default caches) or { caches } (pre-built).',
     );
   }
-  const { gc, config, cityPath, now } = options;
+  const { gc, config, now } = options;
   const useFixture = config.useFixtures;
 
   return {
     city: createCityStatusSourceCache({
       gc,
-      cityPath: cityPath ?? '',
       now,
       useFixture,
       loadFixture: useFixture ? fixtureSourceLoader('city') : undefined,
@@ -408,8 +405,11 @@ function activeRunCount(runs: RunSummary): number {
   if (runs.census.status === 'available') {
     return runs.census.data.totalInFlight;
   }
-
-  return runs.lanes.filter((lane) => lane.phase !== 'complete').length;
+  // yh5i: `runs.lanes` is the active subset (the collector splits
+  // complete lanes into `historicalLanes` before serving). The previous
+  // explicit phase filter was a defense against an older invariant
+  // where `lanes` held every phase; it's a no-op now.
+  return runs.lanes.length;
 }
 
 function cityMetric(

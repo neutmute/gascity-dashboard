@@ -41,6 +41,7 @@ const SAMPLE_CITY: CityStatusSummary = {
 
 const SAMPLE_RunS: RunSummary = {
   totalActive: 0,
+  totalHistorical: 0,
   runCounts: {
     total: 0,
     visible: 0,
@@ -51,6 +52,7 @@ const SAMPLE_RunS: RunSummary = {
     other: 0,
   },
   lanes: [],
+  historicalLanes: [],
   // gascity-dashboard-3ax: the snapshot read path now runs the health engine,
   // which always derives a census. With no lanes it is the all-zero census,
   // so the served runs.data carries this exact value.
@@ -155,8 +157,9 @@ function buildApp(caches: SourceCacheMap): express.Express {
     config: {
       cityName: 'test-city',
       cityRoot: '/tmp/test-city',
-      githubRepo: 'test-org/test-repo',
       useFixtures: false,
+      enabledModules: null,
+      defaultView: null,
     },
   });
   const app = express();

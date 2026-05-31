@@ -1,4 +1,5 @@
 import type {
+  GcAgentList,
   GcSession,
   GcBead,
   GcMailItem,
@@ -117,6 +118,14 @@ export const api = {
   listSessions(): Promise<{ items: GcSession[] }> {
     return request('GET', '/api/sessions');
   },
+  // gascity-dashboard-ay6: canonical agent roster. Supersedes the
+  // session-derived Agents-view path which under-counted configured
+  // agents that were not currently running. Return type IS the shared
+  // GcAgentList SSOT — `partial` + `partial_errors` are part of that
+  // type and will widen automatically if upstream grows the envelope.
+  listAgents(): Promise<GcAgentList> {
+    return request('GET', '/api/agents');
+  },
   peekSession(id: string): Promise<TranscriptResult> {
     return request('POST', `/api/sessions/${encodeURIComponent(id)}/peek`, {});
   },
@@ -142,7 +151,7 @@ export const api = {
   nudgeBead(id: string): Promise<{ ok: true; stdout: string }> {
     return request('POST', `/api/beads/${encodeURIComponent(id)}/nudge`, {});
   },
-  listMail(box: 'inbox' | 'sent' | 'all', alias: string): Promise<{ items: GcMailItem[]; total?: number }> {
+  listMail(box: 'inbox' | 'sent' | 'all', alias: string): Promise<{ items: GcMailItem[]; total: number }> {
     const qs = new URLSearchParams({ box, alias }).toString();
     return request('GET', `/api/mail?${qs}`);
   },
@@ -169,7 +178,7 @@ export const api = {
     return request('GET', '/api/builds');
   },
   systemHealth(): Promise<SystemHealth> {
-    return request('GET', '/api/system/system');
+    return request('GET', '/api/health/system');
   },
   doltTrend(): Promise<DoltNomsTrend> {
     return request('GET', '/api/dolt-noms/trend');

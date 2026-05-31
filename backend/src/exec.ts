@@ -34,9 +34,30 @@ export type { ExecResult };
 // content reaches the browser; ansi_up on the client only ever sees
 // safe SGR sequences (or none).
 const CSI_NON_SGR_RE = /\x1b\[[?0-9;]*[a-ln-zA-LN-Z]/g; // CSI but excluding 'm' (SGR)
-const OSC_RE = /\x1b\][^\x07]*\x07/g;
-// Control chars except \t, \n; everything < 0x20 except those two.
-const CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f]/g;
+// OSC sequences end in one of two terminators:
+//   - BEL (\x07) — the xterm-legacy form.
+//   - ST as ESC \\ (\x1b\\) — the spec form most modern terminals emit
+//     (iTerm2, foot, wezterm). The single-byte C1 ST (\x9c) is handled
+//     by CTRL_RE which strips the whole \x80-\x9f range.
+// gascity-dashboard-3sxy.1: prior to this we only matched the BEL form,
+// so ST-terminated OSC payloads survived the strip — CTRL_RE removed
+// the leading and trailing ESC bytes but the bracketed payload was
+// left as visible plain text. The char-class excludes \x1b so an
+// unterminated OSC cannot consume a following ANSI escape.
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+// C0 (everything < 0x20 except \t \n) + DEL + C1 (\x80-\x9f).
+// gascity-dashboard-3sxy: C1 controls are legacy 8-bit control codes
+// some terminals still interpret as alternative escape introducers;
+// they are the same threat class as C0 and must be stripped together.
+const CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+// gascity-dashboard-cnu + Phase-4 M1: ALL 12 Unicode Bidi / RTL
+// codepoints from CVE-2021-42574 (Boucher/Anderson 2021):
+// U+061C (ALM), U+200E (LRM), U+200F (RLM), U+202A-202E (LRE/RLE/PDF/
+// LRO/RLO), U+2066-2069 (LRI/RLI/FSI/PDI). The 3 marks (ALM/LRM/RLM)
+// are zero-width directional hints rather than embedding/overrides,
+// but they're in the same Unicode bidi-control category — the CVE
+// listed all 12 and a comprehensive strip costs nothing.
+const BIDI_RE = /[؜‎‏‪-‮⁦-⁩]/g;
 const MAX_CLOSE_REASON_LENGTH = 1024;
 const GIT_LOG_RECENT_LIMIT = '200';
 const BEAD_ACTION_TIMEOUT_MS = 15_000;
@@ -58,7 +79,8 @@ function sanitiseTerminalOutput(raw: string): string {
   return raw
     .replace(OSC_RE, '')
     .replace(CSI_NON_SGR_RE, '')
-    .replace(CTRL_RE, '');
+    .replace(CTRL_RE, '')
+    .replace(BIDI_RE, '');
 }
 
 // ── Public exec wrappers — each one is a named, whitelisted call. ──────

@@ -38,6 +38,16 @@ export function logError(component: LogComponent, message: string): void {
   writeLog('error', component, message);
 }
 
+/**
+ * Replace CR/LF in a string with spaces so an externally-sourced value
+ * (e.g. supervisor-reported `partial_errors[]`) cannot inject a forged
+ * `[component] message` line into operator logs. Apply at the interpolation
+ * site whenever the value originates outside the dashboard process.
+ */
+export function sanitizeForLog(value: string): string {
+  return value.replace(/[\r\n]/g, ' ');
+}
+
 function writeLog(level: LogLevel, component: LogComponent, message: string): void {
   const line = `[${component}] ${message}`;
   if (level === 'error') {
@@ -48,5 +58,5 @@ function writeLog(level: LogLevel, component: LogComponent, message: string): vo
     console.warn(line);
     return;
   }
-  console.log(line);
+  console.info(line);
 }

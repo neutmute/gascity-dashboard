@@ -47,12 +47,13 @@ describe('run execution path resolution', () => {
     );
   });
 
-  test('uses the configured rig root when supervisor data has no execution path', () => {
-    assert.deepEqual(
-      resolveRunExecutionPath(runBead({}), [], ' /configured/rig '),
-      { kind: 'known', path: '/configured/rig' },
-    );
-  });
+  // gascity-dashboard-a9yi: the "uses the configured rig root" case was
+  // removed. app.ts no longer injects config.cityPath as the rig-root
+  // fallback (it is the non-git city config dir, not a per-run worktree),
+  // so a run with no execution-path metadata must resolve to
+  // {unavailable, missing_cwd_and_rig_root} — the honest "Execution folder
+  // is unknown" — rather than a known-but-useless path. The function still
+  // honors an explicit rig_root in supervisor metadata (test above).
 
   test('returns an explicit unavailable state when no execution path is available', () => {
     assert.deepEqual(resolveRunExecutionPath(runBead({}), [], '  '), {

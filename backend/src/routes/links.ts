@@ -6,7 +6,7 @@ import { buildLinkView } from '../links/build-link-view.js';
 import { ResolutionRollup } from '../links/instrumentation.js';
 import { parseRef } from '../links/node-ref.js';
 import { buildRelationIndex } from '../links/relation-index.js';
-import { LOG_COMPONENT, errorMessage, logWarn } from '../logging.js';
+import { LOG_COMPONENT, errorMessage, logWarn, sanitizeForLog } from '../logging.js';
 import { routeUpstreamError, writeRouteError } from '../route-errors.js';
 
 // GET /api/links/:ref — bead-ID cross-entity linked view (gascity-dashboard-j4x).
@@ -97,7 +97,11 @@ interface Sources {
 async function fetchSources(gc: GcClient): Promise<Sources> {
   const supervisorFetchedAt = new Date().toISOString();
   const beadList = await gc.listBeads(undefined, { limit: LINKS_FETCH_LIMIT });
-  const beads = Array.isArray(beadList.items) ? beadList.items : [];
+  // izgc F3: decoder guarantees items is an array (collapses null → []),
+  // and a separate gc-client test asserts non-array shapes still reject —
+  // the prior Array.isArray defensive guard was already dead and the only
+  // safe escape was the cast escape hatch the decoder now closes.
+  const beads = beadList.items;
   let partial = false;
   if (typeof beadList.total === 'number' && beadList.total > beads.length) {
     logWarn(
@@ -106,13 +110,43 @@ async function fetchSources(gc: GcClient): Promise<Sources> {
     );
     partial = true;
   }
+  // izgc F3: supervisor-reported wire-partial on a 200 response (degraded
+  // bead store) — propagate the degradation signal so the operator sees
+  // it even when the local truncation/session-fetch checks above wouldn't
+  // have triggered. Per CLAUDE.md "Don't Swallow Errors".
+  if (beadList.partial === true || (beadList.partial_errors?.length ?? 0) > 0) {
+    logWarn(
+      LOG_COMPONENT.links,
+      `supervisor reported partial bead list (${formatPartialErrors(beadList.partial_errors)}); serving partial`,
+    );
+    partial = true;
+  }
   let sessions: GcSession[] = [];
   try {
     const sessionList = await gc.listSessions();
-    sessions = Array.isArray(sessionList.items) ? sessionList.items : [];
+    sessions = sessionList.items;
+    if (sessionList.partial === true || (sessionList.partial_errors?.length ?? 0) > 0) {
+      logWarn(
+        LOG_COMPONENT.links,
+        `supervisor reported partial session list (${formatPartialErrors(sessionList.partial_errors)}); serving partial`,
+      );
+      partial = true;
+    }
   } catch (err) {
     logWarn(LOG_COMPONENT.links, `session fetch failed; serving partial: ${errorMessage(err)}`);
     partial = true;
   }
   return { beads, sessions, partial, supervisorFetchedAt };
+}
+
+/**
+ * Format supervisor-reported `partial_errors` for an operator log line.
+ * Each entry is newline-sanitized before joining so a hostile or
+ * misbehaving supervisor can't inject forged `[component] message`
+ * lines into the operator's terminal. Returns `'no detail'` when the
+ * array is absent or empty.
+ */
+function formatPartialErrors(errors: readonly string[] | undefined): string {
+  if (!errors || errors.length === 0) return 'no detail';
+  return errors.map(sanitizeForLog).join(', ');
 }

@@ -52,8 +52,10 @@ export interface GcRunSnapshot {
 
 export interface GcFormulaPreviewNode {
   id: string;
-  title?: string;
-  kind?: string;
+  /** Required per OpenAPI FormulaPreviewNodeResponse. */
+  title: string;
+  /** Required per OpenAPI FormulaPreviewNodeResponse. */
+  kind: string;
 }
 
 export interface GcFormulaPreviewEdge {
