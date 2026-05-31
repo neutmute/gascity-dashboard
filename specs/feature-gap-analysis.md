@@ -91,7 +91,7 @@ That backend choice is better for security, auditability, and vocabulary
 control, but it means broad supervisor operations must be reintroduced
 intentionally instead of inherited automatically.
 
-Highest-impact gaps:
+Highest-impact validated gaps before product disposition:
 
 1. Generic bead creation/editing/reopen/assignment/sling.
 2. Convoys.
@@ -100,24 +100,39 @@ Highest-impact gaps:
 5. Supervisor/city event timeline.
 6. Mail reply/archive/read-state/all-traffic workflows.
 
+After product review, this dashboard is **not** pursuing broad legacy parity.
+The standalone product remains a calm, single-operator, route-based dashboard.
+The accepted direction is:
+
+- Home shows a city-wide abnormal-state summary at a glance.
+- Nav tabs show themed attention/watch indicators when their domain has items
+  needing operator attention.
+- Focused tabs remain full domain workspaces: attention highlights and
+  prioritizes items, but does not hide non-attention data or restrict actions.
+- The client owns the attention model through domain-specific contributors.
+  The backend serves raw, typed, normalized data and write endpoints; it should
+  not encode product judgment about what "needs attention."
+- Current standalone scope includes city switching, but not legacy supervisor
+  fleet/no-city mode or `gc dashboard` command integration.
+
 ## Validated Gap Matrix
 
-| # | Category | Built-in `gc dashboard` capability | Standalone state | Impact | User impact |
-|---|---|---|---|---|---|
-| 1 | Launch and packaging | `gc dashboard` and `gc dashboard serve` start the static dashboard, auto-discover the supervisor API when possible, and accept `--api`/`--port`. | Standalone runs as npm workspaces with separate backend/frontend dev servers; it is not yet wired into `gc dashboard` launch or packaging. | **High** | Operators cannot use the existing CLI muscle memory or replacement path yet. |
-| 2 | Supervisor/fleet scope | No-city mode shows supervisor-level state, managed city tabs, and disabled city-scoped actions until a city is selected. | Bare `/` redirects to the first known city; most app routes are city-scoped under `/city/:cityName`. | **High** | Multi-city operators lose the fleet overview and safe "no city selected" landing state. |
-| 3 | Stopped-city guardrails | City tabs and panels distinguish stopped/error cities and disable city-scoped forms with explicit copy. | No equivalent stopped-city command-center state; failed city data appears through route errors/partial state instead. | **Medium** | Operators get less immediate guidance when a city is stopped or unavailable. |
-| 4 | Convoys | Convoy list, detail, creation, progress breakdown, issue add/remove/check/close paths, and convoy status chips. | No convoy route, API client, backend route, or UI module. Existing references are incidental filtering/generated supervisor types, not user functionality. | **High** | Operators cannot coordinate grouped work from the dashboard. |
-| 5 | Bead lifecycle | Create bead, close/reopen, set priority/labels, assign/reassign/unassign, sling to target, dependency/ready/blocked views, rig filters. | Bead list/detail/board/dependency graph exist, plus claim/close/nudge. No generic create, reopen, priority/label edit, generic assign, or generic sling. | **Critical** | The dashboard cannot manage the main work queue end to end. Operators must fall back to CLI/API for routine work changes. |
-| 6 | Escalations, assigned work, queues | Admin panels show escalations, assigned work, and queues with acknowledge/resolve/reassign/unassign/clear controls. | No escalation, assigned-work admin, or queue administration views. | **High** | Urgent or stuck work cannot be triaged from the dashboard. |
-| 7 | Rig/service operations | Services panel restarts services; Rigs panel suspend/resume/restart rigs and exposes status/action controls. | No service or rig admin routes/panels/endpoints in the standalone dashboard. | **High** | Operators cannot perform common operational recovery actions from the UI. |
-| 8 | Agent/crew operations | Crew, rigged-agent, and pooled-agent panels separate agent populations, show pending interaction signals, provide attach-command copy, and expose log/transcript drawers with older-history loading. | Agents list/detail and session/run inspection exist, but the crew/rigged/pooled operational split, attach-copy affordance, pending-question surface, and back-paging drawer ergonomics are not present. | **Medium** | Agent supervision is more observational and less optimized for intervention. |
-| 9 | Mail operations | Inbox plus all-traffic mode, open-thread/message flows, reply, archive, mark read/unread, compose, and recipient options. | Mail list/thread reading and send-new-mail exist. No all-traffic view, reply endpoint/control, archive, mark read, or mark unread. | **High** | Mail triage cannot be completed from the dashboard; operators can read and compose but not process threads. |
-| 10 | Event activity timeline | Supervisor and city event timeline backed by `/v0/events` and `/v0/city/{city}/events`, with filtering and live refresh. | `/api/events/stream` exists as an SSE proxy for refreshing views, and `/activity` shows git/deploy activity, but there is no human-facing supervisor/city event console. | **High** | Operators lose the canonical chronological audit/debug view for city and supervisor events. |
-| 11 | Command palette and raw inspectors | Keyboard/open-button command palette can open common forms and inspect raw supervisor/city JSON. | No command palette or raw inspector surface. | **Medium** | Power users lose fast navigation, action discovery, and live debugging shortcuts. |
-| 12 | One-screen command center | Built-in dashboard keeps status, crew, activity, mail, beads, admin panels, convoys, and output in one dense page. | Standalone uses route-specific pages: Home, Agents, Beads, Runs, Mail, Activity, Health, Maintainer. | **Medium** | Cross-domain monitoring requires navigation instead of a single command-center scan. Some of this may be intentional product direction. |
-| 13 | Status banner alerts | Status panel aggregates running agents, assigned/open work, convoy count, unread mail, stuck agents, stale assignments, high-priority issues, dead sessions, and partial API failure. | Standalone has health/concern surfaces but not the same always-visible operational alert banner. | **Medium** | Operators lose at-a-glance warnings for several urgent conditions. |
-| 14 | Live connection/write feedback/output | Built-in UI exposes connection state, write toasts, and an output panel for command/action results. | Live indicators exist only in specific SSE-backed views; no global connection badge, global action toast system, or output panel equivalent. | **Low/Medium** | Reduced confidence after writes and fewer immediate diagnostics. |
+| # | Category | Built-in `gc dashboard` capability | Standalone state | Impact | Disposition | User impact / decision |
+|---|---|---|---|---|---|---|
+| 1 | Launch and packaging | `gc dashboard` and `gc dashboard serve` start the static dashboard, auto-discover the supervisor API when possible, and accept `--api`/`--port`. | Standalone runs as npm workspaces with separate backend/frontend dev servers; it is not yet wired into `gc dashboard` launch or packaging. | **High** | **Defer** | Real replacement gap, but explicitly out of scope until fold-back into `gascity`. Do not spend standalone product work here now. |
+| 2 | Supervisor/fleet scope | No-city mode shows supervisor-level state, managed city tabs, and disabled city-scoped actions until a city is selected. | Bare `/` redirects to the first known city; most app routes are city-scoped under `/city/:cityName`. | **High** | **Do not fill now** | Current city switcher is sufficient for standalone use. Do not recreate legacy fleet/no-city command center. |
+| 3 | Stopped-city guardrails | City tabs and panels distinguish stopped/error cities and disable city-scoped forms with explicit copy. | No equivalent stopped-city command-center state; failed city data appears through route errors/partial state instead. | **Medium** | **Defer** | Improve only if the current city switcher makes stopped cities confusing in practice. |
+| 4 | Convoys | Convoy list, detail, creation, progress breakdown, issue add/remove/check/close paths, and convoy status chips. | No convoy route, API client, backend route, or UI module. Existing references are incidental filtering/generated supervisor types, not user functionality. | **High** | **Defer / trim** | Convoys conceptually belong under Beads, but the accepted Beads scope is status/kanban plus create-and-sling. No dedicated convoy workspace now. |
+| 5 | Bead lifecycle | Create bead, close/reopen, set priority/labels, assign/reassign/unassign, sling to target, dependency/ready/blocked views, rig filters. | Bead list/detail/board/dependency graph exist, plus claim/close/nudge. No generic create, reopen, priority/label edit, generic assign, or generic sling. | **Critical** | **Fill trimmed scope** | Keep status/kanban and existing useful actions. Add create-and-sling a new bead to a specific rig + agent. Do not fill full generic bead admin now. |
+| 6 | Escalations, assigned work, queues | Admin panels show escalations, assigned work, and queues with acknowledge/resolve/reassign/unassign/clear controls. | No escalation, assigned-work admin, or queue administration views. | **High** | **Do not fill now** | These are legacy admin-console surfaces, not current standalone domains. Revisit only if they become meaningful Beads attention/status concepts. |
+| 7 | Rig/service operations | Services panel restarts services; Rigs panel suspend/resume/restart rigs and exposes status/action controls. | No service or rig admin routes/panels/endpoints in the standalone dashboard. | **High** | **Do not fill now** | Rigs/services should appear as filters/context and health facts, not mutation panels. No restart/suspend/resume controls for now. |
+| 8 | Agent/crew operations | Crew, rigged-agent, and pooled-agent panels separate agent populations, show pending interaction signals, provide attach-command copy, and expose log/transcript drawers with older-history loading. | Agents list/detail and session/run inspection exist, but the crew/rigged/pooled operational split, attach-copy affordance, pending-question surface, and back-paging drawer ergonomics are not present. | **Medium** | **Fill partial** | Add pending-question / needs-you visibility and attach/respond affordances. Use grouping/filtering inside Agents, not separate legacy panels. |
+| 9 | Mail operations | Inbox plus all-traffic mode, open-thread/message flows, reply, archive, mark read/unread, compose, and recipient options. | Mail list/thread reading and send-new-mail exist. No all-traffic view, reply endpoint/control, archive, mark read, or mark unread. | **High** | **Fill** | Mail is a first-class workspace. Show time-windowed full data, highlight attention items, and allow reply/archive/read-state actions wherever valid. |
+| 10 | Event activity timeline | Supervisor and city event timeline backed by `/v0/events` and `/v0/city/{city}/events`, with filtering and live refresh. | `/api/events/stream` exists as an SSE proxy for refreshing views, and `/activity` shows git/deploy activity, but there is no human-facing supervisor/city event console. | **High** | **Fill** | Activity should include both current project/dev activity and supervisor/city events as separate modes. Events also feed attention/watch items. |
+| 11 | Command palette and raw inspectors | Keyboard/open-button command palette can open common forms and inspect raw supervisor/city JSON. | No command palette or raw inspector surface. | **Medium** | **Defer** | Useful power-user affordance, but not a domain and not required for attention/focused workspaces now. |
+| 12 | One-screen command center | Built-in dashboard keeps status, crew, activity, mail, beads, admin panels, convoys, and output in one dense page. | Standalone uses route-specific pages: Home, Agents, Beads, Runs, Mail, Activity, Health, Maintainer. | **Medium** | **Do not fill** | Explicitly rejected by product/design direction. Home summarizes attention; focused routes own domain work. |
+| 13 | Status banner alerts | Status panel aggregates running agents, assigned/open work, convoy count, unread mail, stuck agents, stale assignments, high-priority issues, dead sessions, and partial API failure. | Standalone has health/concern surfaces but not the same always-visible operational alert banner. | **Medium** | **Fill as attention model** | Replace legacy banner parity with a client-owned city-wide attention model, Home summary, and nav severity indicators. |
+| 14 | Live connection/write feedback/output | Built-in UI exposes connection state, write toasts, and an output panel for command/action results. | Live indicators exist only in specific SSE-backed views; no global connection badge, global action toast system, or output panel equivalent. | **Low/Medium** | **Fill local feedback only** | Keep feedback near the action. Do not add legacy output panel or global action log unless write volume later proves the need. |
 
 ## Category Detail
 
@@ -297,6 +312,104 @@ for operators who rely on one-screen cross-domain monitoring.
 User impact: slower scanning across agents, beads, mail, events, and admin
 state.
 
+## Product Disposition by Domain
+
+The decisions below are the current standalone-dashboard product direction.
+They convert the validated legacy gaps into fill / do-not-fill / defer choices.
+
+### Home and navigation
+
+**Fill:** create a client-owned city-wide attention model. Home should notify
+the operator of abnormal city state at a glance. Nav tabs should show themed
+attention/watch indicators when that tab has items requiring attention.
+
+The attention model belongs in the frontend. Domain contributors gather raw,
+typed data into a coherent client-side structure, similar to how the Formula
+Run client model drives run UI. The backend should keep serving raw,
+normalized, typed DTOs and write endpoints; it should not own product judgment
+such as "this needs operator attention."
+
+Attention controls prominence, not visibility. Focused tabs still show their
+full relevant datasets with reasonable time-window defaults; attention items
+are highlighted, sorted, grouped, or badged but not used as the only visible
+data.
+
+### Agents
+
+**Fill partial:** surface pending questions / needs-you state, abnormal agent
+states, and attach/respond affordances. At minimum the UI should make the
+terminal attach path copyable and obvious. In-dashboard respond can be added if
+the supervisor endpoint is safe and fits the backend security model.
+
+**Do not fill as legacy parity:** separate crew, rigged, and pooled command
+center panels. Use grouping and filters inside Agents instead.
+
+### Beads
+
+**Fill trimmed scope:** keep Beads as a status/kanban workspace and add a
+targeted create-and-sling flow for creating a new bead and routing it to a
+specific rig + agent.
+
+**Do not fill now:** full bead administration parity: generic reopen,
+priority/label editing, broad assign/unassign, escalation management, queue
+management, and assigned-work admin.
+
+**Defer:** dedicated convoy workspace. Convoys conceptually belong under Beads,
+but they are not part of the currently accepted Beads scope unless status/kanban
+usage proves they are needed.
+
+### Runs
+
+**Fill:** make stalled, failing, blocked, or waiting-on-operator Formula Runs
+participate in the shared attention model and remain highlighted in Runs.
+
+**Do not fill now:** run/order execution controls such as enable/disable,
+retry, cancel, or other supervisor mutations.
+
+### Mail
+
+**Fill:** Mail should be a complete mail workspace. Add all-traffic/history,
+reply, archive, and mark read/unread while preserving the current viewing-as
+model. Attention highlights outstanding mail, but reading/replying/archiving
+should work for any eligible visible message, not only attention items.
+
+### Activity
+
+**Fill:** keep current git/deploy activity and add supervisor/city event
+timeline as a separate Activity mode. Event-derived abnormal states such as
+failed deploys, request failures, crashed sessions, stranded sessions, or
+failed orders should contribute attention/watch items when actionable.
+
+### Health
+
+**Fill observationally:** highlight degraded supervisor, host, service, and rig
+health where raw facts exist.
+
+**Do not fill now:** service restart and rig suspend/resume/restart controls.
+Rigs/services are filters/context and health facts, not standalone mutation
+domains.
+
+### Maintainer
+
+**Fill if enabled:** Maintainer contributes attention/watch items when the
+module is enabled. If disabled, it should contribute no route, nav item, worker,
+or attention data.
+
+### Cross-cutting UI affordances
+
+**Defer:** command palette and raw JSON inspectors.
+
+**Do not fill now:** global output panel or global action log. Provide local
+write feedback near the action first.
+
+### Standalone boundaries
+
+**Defer:** `gc dashboard` launch/packaging integration until fold-back into
+the main `gascity` repo.
+
+**Do not fill now:** legacy supervisor/fleet/no-city mode. The existing city
+switcher is enough for current standalone scope.
+
 ## Non-Gaps and Standalone-Only Strengths
 
 The standalone dashboard is not simply a subset. These areas are not legacy
@@ -318,23 +431,24 @@ feature gaps and should be preserved when adding parity:
 
 ## Recommended Sequencing
 
-1. **P0: restore core operator control.** Add generic bead create/reopen/edit,
-   assignment/unassignment, generic sling, rig/service controls,
-   escalation/assigned/queue operations, and convoys.
-2. **P0: restore supervisor observability and launch parity.** Add
-   supervisor/no-city fleet mode, stopped-city guardrails, event timeline, and
-   `gc dashboard` launch/packaging integration.
-3. **P1: complete mail triage.** Add reply, archive, read/unread, and
-   all-traffic views while preserving impersonation.
-4. **P1: improve intervention ergonomics.** Add pending-question signals,
-   attach-command copy, crew/rigged/pooled grouping, and transcript back-paging
-   where it fits the standalone design.
-5. **P2: restore power-user affordances.** Add a command palette, raw resource
-   inspectors, global connection state, write toasts, and an output/action log.
-6. **Product decision needed: one-screen density.** Decide whether the
-   standalone dashboard should reproduce the legacy command-center layout or
-   provide equivalent situational awareness through an ambient route-based
-   design.
+Detailed execution plan: [`plans/feature-gap-remediation-plan.md`](plans/feature-gap-remediation-plan.md).
+
+1. **Build the client attention foundation.** Add a typed attention contributor
+   registry, city-wide composer, Home summary, and nav severity indicators.
+2. **Wire domain attention.** Runs, Agents, Beads, Mail, Activity, Health, and
+   enabled Maintainer modules should contribute attention/watch items from raw
+   typed data.
+3. **Complete Mail as a workspace.** Add all-traffic/history, reply, archive,
+   read/unread, and attention highlighting.
+4. **Add Activity event history.** Surface supervisor/city event history beside
+   current git/deploy activity and route actionable event classes into
+   attention.
+5. **Improve Agents intervention ergonomics.** Add pending-question visibility
+   and attach/respond affordances.
+6. **Trim Beads work to accepted scope.** Keep status/kanban, existing useful
+   actions, rig filters, and create-and-sling to a rig + agent.
+7. **Tighten Health and local write feedback.** Highlight degraded states and
+   keep action results local to the triggering control.
 
 ## Validation Notes and Corrections
 
