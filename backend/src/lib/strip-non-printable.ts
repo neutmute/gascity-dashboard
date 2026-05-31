@@ -13,7 +13,11 @@
 // control bytes. Stripping all control bytes up front keeps the invariant
 // uniform regardless of which control class the input carries.
 
-const OSC_RE = /\x1b\][^\x07]*\x07/g;
+// OSC terminates with BEL (\x07, xterm-legacy) or ST as ESC \\ (\x1b\\, the
+// spec form modern terminals emit). The single-byte C1 ST (\x9c) is covered by
+// CTRL_RE. The char-class excludes \x1b so an unterminated OSC cannot consume a
+// following ANSI escape. Kept exactly in step with exec.ts::sanitiseTerminalOutput.
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const CSI_RE = /\x1b\[[?0-9;]*[a-zA-Z]/g;
 // All control chars: C0 (<0x20, incl. \t/\n/\r), DEL (\x7f), and C1
 // (\x80-\x9f). C1 are legacy 8-bit controls some terminals still interpret as

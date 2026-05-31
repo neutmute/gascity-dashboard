@@ -276,20 +276,37 @@ describe('POST /api/beads/:id/{claim,close,nudge}', { concurrency: false }, () =
   test('close reason: control/escape/bidi chars stripped before exec AND audit', async () => {
     h = await buildApp();
     // A reason carrying every stripped class: a CSI escape (\x1b[7m reverse),
-    // an OSC title set (\x1b]0;title BEL), an embedded newline + a forged JSON
-    // fragment that would inject a fake row into events.jsonl, a C1 control
-    // (\x9b), DEL (\x7f), and a bidi RLO override (‮). After sanitisation NONE
-    // of these byte classes may survive into either sink.
+    // a BEL-terminated OSC title set (\x1b]0;title \x07), an ST-terminated OSC
+    // (\x1b]0;title \x1b\\ — the spec form modern terminals emit), an embedded
+    // newline + a forged JSON fragment that would inject a fake row into
+    // events.jsonl, a C1 control (\x9b), DEL (\x7f), and ALL 12
+    // CVE-2021-42574 bidi/RTL control codepoints. After sanitisation NONE of
+    // these byte classes may survive into either sink.
+    //
+    // gascity-dashboard-vibg: the bidi codepoints are exercised exhaustively
+    // (not just the RLO U+202E) so a future narrowing of BIDI_RE regresses
+    // here, and the ST-OSC form is included to lock in the BEL/ST parity with
+    // exec.ts::sanitiseTerminalOutput.
+    const BIDI_CHARS = [
+      0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066,
+      0x2067, 0x2068, 0x2069,
+    ]
+      .map((cp) => String.fromCodePoint(cp))
+      .join('');
     const dirty =
-      'safe\x1b[7m\x1b]0;evil\x07inject\n"type":"fake"\x9b\x7f‮rtl';
+      'safe\x1b[7m\x1b]0;belevil\x07\x1b]0;stevil\x1b\\inject\n"type":"fake"\x9b\x7f' +
+      BIDI_CHARS +
+      'rtl';
     const res = await postJson(`${h.url}/api/beads/td-wisp-abc123/close`, {
       reason: dirty,
     });
     assert.equal(res.status, 200);
 
     // Property assertions (the contract): no control byte (C0/C1/DEL), no ESC,
-    // and no bidi override may reach EITHER the exec arg or the audit row.
-    const CONTROL_OR_BIDI = /[\x00-\x1f\x7f-\x9f‮]/;
+    // and none of the 12 bidi control codepoints may reach EITHER the exec arg
+    // or the audit row.
+    const CONTROL_OR_BIDI =
+      /[\x00-\x1f\x7f-\x9f؜‎‏‪-‮⁦-⁩]/;
 
     assert.equal(h.calls.length, 1);
     const sentReason = h.calls[0]!.reason!;
