@@ -104,7 +104,14 @@ export function createDashboardApp(config: AdminConfig): DashboardApp {
     res.json(dashboardConfig);
   });
   writeRouter.use('/sessions', sessionsRouter(gc));
-  writeRouter.use('/workflows', workflowsRouter(gc, { rigRoot: config.cityPath }));
+  // gascity-dashboard-a9yi: do NOT pass config.cityPath as the execution-path
+  // fallback. cityPath is the city config/runtime dir, never a per-run worktree,
+  // and it is not a git repo — injecting it made resolveWorkflowExecutionPath
+  // return a known-but-useless path, so every run with no worktree metadata
+  // rendered the misleading "Execution folder is not a git work tree." With no
+  // fallback the run resolves to {unavailable, missing_cwd_and_rig_root} and the
+  // diff panel honestly says "Execution folder is unknown for this run."
+  writeRouter.use('/workflows', workflowsRouter(gc));
   writeRouter.use('/links', linksRouter(gc));
   writeRouter.use('/agents', agentsRouter({ cityPath: config.cityPath, gc }));
   writeRouter.use('/beads', beadsRouter(gc, config.cityPath));
