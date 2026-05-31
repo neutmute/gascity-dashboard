@@ -2,7 +2,7 @@
 
 An editorial-typographic ambient dashboard for a single [Gas City](https://github.com/gastownhall/gascity) (`gc`) operator. Six views — Agents, Beads, Runs, Mail, Activity, Health — laid out as a thoughtfully-set page rather than a wall of cards. The room is calm by default; the only thing that earns the eye is something going wrong.
 
-The shape is forked from [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) (MIT, Charlie Coutts) which solved the orchestrator-tab problem first. The visual register is a full redesign, driven through [impeccable](https://impeccable.style/) with the design context captured in [`PRODUCT.md`](PRODUCT.md) and [`DESIGN.md`](DESIGN.md).
+The shape is forked from [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) (MIT, Charlie Coutts) which solved the orchestrator-tab problem first. The visual register is a full redesign, driven through [impeccable](https://impeccable.style/) with the design context captured in [`specs/requirements/product.md`](specs/requirements/product.md) and [`DESIGN.md`](DESIGN.md).
 
 ## Repository status
 
@@ -36,7 +36,7 @@ npm run dev:frontend
 
 Then open `http://127.0.0.1:5174`. The dashboard expects a Gas City `gc supervisor` reachable on `http://127.0.0.1:8372` by default.
 
-**Supported device surface.** Per [`PRODUCT.md`](PRODUCT.md), this dashboard targets a MacBook (typically via SSH port forward) and the host console. The layout stays stable from roughly 720px wide upward. Phone-size viewports are explicitly out of scope: there is no hamburger nav, no mobile drawer, no touch affordances. If the operator finds herself reaching for the phone, the answer is to open the laptop.
+**Supported device surface.** Per [`specs/requirements/product.md`](specs/requirements/product.md), this dashboard targets a MacBook (typically via SSH port forward) and the host console. The layout stays stable from roughly 720px wide upward. Phone-size viewports are explicitly out of scope: there is no hamburger nav, no mobile drawer, no touch affordances. If the operator finds herself reaching for the phone, the answer is to open the laptop.
 
 ## Production build
 
@@ -105,8 +105,7 @@ Full threat model: [`specs/architecture/security.md`](specs/architecture/securit
 ```
 gas-city-dashboard/
 ├── package.json              # npm workspace root
-├── PRODUCT.md                # strategic design context (who, why, anti-references)
-├── DESIGN.md                 # visual design system (Stitch-spec format)
+├── DESIGN.md                 # binding visual contract (agent-facing design standard)
 ├── shared/                   # wire-shape types
 ├── backend/                  # Express + TS
 │   └── src/{server.ts,middleware,routes,gc-client.ts,exec.ts,audit.ts}
@@ -121,7 +120,7 @@ gas-city-dashboard/
 
 This codebase carries two committed design artifacts at the root:
 
-- [`PRODUCT.md`](PRODUCT.md) — Who the operator is, what she's doing when she looks at this, the brand personality (_"considered, literary, instrumental"_), and the strategic anti-references (Datadog density, Linear dark-slate, hero-metric cards).
+- [`specs/requirements/product.md`](specs/requirements/product.md) — Who the operator is, what she's doing when she looks at this, the brand personality (_"considered, literary, instrumental"_), and the strategic anti-references (Datadog density, Linear dark-slate, hero-metric cards).
 - [`DESIGN.md`](DESIGN.md) — Creative North Star _"The Reading Room"_, the warm-paper + warm-graphite + maroon palette, the single-typeface Inter system, the `Flat Page Rule`, `One Mark Rule`, `One Voice Rule`, `Greyscale Test`, and the explicit Do's and Don'ts.
 
 Subsequent design changes should be measured against these documents. Re-run `/impeccable document` after substantial visual changes to regenerate `DESIGN.md` from the actual implementation.

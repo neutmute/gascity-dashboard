@@ -29,7 +29,7 @@ Legacy source reviewed:
 
 Standalone source reviewed:
 
-- `README.md`, `PRODUCT.md`, `DESIGN.md`
+- `README.md`, `specs/requirements/product.md`, `DESIGN.md`
 - `frontend/src/App.tsx`
 - `frontend/src/CityBootstrap.tsx`
 - `frontend/src/api/client.ts`

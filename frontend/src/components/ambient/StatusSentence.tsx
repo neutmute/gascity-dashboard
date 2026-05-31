@@ -12,7 +12,7 @@ import type { RunLane } from 'gas-city-dashboard-shared';
 // R6 (PRD §12, Phase 1 architect M3): NO negative-reassurance clauses.
 // Absence of a concern clause IS the calm signal. When there's no
 // failing lane to report, the sentence collapses to empty — no
-// "nothing is blocked" fallback prose. Per PRODUCT.md the calm state
+// "nothing is blocked" fallback prose. Per specs/requirements/product.md the calm state
 // has no Line 2; the census already carried the trust anchor.
 
 export interface StatusSentenceProps {

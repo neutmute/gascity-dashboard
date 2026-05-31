@@ -151,7 +151,7 @@ If your change touches the impersonation model, expect close review.
 
 ## Where to look next
 
-- [`PRODUCT.md`](PRODUCT.md): strategic context. Who the operator is, what
+- [`specs/requirements/product.md`](specs/requirements/product.md): strategic context. Who the operator is, what
   the dashboard is and is not, the brand and anti-references.
 - [`DESIGN.md`](DESIGN.md): the visual system. Palette, type, the Named
   Rules, Do's and Don'ts.

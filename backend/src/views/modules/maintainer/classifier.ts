@@ -17,7 +17,7 @@ import type { TriageItem, TriageTier } from 'gas-city-dashboard-shared';
 //   status/<needs-review|in-progress|needs-triage|needs-info|...>
 //   area/<beads|...>
 //
-// Mapping (per PRODUCT.md: bugs > breaking > stability):
+// Mapping (per specs/requirements/product.md: bugs > breaking > stability):
 //   kind/bug AND priority/{p0,p1}  → regression_breaking
 //   kind/bug                       → regression
 //   *                              → stability

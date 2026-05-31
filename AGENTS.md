@@ -14,8 +14,8 @@ An editorial-typographic ambient dashboard surfacing live state from a [Gas City
 ## The contracts (they outrank assumed conventions)
 
 - **`README.md`** — repo status, quick start, supported surface, and operations overview.
-- **`PRODUCT.md`** — what's being built and for whom. Strategic decisions defer to it.
-- **`DESIGN.md`** — the binding visual contract; re-read it before any UI or UI-copy change. It defines the named rules and style absolutes and outranks habit. Don't restate it here — it would go stale against the source of truth.
+- **`specs/requirements/product.md`** — what's being built and for whom (users, purpose, brand personality, anti-references). Strategic decisions defer to it.
+- **`DESIGN.md`** — the binding visual contract, kept at the repo root as the agent-facing design standard (alongside `README.md` and `AGENTS.md`), not under `specs/`. Re-read it before any UI or UI-copy change. It defines the named rules and style absolutes and outranks habit. Don't restate it here — it would go stale against the source of truth. All specs that touch UI, copy, or visual structure should defer to it rather than redefine visual rules.
 - **`specs/architecture/{overview,security,extending}.md`** — how things are wired, the security/impersonation model, and how to add a route or endpoint. Deeper specs live alongside in `specs/architecture/` (e.g. `formula-run-detail-type.md`, `module-author-checklist.md`, `maintainer-coupling-audit.md`); product requirements live in `specs/requirements/` (e.g. `modular-dashboard-prd.md`); implementation plans in `specs/plans/`.
 
 ## Remote, CI, and the merge gate

@@ -1,6 +1,6 @@
 # Architecture — gas-city-dashboard
 
-> Engineer's-eye summary of decisions that affect implementation. For the visual register, read [`PRODUCT.md`](../../PRODUCT.md) and [`DESIGN.md`](../../DESIGN.md) at the repo root. The architectural shape (the security model, the shared DTO contract, the systemd separation from `gc-supervisor`) is inherited from the [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) fork and remains intentional here.
+> Engineer's-eye summary of decisions that affect implementation. For the product framing, read the [product spec](../requirements/product.md); for the visual register, read [`DESIGN.md`](../../DESIGN.md), the binding visual contract at the repo root. The architectural shape (the security model, the shared DTO contract, the systemd separation from `gc-supervisor`) is inherited from the [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) fork and remains intentional here.
 
 ## Stack: Node + TypeScript end-to-end
 

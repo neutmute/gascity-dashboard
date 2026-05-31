@@ -4,6 +4,8 @@
 
 PR-A of the modular-dashboard PRD (`specs/requirements/modular-dashboard-prd.md`) introduced a registry-driven path for new views; legacy explicit-wiring still exists for routes that haven't been ported yet. Prefer the registry path for anything new.
 
+A new view's UI and copy must follow `DESIGN.md`, the binding visual contract (see also the [module author checklist](module-author-checklist.md)).
+
 ### Registry-driven (preferred — PR-A onwards, /health is the worked example)
 
 1. Add the route component under `frontend/src/routes/MyView.tsx`.
