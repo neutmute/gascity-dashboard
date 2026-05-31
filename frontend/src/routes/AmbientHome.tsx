@@ -198,7 +198,7 @@ export function AmbientHomePage() {
     );
   }
   if (fresh === null) {
-    // workflows source itself is in error state — the rest of the
+    // runs source itself is in error state — the rest of the
     // snapshot may be fine but we have no facts to assemble the home.
     return (
       <section>
@@ -206,9 +206,9 @@ export function AmbientHomePage() {
         <p
           className="mt-6 text-body text-accent"
           role="alert"
-          data-testid="workflows-source-error"
+          data-testid="runs-source-error"
         >
-          Workflow data is unavailable.
+          Run data is unavailable.
         </p>
       </section>
     );

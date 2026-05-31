@@ -81,8 +81,7 @@ export interface WorkerOptions {
   /**
    * Injected envelope fetcher. Defaults to the real `gh`-driven
    * fetchTriage from ./triage; tests pass a stub so runRefresh can be
-   * exercised without subprocess calls. Mirrors the execGcSling DI
-   * pattern in the sibling router.ts.
+   * exercised without subprocess calls.
    */
   fetchTriage?: (repo: string) => Promise<MaintainerTriage>;
 }

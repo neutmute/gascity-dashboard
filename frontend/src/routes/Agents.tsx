@@ -12,16 +12,17 @@ import { GroupedTable } from '../components/GroupedTable';
 import { ListSearchBar } from '../components/ListSearchBar';
 import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
+import { PartialDataNotice } from '../components/PartialDataNotice';
 import { LiveSessionPeek, isAgentStreamable } from '../components/LiveSessionPeek';
 import { SortToggle } from '../components/SortToggle';
 import { SseIndicator } from '../components/SseIndicator';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
 import { type TableColumn } from '../components/Table';
+import { useNow } from '../contexts/NowContext';
 import { useCachedData } from '../hooks/useCachedData';
 import { useGcEventRefresh } from '../hooks/useGcEvents';
 import { useListFilters, type FilterChip, type SortMode } from '../hooks/useListFilters';
 import { formatRelative } from '../hooks/time';
-import { useVisibleInterval } from '../hooks/useVisibleInterval';
 import {
   ORCHESTRATION_PROJECT,
   agentProject,
@@ -139,7 +140,7 @@ export function AgentsPage() {
     }
     return map;
   }, [sessionsCache.data]);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow();
 
   // Peek key is the agent alias (`name`); modal resolves the live session
   // by mapping agent.session.name -> session.id via the sessions cache.
@@ -153,8 +154,6 @@ export function AgentsPage() {
     if (!sessionName) return null;
     return sessionsById.get(sessionName) ?? null;
   }, [peekAgent, sessionsById]);
-
-  useVisibleInterval(() => setNow(Date.now()), 15_000);
 
   const sseState = useGcEventRefresh([GC_EVENT_PREFIX.session, 'agent.'], () => void refresh());
 
@@ -343,20 +342,11 @@ export function AgentsPage() {
                 {error}
               </span>
             )}
-            {/* Mirror cityStatus's `rigsPartial` surfacing (gascity-dashboard-19w.1).
-                When the supervisor's agent aggregation partially failed
-                (one or more agent backends unreachable), the items list
-                is incomplete — call that out so the operator doesn't
-                read an empty/short roster as "everything's gone." */}
-            {data?.partial === true && (
-              <span
-                className="normal-case text-body text-warn"
-                role="status"
-                title={data.partial_errors?.join('\n') ?? 'one or more agent backends unavailable'}
-              >
-                roster partial
-              </span>
-            )}
+            <PartialDataNotice
+              show={data?.partial === true}
+              label="roster partial"
+              title={data?.partial_errors?.join('\n') ?? 'one or more agent backends unavailable'}
+            />
             <Button size="sm" onClick={() => void refresh()} disabled={loading}>
               {loading ? 'Refreshing' : 'Refresh'}
             </Button>

@@ -1,7 +1,7 @@
 import type { GcBead } from "gas-city-dashboard-shared";
 import { formatDateTime } from "../lib/format";
 import { Field } from "./Field";
-import { StatusBadge, type StatusTone } from "./StatusBadge";
+import { beadStatusTone, StatusBadge } from "./StatusBadge";
 
 // The read-only body of a single bead: kind banner, status grid, template
 // origin, labels, description. Extracted from BeadDetailModal so the Beads
@@ -98,7 +98,7 @@ export function BeadBody({ bead }: { bead: GcBead }) {
 
       <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-5">
         <Field label="Status">
-          <StatusBadge tone={statusTone(bead.status)} label={bead.status} />
+          <StatusBadge tone={beadStatusTone(bead.status)} label={bead.status} />
         </Field>
         <Field label="Type">{bead.issue_type}</Field>
         <Field label="Assignee">{bead.assignee || '·'}</Field>
@@ -177,19 +177,4 @@ export function BeadBody({ bead }: { bead: GcBead }) {
       </section>
     </div>
   );
-}
-
-function statusTone(status: string): StatusTone {
-  switch (status) {
-    case "closed":
-      return "neutral";
-    case "in_progress":
-      return "ok";
-    case "blocked":
-      return "stuck";
-    case "open":
-    case "deferred":
-    default:
-      return "warn";
-  }
 }

@@ -266,7 +266,7 @@ function NodeLink({
     dimmed ? 'text-fg-muted' : 'text-fg hover:text-accent'
   }`;
 
-  // Beads open the modal in place; sessions/workflows route; unresolved
+  // Beads open the modal in place; sessions/runs route; unresolved
   // GitHub entities surface an outbound ↗ to the sanitised url when present.
   if (node.type === 'bead' && !node.unresolved && onOpenBead) {
     return (

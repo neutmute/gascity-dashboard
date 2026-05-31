@@ -7,6 +7,9 @@ import type {
   TriageTier,
   TriageTierSection,
 } from 'gas-city-dashboard-shared';
+import { useNow } from '../../../contexts/NowContext';
+import { formatRelative } from '../../../hooks/time';
+import { CollapsibleHeader } from '../../../components/CollapsibleHeader';
 import { selectionKey } from './selectionKey';
 import { RunLink, SlungLink, TriageScore } from './TriageSignals';
 
@@ -53,35 +56,34 @@ export function TierSection({
   return (
     <section>
       <header className="mb-6 pb-2 border-b border-rule">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="w-full flex items-baseline justify-between gap-4 focus-mark"
-          aria-expanded={!collapsed}
-        >
-          <h2
-            className={
-              section.tier === 'regression_breaking'
-                ? 'text-headline font-semibold uppercase tracking-wide text-fg text-left'
-                : 'text-headline font-semibold uppercase tracking-wide text-fg-muted text-left'
-            }
-          >
-            <CollapseGlyph collapsed={collapsed} />
-            {tierLabel(section.tier)}
-          </h2>
-          <span className="flex items-baseline gap-3 text-label uppercase tracking-wider text-fg-muted tnum">
-            <span title="vetted by a triage agent · awaiting an agent assessment">
-              <span>{counts.vetted}</span> vetted <span aria-hidden>·</span>{' '}
-              <span>{counts.awaiting}</span> awaiting
-            </span>
-            <span aria-hidden>·</span>
-            <span>
-              {showFilteredOf
-                ? `${itemCount} of ${unfilteredItemCount} items`
-                : `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}
-            </span>
-          </span>
-        </button>
+        <CollapsibleHeader collapsed={collapsed} onToggle={onToggle}>
+          {({ glyph }) => (
+            <>
+              <h2
+                className={
+                  section.tier === 'regression_breaking'
+                    ? 'text-headline font-semibold uppercase tracking-wide text-fg text-left'
+                    : 'text-headline font-semibold uppercase tracking-wide text-fg-muted text-left'
+                }
+              >
+                <span className="mr-2">{glyph}</span>
+                {tierLabel(section.tier)}
+              </h2>
+              <span className="flex items-baseline gap-3 text-label uppercase tracking-wider text-fg-muted tnum">
+                <span title="vetted by a triage agent · awaiting an agent assessment">
+                  <span>{counts.vetted}</span> vetted <span aria-hidden>·</span>{' '}
+                  <span>{counts.awaiting}</span> awaiting
+                </span>
+                <span aria-hidden>·</span>
+                <span>
+                  {showFilteredOf
+                    ? `${itemCount} of ${unfilteredItemCount} items`
+                    : `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}
+                </span>
+              </span>
+            </>
+          )}
+        </CollapsibleHeader>
       </header>
 
       {collapsed ? null : section.clusters.length === 0 && section.unclustered.length === 0 ? (
@@ -117,18 +119,6 @@ export function TierSection({
   );
 }
 
-function CollapseGlyph({ collapsed }: { collapsed: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className="inline-block text-fg-faint mr-2 transition-transform duration-150 ease-out-quart"
-      style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
-    >
-      ▾
-    </span>
-  );
-}
-
 function ClusterBlock({
   cluster,
   collapsed,
@@ -156,29 +146,32 @@ function ClusterBlock({
 
   return (
     <div className="space-y-2">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
+      <CollapsibleHeader
+        collapsed={collapsed}
+        onToggle={onToggle}
         className="w-full flex items-baseline justify-between gap-4 focus-mark text-left"
       >
-        <div
-          className={
-            isTopic
-              ? 'text-label uppercase tracking-wider font-medium text-fg-muted min-w-0 truncate'
-              : 'text-title font-medium text-fg min-w-0 truncate'
-          }
-        >
-          <CollapseGlyph collapsed={collapsed} />
-          {isTopic && (
-            <span className="text-fg-faint mr-2" aria-hidden>·</span>
-          )}
-          {headerLabel}
-        </div>
-        <div className="text-body text-fg-muted tnum shrink-0">
-          {totals.join(' · ')}
-        </div>
-      </button>
+        {({ glyph }) => (
+          <>
+            <div
+              className={
+                isTopic
+                  ? 'text-label uppercase tracking-wider font-medium text-fg-muted min-w-0 truncate'
+                  : 'text-title font-medium text-fg min-w-0 truncate'
+              }
+            >
+              <span className="mr-2">{glyph}</span>
+              {isTopic && (
+                <span className="text-fg-faint mr-2" aria-hidden>·</span>
+              )}
+              {headerLabel}
+            </div>
+            <div className="text-body text-fg-muted tnum shrink-0">
+              {totals.join(' · ')}
+            </div>
+          </>
+        )}
+      </CollapsibleHeader>
       {!collapsed && (
         <RowList
           items={cluster.items}
@@ -205,20 +198,19 @@ export function SlungSection({
   return (
     <section>
       <header className="mb-6 pb-2 border-b border-rule">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="w-full flex items-baseline justify-between gap-4 focus-mark"
-          aria-expanded={!collapsed}
-        >
-          <h2 className="text-headline font-semibold uppercase tracking-wide text-fg-muted text-left">
-            <CollapseGlyph collapsed={collapsed} />
-            Slung <span aria-hidden>·</span> awaiting agent
-          </h2>
-          <span className="text-label uppercase tracking-wider text-fg-muted tnum">
-            {items.length} {items.length === 1 ? 'item' : 'items'}
-          </span>
-        </button>
+        <CollapsibleHeader collapsed={collapsed} onToggle={onToggle}>
+          {({ glyph }) => (
+            <>
+              <h2 className="text-headline font-semibold uppercase tracking-wide text-fg-muted text-left">
+                <span className="mr-2">{glyph}</span>
+                Slung <span aria-hidden>·</span> awaiting agent
+              </h2>
+              <span className="text-label uppercase tracking-wider text-fg-muted tnum">
+                {items.length} {items.length === 1 ? 'item' : 'items'}
+              </span>
+            </>
+          )}
+        </CollapsibleHeader>
       </header>
       {collapsed ? null : (
         <RowList items={items} selection={new Set<string>()} onToggleSelect={null} />
@@ -443,6 +435,7 @@ function RowMeta({
   item: TriageItem;
   extraStatus?: TriageItemStatus;
 }) {
+  const now = useNow();
   return (
     <div className="flex items-baseline gap-3 text-body text-fg-muted shrink-0 tnum">
       <a
@@ -460,7 +453,7 @@ function RowMeta({
       <span aria-hidden>·</span>
       <ContributorByline author={item.author} />
       <span aria-hidden>·</span>
-      <span>{formatAge(item.updated_at)}</span>
+      <span>{formatRelative(item.updated_at, now)}</span>
       {extraStatus && extraStatus !== 'open' && (
         <>
           <span aria-hidden>·</span>
@@ -530,13 +523,4 @@ function statusLabel(status: TriageItemStatus): string {
   if (status === 'needs_review') return 'needs review';
   if (status === 'changes_requested') return 'changes requested';
   return status;
-}
-
-function formatAge(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.round(ms / 60_000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
 }

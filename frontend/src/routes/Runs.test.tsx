@@ -10,6 +10,7 @@ import { api } from '../api/client';
 import { invalidateKey } from '../api/cache';
 import { RunsPage } from './Runs';
 import { MemoryRouter } from 'react-router-dom';
+import { NowProvider } from '../contexts/NowContext';
 
 // gascity-dashboard-bqn: regression coverage for the live-updates wiring
 // on /runs. The actual SSE / coalesce / reconnect behavior lives in
@@ -182,7 +183,9 @@ function mount(initialPath = '/runs') {
       initialEntries={[initialPath]}
       future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
     >
-      <RunsPage />
+      <NowProvider intervalMs={1_000_000}>
+        <RunsPage />
+      </NowProvider>
     </MemoryRouter>,
   );
 }
@@ -264,7 +267,7 @@ describe('RunsPage — SSE wiring (gascity-dashboard-bqn)', () => {
     };
     mockSnapshot.mockResolvedValue(envelope);
 
-    // Default view (/workflows): historical lane is hidden, empty-state
+    // Default view (/runs): historical lane is hidden, empty-state
     // trailer hints at the count.
     mount();
     await waitForMount();

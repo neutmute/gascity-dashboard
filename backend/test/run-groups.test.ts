@@ -1,6 +1,8 @@
 import type { GcRunBead } from 'gas-city-dashboard-shared';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { groupRunBeads } from '../src/runs/groups.js';
 
 describe('run bead grouping', () => {
@@ -182,7 +184,86 @@ describe('run bead grouping', () => {
       { id: 'review-scope-check', label: 'scope check', status: 'ready' },
     ]);
   });
+
+  test('group shape is independent of bead order when construct kinds collide', () => {
+    const retryFirst = groupRunBeads([
+      bead({ id: 'gc-root', title: 'Root', kind: 'run' }),
+      bead({
+        id: 'retry-control',
+        title: 'Retry control',
+        kind: 'retry',
+        logicalId: 'shared-node',
+      }),
+      bead({
+        id: 'loop-control',
+        title: 'Loop control',
+        kind: 'ralph',
+        logicalId: 'shared-node',
+      }),
+    ], 'gc-root');
+
+    const loopFirst = groupRunBeads([
+      bead({ id: 'gc-root', title: 'Root', kind: 'run' }),
+      bead({
+        id: 'loop-control',
+        title: 'Loop control',
+        kind: 'ralph',
+        logicalId: 'shared-node',
+      }),
+      bead({
+        id: 'retry-control',
+        title: 'Retry control',
+        kind: 'retry',
+        logicalId: 'shared-node',
+      }),
+    ], 'gc-root');
+
+    const retryFirstShape = groupShape(retryFirst.groups);
+    const loopFirstShape = groupShape(loopFirst.groups);
+
+    assert.deepEqual(retryFirstShape, loopFirstShape);
+    assert.deepEqual(retryFirstShape.find((group) => group.semanticNodeId === 'shared-node'), {
+      semanticNodeId: 'shared-node',
+      title: 'Loop control',
+      kind: 'check-loop',
+      constructKind: 'check-loop',
+      scopeRef: undefined,
+      loopControlNodeId: undefined,
+      beadIds: ['loop-control', 'retry-control'],
+    });
+  });
+
+  test('groups builder does not use delete-based optional mutation', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../src/runs/groups.ts', import.meta.url)),
+      'utf8',
+    );
+
+    assert.equal(source.includes('delete group['), false);
+  });
 });
+
+function groupShape(groups: ReturnType<typeof groupRunBeads>['groups']): Array<{
+  semanticNodeId: string;
+  title: string;
+  kind: string;
+  constructKind: string;
+  scopeRef: string | undefined;
+  loopControlNodeId: string | undefined;
+  beadIds: string[];
+}> {
+  return groups
+    .map((group) => ({
+      semanticNodeId: group.semanticNodeId,
+      title: group.title,
+      kind: group.kind,
+      constructKind: group.constructKind,
+      scopeRef: group.scopeRef,
+      loopControlNodeId: group.loopControlNodeId,
+      beadIds: group.beads.map((candidate) => candidate.id).sort(),
+    }))
+    .sort((left, right) => left.semanticNodeId.localeCompare(right.semanticNodeId));
+}
 
 function bead(opts: {
   id: string;

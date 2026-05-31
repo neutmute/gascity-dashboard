@@ -88,10 +88,11 @@ generator the upstream `gc dashboard` uses). `GcClient` owns only what the
 generator cannot: single-flight URL-keyed coalescing, topology-safe error
 redaction, timeouts/output caps, the `workflow_id → run_id` vocabulary
 normalization, and sane method names. Strict generated Zod response validation
-is the target boundary, but remains gated on upstream OpenAPI accuracy; until
-then, the legacy hand-Zod module is only a temporary dashboard DTO adapter over
-generated hey-api response types. The migration and its phasing live in
-`specs/plans/code-quality-remediation-plan.md` (WS-10).
+is enabled through the generated SDK. The legacy hand-Zod module is now only a
+temporary dashboard DTO adapter/normalizer over generated hey-api response
+types and should not remain a second schema authority. The migration and its
+remaining cleanup live in `specs/plans/code-quality-remediation-plan.md`
+(WS-10).
 
 ## Design Goals
 
@@ -494,12 +495,23 @@ Visible refresh hooks have distinct responsibilities:
 
 ## Current Implementation Against The Ideal
 
-This list reflects the implementation after the WS-10 G-1b transport cutover.
+This list reflects the implementation after the WS-10 generated transport and
+generated-Zod response-validation cutover.
 The old `openapi-fetch` client, old generated `openapi-typescript` artifacts,
 custom schema-map extractor, and AJV component overlay have been deleted.
-Strict generated Zod response validation remains a G-3 target after upstream
-OpenAPI accuracy fixes; the remaining hand-Zod module is a temporary dashboard
-DTO adapter over generated hey-api response types.
+Generated hey-api output is committed backend-only, has no `@ts-nocheck`, and
+is covered by the normal backend TypeScript and ESLint gates. The generated
+tree imports the `@hey-api/client-fetch` runtime package (`bundle: false`)
+instead of copying or patching hey-api runtime files into `src/generated`.
+`backend/src/types/hey-api-client-fetch-compat.d.ts` is a type-only shim for
+the current npm runtime package/generator version skew. It is included as an
+ambient declaration only, with no `tsconfig.paths` alias, so runtime imports
+still resolve to the real npm package. It is not a supervisor API schema
+authority and should disappear when the published runtime types catch up to the
+generator.
+Strict generated Zod response validation is wired into the SDK through
+`validator: { response: 'zod' }`; the remaining hand-Zod module is a temporary
+dashboard DTO adapter/normalizer over generated hey-api response types.
 
 Implemented:
 
@@ -537,13 +549,16 @@ Implemented:
 - deterministic browser harness for the detail route
 - generated hey-api endpoint SDK, request path/query handling, and response
   types for supervisor calls
-- temporary hand-Zod dashboard DTO adapter for supervisor payloads that feed
-  run detail projection: session lists, run snapshots, formula details,
-  transcripts, and health
-- temporary hand-Zod dashboard DTO adapter for bead, bead-list, mail-list, and
-  event-list payloads, including currently-observed degraded supervisor shapes
-  that strict generated validation cannot accept until the upstream OpenAPI is
-  fixed
+- generated Zod response validators for supervisor calls before dashboard DTO
+  mapping
+- temporary hand-Zod dashboard DTO adapter/normalizer for supervisor payloads
+  that feed run detail projection: session lists, run snapshots, formula
+  details, transcripts, and health
+- temporary hand-Zod dashboard DTO adapter/normalizer for bead, bead-list,
+  mail-list, and event-list payloads; this must shrink to typed DTO mapping now
+  that generated response validation owns OpenAPI-shape rejection. The current
+  generated fetch client validates but does not replace the response with the
+  parsed/coerced Zod output, so DTO normalization still happens explicitly.
 - centralized client-error reporting for run detail load failures, diff
   failures, malformed city event payloads, and malformed selected-session
   stream events
@@ -643,11 +658,14 @@ Remaining implementation gaps against the updated spec:
 
 6. **OpenAPI drift is reduced, not eliminated.**
 
-   The generated supervisor client has been refreshed to the current
-   `WorkflowSnapshotResponse` schema, and payloads are runtime-validated. The
-   dashboard still carries an explicit generated-schema overlay for observed
-   nullable `Bead.priority` drift until upstream OpenAPI marks that field
-   nullable.
+   Endpoint paths, request parameters, SDK calls, and supervisor response
+   types now come from the generated `@hey-api/openapi-ts` client, generated
+   Zod response validators run in the SDK, and the generated client is no
+   longer hidden from `tsc` or ESLint. Drift remains at the source-of-truth and
+   ownership layers: the nullable `Bead.priority` OpenAPI correction must be
+   made in Gas City's upstream Huma/OpenAPI source, and the temporary hand-Zod
+   DTO adapter still needs to be reduced to typed mapping instead of acting as
+   a second validator.
 
 7. **Diff is dashboard-local evidence, not supervisor run state.**
 
@@ -678,9 +696,16 @@ from dashboard-owned projection to an even cleaner target boundary:
 3. **Scoped runtime bead reads or fresh scoped snapshots.** The supervisor
    should expose rig-store bead reads or guarantee that scoped run
    snapshots include current runtime status for non-city stores.
-4. **OpenAPI schema alignment.** The supervisor OpenAPI schema should match
-   observed payloads, especially nullable `Bead.priority`, so dashboard schema
-   overlays can be removed.
+4. **OpenAPI schema alignment.** These are GC supervisor API gaps to fix
+   upstream in Gas City's Huma/OpenAPI source, not by dashboard-side patching:
+   `Bead.priority` is nullable in read responses; legacy bead response fields
+   observed by current dashboard fixtures must either be explicitly modeled or
+   intentionally removed from supervisor output; phantom event fields such as
+   `next` must match the emitted event payloads; formula detail required fields
+   must match degraded/missing-formula responses. Generated response validators
+   are active against the committed dashboard schema; the remaining external
+   work is to land schema-accuracy fixes upstream and then delete the temporary
+   hand-Zod adapter.
 5. **Optional canonical execution-instance fields.** Existing metadata is
    sufficient for the current detail page, but a canonical upstream/shared
    presentation shape could expose execution instance ids, semantic node ids,
@@ -772,9 +797,11 @@ stable backend boundaries:
   clicks and route initialization, never derived from node selection.
 - The supervisor client, types, and runtime response validators are generated
   from the committed OpenAPI by `@hey-api/openapi-ts`. `GcClient` is a thin
-  policy facade; it does not hand-roll HTTP, response decoding, or per-endpoint
-  schemas. Supervisor schema-accuracy fixes belong upstream in the Gas City
-  OpenAPI source, not in a dashboard-side validation overlay.
+  policy facade; it does not hand-roll HTTP or per-endpoint response
+  validation. Any remaining hand code at this boundary must be explicit
+  dashboard DTO mapping/normalization, not an independent schema authority.
+  Supervisor schema-accuracy fixes belong upstream in the Gas City OpenAPI
+  source, not in a dashboard-side validation overlay.
 
 ## Architectural Risks
 
@@ -808,20 +835,19 @@ stable backend boundaries:
 
    The target boundary generates the supervisor client, types, and Zod response
    validators from the committed OpenAPI (`@hey-api/openapi-ts`). The dominant
-   risk is schema *accuracy*: where the OpenAPI is stricter than observed
-   supervisor output (nullable `Bead.priority`, legacy bead fields, phantom
-   event keys, `description`-required formula detail), generated strict
-   validation would reject valid degraded payloads — the same gaps that forced
-   the temporary hand-Zod DTO adapter to stay lenient in ~15 places.
+   risk is schema *accuracy*: if the upstream Gas City OpenAPI source is
+   stricter than observed supervisor output (for example nullable
+   `Bead.priority`), a future schema refresh can make generated strict
+   validation reject valid degraded payloads. The dashboard's committed schema
+   has been corrected enough for generated response validation to run today,
+   but that correction still needs to land upstream.
 
    The fix lives **upstream in the Gas City OpenAPI source**, which this repo
-   re-pulls via `npm run openapi:gc-supervisor:update`. That makes strict
-   runtime validation a cross-repo dependency: the migration (see
-   `specs/plans/code-quality-remediation-plan.md` WS-10) ships generation with
-   lenient/`passthrough` validation first, lands the upstream accuracy fixes,
-   then flips on strict response validation. Until the upstream spec is
-   accurate, validation stays lenient rather than reintroducing a dashboard-side
-   overlay.
+   re-pulls via `npm run openapi:gc-supervisor:update`. That makes future
+   generated validation stability a cross-repo dependency: the migration (see
+   `specs/plans/code-quality-remediation-plan.md` WS-10) has flipped on strict
+   generated response validation in this repo, and now must prevent future
+   schema refreshes from reverting the local accuracy fix.
 
 6. Formula detail diagnostics live at the dashboard boundary.
 
@@ -844,8 +870,9 @@ stable backend boundaries:
    retried, and looped runs; use them as backend enrichment fixtures.
 2. Replace local graph.v2 presentation derivation with the canonical Gas City or
    shared package once available.
-3. Remove the generated-schema `Bead.priority` nullable overlay once the
-   upstream supervisor OpenAPI schema matches the observed wire shape.
+3. Delete the temporary hand-Zod supervisor adapter/`SchemaOutputFor` machinery
+   after upstream supervisor OpenAPI source accuracy is synced and the generated
+   response validators are the only malformed-payload authority.
 4. Remove broad run-detail invalidation for identity-less city events once
    the supervisor guarantees canonical run/root identity on all
    run-affecting events.

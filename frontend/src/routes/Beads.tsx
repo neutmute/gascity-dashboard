@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { GC_EVENT_PREFIX, type GcBead } from 'gas-city-dashboard-shared';
-import { api, ApiClientError } from '../api/client';
+import { api, formatApiError } from '../api/client';
 import { BeadBoardSection } from '../components/beads/BeadBoardSection';
 import { BeadDetailRail } from '../components/beads/BeadDetailRail';
 import { BeadDetailModal } from '../components/BeadDetailModal';
@@ -11,7 +11,7 @@ import { ListSearchBar } from '../components/ListSearchBar';
 import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
 import { SortToggle } from '../components/SortToggle';
-import { StatusBadge, type StatusTone } from '../components/StatusBadge';
+import { beadStatusTone, StatusBadge } from '../components/StatusBadge';
 import { type TableColumn } from '../components/Table';
 import { buildBeadGraph } from '../lib/beadGraph';
 import { useCachedData } from '../hooks/useCachedData';
@@ -129,13 +129,7 @@ export function BeadsPage() {
         setActionResult(`${action} ${bead.id}: ok`);
         await refresh();
       } catch (err) {
-        const msg =
-          err instanceof ApiClientError
-            ? `${err.status} ${err.message}`
-            : err instanceof Error
-              ? err.message
-              : 'action failed';
-        setActionResult(`${action} ${bead.id}: ${msg}`);
+        setActionResult(`${action} ${bead.id}: ${formatApiError(err, 'action failed')}`);
       } finally {
         setActionInFlight(null);
       }
@@ -221,7 +215,7 @@ export function BeadsPage() {
       label: 'Status',
       sortable: true,
       sortValue: (r) => r.status,
-      render: (r) => <StatusBadge tone={statusTone(r.status)} label={r.status} />,
+      render: (r) => <StatusBadge tone={beadStatusTone(r.status)} label={r.status} />,
       className: 'w-32',
     },
     {
@@ -483,21 +477,6 @@ function priorityColor(p: number | null): string {
   if (p === 0) return 'text-accent';
   if (p === 1) return 'text-warn';
   return 'text-fg-muted';
-}
-
-function statusTone(status: string): StatusTone {
-  switch (status) {
-    case 'in_progress':
-      return 'ok';
-    case 'blocked':
-      return 'stuck';
-    case 'open':
-      return 'neutral';
-    case 'closed':
-      return 'neutral';
-    default:
-      return 'neutral';
-  }
 }
 
 function buildSynopsis(filtered: ReadonlyArray<GcBead>, totalShown: number, labelFilter: string | null): string {

@@ -1,7 +1,10 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { GcRunBead } from 'gas-city-dashboard-shared';
-import { resolveRunFormulaName } from '../src/runs/formula-name.js';
+import type { GcFormulaDetail, GcRunBead } from 'gas-city-dashboard-shared';
+import {
+  resolveRunFormulaIdentity,
+  resolveRunFormulaName,
+} from '../src/runs/formula-name.js';
 
 // gascity-dashboard-sadp: unit tests for the workflow-formula-name
 // resolver. Both routes/workflows.ts and workflows/formula-run.ts call
@@ -160,5 +163,89 @@ describe('resolveRunFormulaName', () => {
       'mol-fixture-formula',
     );
     assert.equal(resolveRunFormulaName(root), null);
+  });
+});
+
+describe('resolveRunFormulaIdentity', () => {
+  test('route mode lets gc.formula_name beat graph.v2 title fallback', () => {
+    const root = makeRoot(
+      {
+        'gc.kind': 'workflow',
+        'gc.formula_contract': 'graph.v2',
+        'gc.formula_name': 'mol-canonical-metadata',
+        'gc.run_target': '/fixture/run/target',
+      },
+      'mol-title-fallback',
+    );
+
+    assert.deepEqual(resolveRunFormulaIdentity('route', { root }), {
+      name: 'mol-canonical-metadata',
+      source: 'metadata',
+      target: '/fixture/run/target',
+    });
+  });
+
+  test('state mode uses formula detail before title fallback when root metadata is missing', () => {
+    const root = makeRoot(
+      {
+        'gc.kind': 'workflow',
+        'gc.formula_contract': 'graph.v2',
+        'gc.run_target': '/fixture/run/target',
+      },
+      'mol-title-fallback',
+    );
+    const formulaDetail: GcFormulaDetail = { name: 'mol-from-detail' };
+
+    assert.deepEqual(resolveRunFormulaIdentity('state', { root, formulaDetail }), {
+      name: 'mol-from-detail',
+      source: 'formula_detail',
+      target: '/fixture/run/target',
+    });
+  });
+
+  test('lane mode rejects non-mol graph.v2 titles that detail mode accepts as title fallback', () => {
+    const root = makeRoot(
+      {
+        'gc.kind': 'workflow',
+        'gc.formula_contract': 'graph.v2',
+        'gc.run_target': '/fixture/run/target',
+      },
+      'descriptive operator title',
+    );
+
+    assert.deepEqual(resolveRunFormulaIdentity('detail', { root }), {
+      name: 'descriptive operator title',
+      source: 'title_fallback',
+      target: '/fixture/run/target',
+    });
+    assert.deepEqual(resolveRunFormulaIdentity('lane', { root, issues: [root] }), {
+      name: null,
+      source: null,
+      target: '/fixture/run/target',
+    });
+  });
+
+  test('target precedence is gc.run_target, then gc.routed_to, then assignee', () => {
+    const explicitTarget = makeRoot(
+      {
+        'gc.formula': 'mol-explicit',
+        'gc.run_target': '/target/from-run-target',
+        'gc.routed_to': '/target/from-routed-to',
+      },
+      'ignored',
+    );
+    const routedTo = makeRoot(
+      {
+        'gc.formula': 'mol-explicit',
+        'gc.routed_to': '/target/from-routed-to',
+      },
+      'ignored',
+    );
+    const assignee = makeRoot({ 'gc.formula': 'mol-explicit' }, 'ignored');
+    assignee.assignee = 'worker-alias';
+
+    assert.equal(resolveRunFormulaIdentity('detail', { root: explicitTarget }).target, '/target/from-run-target');
+    assert.equal(resolveRunFormulaIdentity('detail', { root: routedTo }).target, '/target/from-routed-to');
+    assert.equal(resolveRunFormulaIdentity('detail', { root: assignee }).target, 'worker-alias');
   });
 });

@@ -2,8 +2,9 @@ import { cleanup, render, screen } from "@testing-library/react";
 import type { TriageItem } from "gas-city-dashboard-shared";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
+import { NowProvider } from "../../../contexts/NowContext";
+import { MaintainerFooter, SelectionActionBar } from "./MaintainerChrome";
 import {
-    SelectionActionBar,
     SlungLink,
     SlungSection,
     TriageScore,
@@ -40,6 +41,7 @@ function renderBar(
 ) {
   const actionBarProps: React.ComponentProps<typeof SelectionActionBar> = {
     count: props.count ?? 2,
+    skippedCount: props.skippedCount ?? 0,
     onSend: props.onSend ?? (() => {}),
     onSendDraft: props.onSendDraft ?? (() => {}),
     onClear: props.onClear ?? (() => {}),
@@ -58,6 +60,7 @@ function renderBar(
 
 const booleanSendingProps: React.ComponentProps<typeof SelectionActionBar> = {
   count: 1,
+  skippedCount: 0,
   onSend: () => {},
   onSendDraft: () => {},
   onClear: () => {},
@@ -370,6 +373,14 @@ describe("SelectionActionBar — selection counter", () => {
     expect(screen.queryByText(/selected/i)).toBeNull();
     expect(screen.getByRole("status")).toBeTruthy();
   });
+
+  it("surfaces selected items skipped because they vanished before send", () => {
+    renderBar({ skippedCount: 2 });
+    const region = screen.getByRole("region", { name: /bulk triage actions/i });
+    expect(region.textContent?.replace(/\s+/g, " ").trim()).toMatch(
+      /2 skipped; no longer in list/i,
+    );
+  });
 });
 
 // gascity-dashboard-5xw: the bar exposes the current two-intent contract.
@@ -471,6 +482,29 @@ describe("SelectionActionBar — dual-intent buttons", () => {
   });
 });
 
+describe("MaintainerFooter", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders the empty enrichment state", () => {
+    render(<MaintainerFooter computedAt={null} now={Date.parse("2026-05-31T10:00:00.000Z")} />);
+
+    expect(screen.getByText(/enrichment not yet computed/i)).toBeTruthy();
+  });
+
+  it("renders the computed timestamp with a relative age", () => {
+    render(
+      <MaintainerFooter
+        computedAt="2026-05-31T09:00:00.000Z"
+        now={Date.parse("2026-05-31T10:00:00.000Z")}
+      />,
+    );
+
+    expect(screen.getByText(/clusters computed/i).textContent).toMatch(/1h ago/);
+  });
+});
+
 // gascity-dashboard-2yr: the in-flight "Slung · awaiting agent" section.
 // Items lifted out of the backlog tiers by the backend overlay render
 // here as a read-only group with drill-in links and no selection
@@ -524,11 +558,13 @@ function renderSlungSection(
     <MemoryRouter
       future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
     >
-      <SlungSection
-        items={props.items ?? [mkSlungItem({ kind: "pr", number: 47 })]}
-        collapsed={props.collapsed ?? false}
-        onToggle={props.onToggle ?? (() => {})}
-      />
+      <NowProvider intervalMs={1_000_000}>
+        <SlungSection
+          items={props.items ?? [mkSlungItem({ kind: "pr", number: 47 })]}
+          collapsed={props.collapsed ?? false}
+          onToggle={props.onToggle ?? (() => {})}
+        />
+      </NowProvider>
     </MemoryRouter>,
   );
 }

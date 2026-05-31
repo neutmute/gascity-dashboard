@@ -1,10 +1,12 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   EntityLinkView,
   GcBead,
   GcSession,
 } from 'gas-city-dashboard-shared';
+import { NowProvider } from '../../contexts/NowContext';
 import { BeadDetailRail } from './BeadDetailRail';
 
 // useBeadDetail and useEntityLinks both call the api client; mock it so the
@@ -60,8 +62,12 @@ function session(extra: Partial<GcSession> = {}): GcSession {
 }
 
 describe('BeadDetailRail', () => {
+  function renderRail(ui: ReactElement) {
+    return render(<NowProvider intervalMs={1_000_000}>{ui}</NowProvider>);
+  }
+
   it('prompts to select a bead when none is chosen', () => {
-    render(
+    renderRail(
       <BeadDetailRail
         beadId={null}
         initialBead={null}
@@ -74,7 +80,7 @@ describe('BeadDetailRail', () => {
 
   it('offers a live-run click-through when the assignee resolves to a streamable session', async () => {
     const b = bead({ assignee: 'gasworks' });
-    render(
+    renderRail(
       <BeadDetailRail
         beadId="b1"
         initialBead={b}
@@ -89,7 +95,7 @@ describe('BeadDetailRail', () => {
 
   it('omits the live-run affordance when no session matches the assignee', async () => {
     const b = bead({ assignee: 'nobody' });
-    render(
+    renderRail(
       <BeadDetailRail
         beadId="b1"
         initialBead={b}
@@ -103,7 +109,7 @@ describe('BeadDetailRail', () => {
 
   it('omits the live-run affordance when the matched session is not streamable', async () => {
     const b = bead({ assignee: 'gasworks' });
-    render(
+    renderRail(
       <BeadDetailRail
         beadId="b1"
         initialBead={b}

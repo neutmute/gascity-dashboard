@@ -48,7 +48,6 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/.claude/**',
-      'backend/src/generated/**',
     ],
   },
   {
@@ -269,4 +268,3 @@ function moduleIsolationConfigs() {
     },
   ];
 }
-

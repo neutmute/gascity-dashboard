@@ -1,5 +1,31 @@
-import type { GcRunBead, WorkflowFormulaSource } from 'gas-city-dashboard-shared';
-import { meta } from './bead-fields.js';
+import type {
+  GcFormulaDetail,
+  GcRunBead,
+  RunFormulaSource,
+} from 'gas-city-dashboard-shared';
+import { meta, nonEmpty } from './bead-fields.js';
+
+export type RunFormulaIdentityMode = 'detail' | 'lane' | 'route' | 'state';
+export type RunFormulaIdentitySource = RunFormulaSource | 'formula_detail';
+
+interface RunFormulaRootLike {
+  title: string;
+  status: string;
+  assignee?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ResolvedRunFormulaIdentity {
+  name: string | null;
+  source: RunFormulaIdentitySource | null;
+  target: string | null;
+}
+
+export interface ResolveRunFormulaIdentityInput {
+  root?: RunFormulaRootLike | undefined;
+  formulaDetail?: Pick<GcFormulaDetail, 'name'> | undefined;
+  issues?: readonly RunFormulaRootLike[];
+}
 
 /**
  * Resolved workflow formula name plus the provenance of that name.
@@ -14,7 +40,7 @@ import { meta } from './bead-fields.js';
  */
 export interface ResolvedRunFormulaName {
   name: string;
-  source: WorkflowFormulaSource;
+  source: RunFormulaSource;
 }
 
 /**
@@ -71,4 +97,81 @@ export function resolveRunFormulaName(
     if (title.length > 0) return { name: title, source: 'title_fallback' };
   }
   return null;
+}
+
+export function resolveRunFormulaIdentity(
+  mode: RunFormulaIdentityMode,
+  { root, formulaDetail, issues = [] }: ResolveRunFormulaIdentityInput,
+): ResolvedRunFormulaIdentity {
+  const target = runFormulaTarget(root);
+  const metadata = runFormulaMetadataName(mode, root, issues);
+  if (metadata !== null) return { name: metadata, source: 'metadata', target };
+
+  if (mode === 'detail' || mode === 'state') {
+    const detailName = nonEmpty(formulaDetail?.name);
+    if (detailName !== undefined) {
+      return { name: detailName, source: 'formula_detail', target };
+    }
+  }
+
+  const title = runFormulaTitleFallback(mode, root);
+  if (title !== null) return { name: title, source: 'title_fallback', target };
+
+  return { name: null, source: null, target };
+}
+
+function runFormulaMetadataName(
+  mode: RunFormulaIdentityMode,
+  root: RunFormulaRootLike | undefined,
+  issues: readonly RunFormulaRootLike[],
+): string | null {
+  if (mode === 'lane') {
+    return (
+      metadataString(issues, 'pr_review.workflow_formula') ??
+      metadataString(issues, 'gc.formula') ??
+      null
+    );
+  }
+  return rootMeta(root, 'gc.formula') ?? rootMeta(root, 'gc.formula_name') ?? null;
+}
+
+function runFormulaTitleFallback(
+  mode: RunFormulaIdentityMode,
+  root: RunFormulaRootLike | undefined,
+): string | null {
+  if (root === undefined) return null;
+  if (
+    rootMeta(root, 'gc.formula_contract') !== 'graph.v2' ||
+    rootMeta(root, 'gc.run_target') === undefined ||
+    root.status === 'closed'
+  ) {
+    return null;
+  }
+  const title = nonEmpty(root.title);
+  if (title === undefined) return null;
+  return mode === 'lane' && !title.startsWith('mol-') ? null : title;
+}
+
+function runFormulaTarget(root: RunFormulaRootLike | undefined): string | null {
+  return (
+    rootMeta(root, 'gc.run_target') ??
+    rootMeta(root, 'gc.routed_to') ??
+    nonEmpty(root?.assignee) ??
+    null
+  );
+}
+
+function rootMeta(root: RunFormulaRootLike | undefined, key: string): string | undefined {
+  return nonEmpty(root?.metadata?.[key]);
+}
+
+function metadataString(
+  issues: readonly RunFormulaRootLike[],
+  key: string,
+): string | undefined {
+  for (const issue of issues) {
+    const value = rootMeta(issue, key);
+    if (value !== undefined) return value;
+  }
+  return undefined;
 }

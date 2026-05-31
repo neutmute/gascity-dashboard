@@ -12,12 +12,12 @@ import { type TableColumn } from '../components/Table';
 import { AgentPanel } from '../components/AgentPanel';
 import { ComposeModal } from '../components/mail/ComposeModal';
 import { ThreadMessage } from '../components/mail/ThreadMessage';
+import { useNow } from '../contexts/NowContext';
 import { useViewingAs, OPERATOR_ALIAS } from '../contexts/ViewingAsContext';
 import { displayLabel } from '../hooks/aliasPriority';
 import { useListFilters, type FilterChip } from '../hooks/useListFilters';
 import { mailProject } from '../hooks/projectOf';
 import { formatRelative } from '../hooks/time';
-import { useVisibleInterval } from '../hooks/useVisibleInterval';
 
 // Mail chips operate on read-state. "Sent" box has no unread concept;
 // the chips still render but their match predicates are box-aware.
@@ -57,8 +57,7 @@ export function MailPage() {
   useEffect(() => {
     loadAliases();
   }, [loadAliases]);
-  const [now, setNow] = useState(() => Date.now());
-  useVisibleInterval(() => setNow(Date.now()), 15_000);
+  const now = useNow();
 
   const { data: mailData, loading, error: mailError, refresh } = useCachedData(
     `mail:${box}:${viewingAs.alias}`,

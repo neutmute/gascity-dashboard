@@ -24,7 +24,7 @@ import { AmbientHomePage } from './AmbientHome';
 //                           shared mechanical gate per gascity-dashboard-mz8).
 //   • R10 withholding     — a fully-calm city renders NO concern rows.
 //   • R2 maroon-on-inferred — inferred lanes never produce a maroon token.
-//   • Non-fresh paths     — workflows.status='error' and census.unavailable.
+//   • Non-fresh paths     — runs.status='error' and census.unavailable.
 //   • Deep-link encoding  — encodeURIComponent applied to stuckNode.id.
 //   • R6 no-negative-reassurance — calm sentence is absent, not "all clear".
 
@@ -142,12 +142,12 @@ const DEFAULT_CENSUS: RunCensus = {
 function envelope({
   lanes = [],
   census = DEFAULT_CENSUS,
-  workflowsStatus = 'fresh' as 'fresh' | 'fixture' | 'stale',
+  runsStatus = 'fresh' as 'fresh' | 'fixture' | 'stale',
   generatedAt = '2026-05-29T20:00:00.000Z',
 }: {
   lanes?: RunLane[];
   census?: RunCensus;
-  workflowsStatus?: 'fresh' | 'fixture' | 'stale';
+  runsStatus?: 'fresh' | 'fixture' | 'stale';
   generatedAt?: string;
 } = {}): DashboardSnapshot {
   return {
@@ -170,7 +170,7 @@ function envelope({
       resources: { source: 'resources', status: 'error', error: 'unused' },
       runs: {
         source: 'runs',
-        status: workflowsStatus,
+        status: runsStatus,
         fetchedAt: '2026-05-29T20:00:00.000Z',
         staleAt: '2026-05-29T20:01:00.000Z',
         error: { kind: 'none' },
@@ -196,12 +196,12 @@ function envelope({
   };
 }
 
-function workflowsErrorEnvelope(): DashboardSnapshot {
+function runsErrorEnvelope(): DashboardSnapshot {
   const e = envelope();
   e.sources.runs = {
     source: 'runs',
     status: 'error',
-    error: 'workflow source upstream timeout',
+    error: 'runs source upstream timeout',
   };
   return e;
 }
@@ -214,7 +214,7 @@ function censusUnavailableEnvelope(lanes: RunLane[]): DashboardSnapshot {
     ...wf,
     data: {
       ...wf.data,
-      census: { status: 'unavailable', error: 'workflow health has not been derived' },
+      census: { status: 'unavailable', error: 'run health has not been derived' },
     },
   };
   return e;
@@ -422,11 +422,11 @@ describe('AmbientHomePage', () => {
     assertAtMostOneMark(container);
   });
 
-  it('renders a clear error when the workflows source is in error state', async () => {
-    mockSnapshot.mockResolvedValue(workflowsErrorEnvelope());
+  it('renders a clear error when the runs source is in error state', async () => {
+    mockSnapshot.mockResolvedValue(runsErrorEnvelope());
     mount();
     await waitFor(() =>
-      expect(screen.getByTestId('workflows-source-error')).toBeTruthy(),
+      expect(screen.getByTestId('runs-source-error')).toBeTruthy(),
     );
     expect(screen.queryByTestId('phase-census')).toBeNull();
   });

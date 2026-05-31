@@ -1,9 +1,9 @@
-import type { GcSession } from './index.js';
+import type { GcSession } from './gc-client-types.js';
 
 // The lossy role/assignee → session resolution (gascity-dashboard-3ax).
 //
 // This is the SINGLE implementation of the 4-step resolution the codebase
-// flags in two places: SlungState.resolved_session_name (shared/src/index.ts)
+// flags in two places: SlungState.resolved_session_name (shared/src/maintainer-triage.ts)
 // and the maintainer sling resolver (backend/src/views/modules/maintainer/resolve-target.ts,
 // which now delegates here). PRD risk R2 calls this join out as load-bearing
 // for the run-health engine — role-pool dispatch routinely fails it —

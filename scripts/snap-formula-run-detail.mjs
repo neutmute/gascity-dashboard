@@ -302,7 +302,7 @@ async function installApiFixtureRoutes(context) {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
       },
-      body: 'retry: 60000\n: workflow detail fixture\n\n',
+      body: 'retry: 60000\n: formula run detail fixture\n\n',
     });
   });
 
@@ -534,14 +534,14 @@ function snapshotFixture() {
       activeAgents: unavailableMetric('city', 'city unavailable in fixture'),
       maxAgents: unavailableMetric('city', 'city unavailable in fixture'),
       activeSessions: unavailableMetric('city', 'city unavailable in fixture'),
-      activeWorkflows: { status: 'available', value: 1 },
+      activeRuns: { status: 'available', value: 1 },
     },
     sources: {
       city: sourceUnavailable('city', 'city unavailable in fixture'),
       resources: sourceUnavailable('resources', 'resources unavailable in fixture'),
-      workflows: sourceFixture('workflows', {
+      runs: sourceFixture('runs', {
         totalActive: 1,
-        // yh5i: shared WorkflowSummary now carries totalHistorical +
+        // yh5i: shared RunSummary now carries totalHistorical +
         // historicalLanes. This is a .mjs fixture and isn't typechecked,
         // so the shape must be kept in lockstep with shared/src by hand.
         totalHistorical: 0,
@@ -559,7 +559,7 @@ function snapshotFixture() {
         recentChanges: [],
         census: {
           status: 'unavailable',
-          error: 'workflow health has not been derived',
+          error: 'run health has not been derived',
         },
       }),
     },
@@ -615,7 +615,7 @@ function runLaneFixture() {
     formulaStageResolved: true,
     health: {
       status: 'unavailable',
-      error: 'workflow health has not been derived',
+      error: 'run health has not been derived',
     },
   };
 }

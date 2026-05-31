@@ -1,7 +1,10 @@
 import { cleanup, render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TriageItem, TriageTierSection } from 'gas-city-dashboard-shared';
-import { IssueRow, filterTierByNeedsPr } from './Maintainer';
+import { NowProvider } from '../../../contexts/NowContext';
+import { IssueRow } from './TriageSections';
+import { filterTierByNeedsPr } from './triageFilters';
 
 // gascity-dashboard-omv: render-level coverage for the issue-row
 // "needs PR" indicator + the "Needs PR only" filter helper.
@@ -50,6 +53,10 @@ function mkItem(overrides: Partial<TriageItem> & { kind: 'pr' | 'issue'; number:
   };
 }
 
+function renderWithNow(ui: ReactElement) {
+  return render(<NowProvider intervalMs={1_000_000}>{ui}</NowProvider>);
+}
+
 describe('IssueRow — needs-PR indicator', () => {
   afterEach(() => {
     cleanup();
@@ -61,7 +68,7 @@ describe('IssueRow — needs-PR indicator', () => {
       number: 42,
       has_in_flight_pr: false,
     });
-    render(
+    renderWithNow(
       <IssueRow
         item={item}
         hasInListChildren={false}
@@ -78,7 +85,7 @@ describe('IssueRow — needs-PR indicator', () => {
       number: 42,
       has_in_flight_pr: true,
     });
-    render(
+    renderWithNow(
       <IssueRow
         item={item}
         hasInListChildren={false}
@@ -99,7 +106,7 @@ describe('IssueRow — needs-PR indicator', () => {
       linked_numbers: [99],
       has_in_flight_pr: false,
     });
-    render(
+    renderWithNow(
       <IssueRow
         item={item}
         hasInListChildren={false}

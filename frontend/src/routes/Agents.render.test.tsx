@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentsPage } from './Agents';
 import { invalidate } from '../api/cache';
+import { NowProvider } from '../contexts/NowContext';
 
 // Regression tests for two bugs that shipped with the ay6 Agents-view rewrite
 // (PR #45, surfaced post-deploy):
@@ -114,7 +115,9 @@ describe('AgentsPage (post-ay6 regressions)', () => {
   it('renders the alias as primary label and display_name as secondary (Orchestration shows "mayor", not "Claude (Account 5)")', async () => {
     render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <AgentsPage />
+        <NowProvider intervalMs={1_000_000}>
+          <AgentsPage />
+        </NowProvider>
       </MemoryRouter>,
     );
 
@@ -129,7 +132,9 @@ describe('AgentsPage (post-ay6 regressions)', () => {
   it('Peek resolves agent.session.name -> session.id via the sessions cache and POSTs the right gc-XXX id', async () => {
     render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <AgentsPage />
+        <NowProvider intervalMs={1_000_000}>
+          <AgentsPage />
+        </NowProvider>
       </MemoryRouter>,
     );
 
@@ -152,7 +157,9 @@ describe('AgentsPage (post-ay6 regressions)', () => {
   it('orphan agent name-link carries a different title tooltip than a session-bound one (ay6.2)', async () => {
     render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <AgentsPage />
+        <NowProvider intervalMs={1_000_000}>
+          <AgentsPage />
+        </NowProvider>
       </MemoryRouter>,
     );
 

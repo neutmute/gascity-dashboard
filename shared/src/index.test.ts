@@ -9,8 +9,74 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveContextPct, errorMessage, TRUE_CONTEXT_WINDOWS } from './index.js';
-import type { ClientErrorReport, GcSession, SlingIntent, SlingKind } from './index.js';
+import { readFileSync } from 'node:fs';
+import {
+  CITY_NAME_RE,
+  effectiveContextPct,
+  errorMessage,
+  GC_EVENT_PREFIX,
+  makeNodeKey,
+  OPERATOR_DISPLAY_ALIAS,
+  OPERATOR_WIRE_ALIAS,
+  SCOPE_REF_RE,
+  TRUE_CONTEXT_WINDOWS,
+} from './index.js';
+import { CITY_NAME_RE as leafCityNameRe } from './city.js';
+import {
+  effectiveContextPct as leafEffectiveContextPct,
+  TRUE_CONTEXT_WINDOWS as leafTrueContextWindows,
+} from './context-window.js';
+import { makeNodeKey as leafMakeNodeKey } from './links.js';
+import {
+  errorMessage as leafErrorMessage,
+  GC_EVENT_PREFIX as leafGcEventPrefix,
+  OPERATOR_DISPLAY_ALIAS as leafOperatorDisplayAlias,
+  OPERATOR_WIRE_ALIAS as leafOperatorWireAlias,
+} from './operator.js';
+import { SCOPE_REF_RE as leafScopeRefRe } from './run-detail.js';
+import type {
+  Avail,
+  ClientErrorReport,
+  GcCountedList,
+  GcFormulaRecentRun,
+  GcFormulaRun,
+  GcList,
+  GcRequiredPartialList,
+  GcSession,
+  SlingIntent,
+  SlingKind,
+  TriageItem,
+  RunCensus,
+  RunCensusState,
+  RunLaneHealth,
+  RunLaneHealthState,
+  RunLaneScope,
+  RunLaneSessionActivity,
+  RunLaneSessionLastActive,
+  RunLaneSessionRunning,
+  RunLaneStagePosition,
+  RunLaneStepAttempt,
+  RunLaneStuckNode,
+  RunLaneUpdatedAt,
+} from './index.js';
+import type {
+  Avail as LeafAvail,
+  GcCountedList as LeafGcCountedList,
+  GcList as LeafGcList,
+  GcRequiredPartialList as LeafGcRequiredPartialList,
+} from './lists.js';
+import './lists.js';
+import './gc-agents.js';
+import './gc-rigs.js';
+import './gc-beads.js';
+import './gc-mail.js';
+import './activity.js';
+import './gc-health.js';
+import './gc-events.js';
+import './transcript.js';
+import './formula-runs.js';
+import './api-error.js';
+import './maintainer-triage.js';
 
 function sess(partial: Partial<GcSession>): GcSession {
   return {
@@ -145,6 +211,24 @@ test('TRUE_CONTEXT_WINDOWS includes the deployed Claude models', () => {
   assert.equal(TRUE_CONTEXT_WINDOWS['claude-sonnet-4-6'], 1_000_000);
 });
 
+test('runtime helpers live in domain leaves and remain re-exported by the barrel', () => {
+  assert.equal(leafOperatorDisplayAlias, OPERATOR_DISPLAY_ALIAS);
+  assert.equal(leafOperatorWireAlias, OPERATOR_WIRE_ALIAS);
+  assert.equal(leafGcEventPrefix, GC_EVENT_PREFIX);
+  assert.equal(leafErrorMessage, errorMessage);
+  assert.equal(leafTrueContextWindows, TRUE_CONTEXT_WINDOWS);
+  assert.equal(leafEffectiveContextPct, effectiveContextPct);
+});
+
+test('leaf-owned runtime exports stay available through the barrel', () => {
+  assert.equal(leafScopeRefRe, SCOPE_REF_RE);
+  assert.equal(leafCityNameRe, CITY_NAME_RE);
+  assert.equal(leafMakeNodeKey, makeNodeKey);
+  assert.equal(SCOPE_REF_RE.test('rig:demo-app'), true);
+  assert.equal(CITY_NAME_RE.test('demo-city'), true);
+  assert.equal(makeNodeKey('bead', 'b-1', 'rig:demo-app'), 'bead:rig:demo-app:b-1');
+});
+
 test('errorMessage normalizes unknown error values for shared client/server reporting', () => {
   assert.equal(errorMessage(new Error('boom')), 'boom');
   assert.equal(errorMessage('plain failure'), 'plain failure');
@@ -163,4 +247,142 @@ test('shared client-error and sling types compile as the cross-workspace contrac
   assert.equal(report.component, 'AgentDetail');
   assert.equal(intent, 'triage');
   assert.equal(kind, 'issue');
+});
+
+test('shared list envelope generics compile from leaves and barrel', () => {
+  const available: Avail<{ data: string }> = { status: 'available', data: 'ok' };
+  const unavailable: LeafAvail<{ data: string }> = {
+    status: 'unavailable',
+    error: 'missing supervisor data',
+  };
+  const list: GcList<{ id: string }> = { items: [{ id: 'a' }] };
+  const counted: GcCountedList<{ id: string }> = {
+    items: [{ id: 'a' }],
+    total: 1,
+  };
+  const requiredPartial: GcRequiredPartialList<{ id: string }> = {
+    items: [],
+    partial: false,
+  };
+
+  const leafList: LeafGcList<{ id: string }> = list;
+  const leafCounted: LeafGcCountedList<{ id: string }> = counted;
+  const leafRequiredPartial: LeafGcRequiredPartialList<{ id: string }> = requiredPartial;
+
+  assert.equal(available.data, 'ok');
+  assert.equal(unavailable.error, 'missing supervisor data');
+  assert.equal(leafList.items[0]?.id, 'a');
+  assert.equal(leafCounted.total, 1);
+  assert.equal(leafRequiredPartial.partial, false);
+});
+
+test('snapshot availability states use the shared Avail<T> generic', () => {
+  const source = readFileSync(new URL('./snapshot/types.ts', import.meta.url), 'utf8');
+  const aliases: Array<[string, RegExp]> = [
+    ['RunCensusState', /export type RunCensusState = Avail<\{\s*data: RunCensus;\s*\}>;/],
+    ['RunLaneHealthState', /export type RunLaneHealthState = Avail<\{\s*data: RunLaneHealth;\s*\}>;/],
+    ['RunLaneUpdatedAt', /export type RunLaneUpdatedAt = Avail<\{\s*at: string;\s*\}>;/],
+    [
+      'RunLaneStagePosition',
+      /export type RunLaneStagePosition = Avail<\{\s*index: number;\s*key: string;\s*label: string;\s*\}>;/,
+    ],
+    ['RunLaneStepAttempt', /export type RunLaneStepAttempt = Avail<\{\s*value: number;\s*\}>;/],
+    ['RunLaneStuckNode', /export type RunLaneStuckNode = Avail<\{\s*id: string;\s*\}>;/],
+    ['RunLaneSessionLastActive', /export type RunLaneSessionLastActive = Avail<\{\s*at: string;\s*\}>;/],
+    ['RunLaneSessionRunning', /export type RunLaneSessionRunning = Avail<\{\s*value: boolean;\s*\}>;/],
+    ['RunLaneSessionActivity', /export type RunLaneSessionActivity = Avail<\{\s*value: string;\s*\}>;/],
+    [
+      'RunLaneScope',
+      /export type RunLaneScope = Avail<\{\s*kind: 'city' \| 'rig';\s*ref: string;\s*rootStoreRef: string;\s*\}>;/,
+    ],
+  ];
+
+  for (const [alias, pattern] of aliases) {
+    assert.match(source, pattern, `${alias} should be declared with Avail<T>`);
+  }
+});
+
+test('snapshot availability states compile as Avail<T> aliases', () => {
+  const census: Avail<{ data: RunCensus }> = {
+    status: 'unavailable',
+    error: 'census unavailable',
+  } satisfies RunCensusState;
+  const health: Avail<{ data: RunLaneHealth }> = {
+    status: 'unavailable',
+    error: 'health unavailable',
+  } satisfies RunLaneHealthState;
+  const updatedAt: Avail<{ at: string }> = {
+    status: 'available',
+    at: '2026-05-31T00:00:00Z',
+  } satisfies RunLaneUpdatedAt;
+  const stage: Avail<{ index: number; key: string; label: string }> = {
+    status: 'available',
+    index: 1,
+    key: 'review',
+    label: 'Review',
+  } satisfies RunLaneStagePosition;
+  const attempt: Avail<{ value: number }> = {
+    status: 'available',
+    value: 2,
+  } satisfies RunLaneStepAttempt;
+  const stuckNode: Avail<{ id: string }> = {
+    status: 'available',
+    id: 'node-1',
+  } satisfies RunLaneStuckNode;
+  const lastActive: Avail<{ at: string }> = {
+    status: 'available',
+    at: '2026-05-31T00:00:00Z',
+  } satisfies RunLaneSessionLastActive;
+  const running: Avail<{ value: boolean }> = {
+    status: 'available',
+    value: true,
+  } satisfies RunLaneSessionRunning;
+  const activity: Avail<{ value: string }> = {
+    status: 'available',
+    value: 'active',
+  } satisfies RunLaneSessionActivity;
+  const scope: Avail<{ kind: 'city' | 'rig'; ref: string; rootStoreRef: string }> = {
+    status: 'available',
+    kind: 'rig',
+    ref: 'demo-app',
+    rootStoreRef: 'rig:demo-app',
+  } satisfies RunLaneScope;
+
+  assert.equal(census.status, 'unavailable');
+  assert.equal(health.status, 'unavailable');
+  assert.equal(updatedAt.at, '2026-05-31T00:00:00Z');
+  assert.equal(stage.key, 'review');
+  assert.equal(attempt.value, 2);
+  assert.equal(stuckNode.id, 'node-1');
+  assert.equal(lastActive.at, '2026-05-31T00:00:00Z');
+  assert.equal(running.value, true);
+  assert.equal(activity.value, 'active');
+  assert.equal(scope.rootStoreRef, 'rig:demo-app');
+});
+
+test('formula-run dashboard DTOs expose run_id after supervisor workflow_id decoding', () => {
+  const feedItem: GcFormulaRun = {
+    id: 'gc-run',
+    type: 'formula',
+    status: 'done',
+    title: 'mol-focus-review',
+    scope_kind: 'city',
+    scope_ref: 'ds-research',
+    target: '/tmp/work',
+    started_at: '2026-05-28T00:00:00Z',
+    updated_at: '2026-05-28T00:01:00Z',
+    run_id: 'gc-run',
+  };
+  const recentRun: GcFormulaRecentRun = {
+    run_id: 'gc-recent',
+    target: '/tmp/work',
+    status: 'done',
+    started_at: '2026-05-28T00:00:00Z',
+    updated_at: '2026-05-28T00:01:00Z',
+  };
+  const triageLink: Pick<TriageItem, 'run_id'> = { run_id: 'gc-triage' };
+
+  assert.equal(feedItem.run_id, 'gc-run');
+  assert.equal(recentRun.run_id, 'gc-recent');
+  assert.equal(triageLink.run_id, 'gc-triage');
 });

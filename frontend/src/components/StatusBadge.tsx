@@ -57,3 +57,18 @@ export function StatusBadge({
     </span>
   );
 }
+
+export function beadStatusTone(status: string): StatusTone {
+  switch (status) {
+    case 'closed':
+      return 'neutral';
+    case 'in_progress':
+      return 'ok';
+    case 'blocked':
+      return 'stuck';
+    case 'open':
+    case 'deferred':
+    default:
+      return 'warn';
+  }
+}

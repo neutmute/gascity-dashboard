@@ -1,124 +1,78 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 const checkOnly = process.argv.includes('--check');
-const schemaPath = path.resolve('backend/openapi/gc-supervisor.openapi.json');
-const outputPath = path.resolve('backend/src/generated/gc-supervisor.ts');
-const schemaOutputPath = path.resolve('backend/src/generated/gc-supervisor-schemas.ts');
-const cliPath = path.resolve('node_modules/openapi-typescript/bin/cli.js');
-const header = [
-  '/* eslint-disable */',
-  '// Generated from backend/openapi/gc-supervisor.openapi.json. Do not edit.',
-  '',
-].join('\n');
+const heyApiConfigPath = path.resolve('backend/openapi-ts.config.ts');
+const heyApiOutputPath = path.resolve('backend/src/generated/gc-supervisor-client');
+const heyApiCliPath = path.resolve('node_modules/@hey-api/openapi-ts/bin/run.js');
 
-async function generateTypes(toPath) {
+async function generateHeyApiClient(toPath) {
+  await rm(toPath, { recursive: true, force: true });
   const result = spawnSync(
     process.execPath,
-    [cliPath, schemaPath, '--output', toPath, '--export-type'],
-    { stdio: 'inherit' },
+    [heyApiCliPath, '--file', heyApiConfigPath, '--no-log-file'],
+    {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        GC_SUPERVISOR_HEY_API_OUTPUT: toPath,
+      },
+    },
   );
   if (result.status !== 0) {
-    throw new Error(`openapi-typescript failed with exit code ${result.status ?? 'unknown'}`);
+    throw new Error(`@hey-api/openapi-ts failed with exit code ${result.status ?? 'unknown'}`);
   }
-  const generated = await readFile(toPath, 'utf8');
-  await writeFile(
-    toPath,
-    generated.startsWith(header) ? generated : `${header}${generated}`,
-    'utf8',
-  );
-}
-
-async function generateRuntimeSchemas(toPath) {
-  const openapi = JSON.parse(await readFile(schemaPath, 'utf8'));
-  const allSchemas = openapi?.components?.schemas;
-  if (!isRecord(allSchemas)) {
-    throw new Error('OpenAPI schema is missing components.schemas');
-  }
-  applyRuntimeSchemaOverlays(allSchemas);
-  const selected = Object.fromEntries(
-    Object.keys(allSchemas)
-      .sort()
-      .map((name) => [name, normalizeJson(allSchemas[name])]),
-  );
-  const source = [
-    header,
-    'export const gcSupervisorComponentSchemas: Record<string, unknown> = ',
-    JSON.stringify(selected, null, 2),
-    ';\n',
-  ].join('');
-  await writeFile(toPath, source, 'utf8');
 }
 
 if (checkOnly) {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'gc-supervisor-openapi-'));
-  const tmpTypesPath = path.join(tmpDir, 'gc-supervisor.ts');
-  const tmpSchemasPath = path.join(tmpDir, 'gc-supervisor-schemas.ts');
+  const tmpHeyApiPath = path.join(tmpDir, 'gc-supervisor-client');
   try {
-    await Promise.all([
-      generateTypes(tmpTypesPath),
-      generateRuntimeSchemas(tmpSchemasPath),
-    ]);
-    const [
-      expectedTypes,
-      actualTypes,
-      expectedSchemas,
-      actualSchemas,
-    ] = await Promise.all([
-      readFile(tmpTypesPath, 'utf8'),
-      readFile(outputPath, 'utf8'),
-      readFile(tmpSchemasPath, 'utf8'),
-      readFile(schemaOutputPath, 'utf8'),
-    ]);
-    if (expectedTypes !== actualTypes) {
-      throw new Error(
-        'backend/src/generated/gc-supervisor.ts is out of date. Run npm run openapi:gc-supervisor:generate.',
-      );
-    }
-    if (expectedSchemas !== actualSchemas) {
-      throw new Error(
-        'backend/src/generated/gc-supervisor-schemas.ts is out of date. Run npm run openapi:gc-supervisor:generate.',
-      );
-    }
+    await generateHeyApiClient(tmpHeyApiPath);
+    await assertDirectoryMatches(tmpHeyApiPath, heyApiOutputPath);
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
   console.log('generated gc supervisor client is up to date');
 } else {
-  await Promise.all([
-    generateTypes(outputPath),
-    generateRuntimeSchemas(schemaOutputPath),
+  await generateHeyApiClient(heyApiOutputPath);
+  console.log(`generated ${path.relative(process.cwd(), heyApiOutputPath)}`);
+}
+
+async function assertDirectoryMatches(expectedPath, actualPath) {
+  const [expected, actual] = await Promise.all([
+    readDirectoryFiles(expectedPath),
+    readDirectoryFiles(actualPath),
   ]);
-  console.log(`generated ${path.relative(process.cwd(), outputPath)}`);
-  console.log(`generated ${path.relative(process.cwd(), schemaOutputPath)}`);
+  const expectedKeys = Object.keys(expected).sort();
+  const actualKeys = Object.keys(actual).sort();
+  if (JSON.stringify(expectedKeys) !== JSON.stringify(actualKeys)) {
+    throw new Error(
+      'backend/src/generated/gc-supervisor-client is out of date. Run npm run openapi:gc-supervisor:generate.',
+    );
+  }
+  for (const key of expectedKeys) {
+    if (expected[key] !== actual[key]) {
+      throw new Error(
+        `backend/src/generated/gc-supervisor-client/${key} is out of date. Run npm run openapi:gc-supervisor:generate.`,
+      );
+    }
+  }
 }
 
-function applyRuntimeSchemaOverlays(allSchemas) {
-  // Observed supervisor wire drift: non-engineering beads can carry
-  // priority:null while the current OpenAPI component says integer-only.
-  // Keep the generated validator strict everywhere else, and remove this
-  // overlay once the upstream schema marks priority nullable.
-  const bead = allSchemas.Bead;
-  if (!isRecord(bead)) return;
-  const properties = bead.properties;
-  if (!isRecord(properties)) return;
-  const priority = properties.priority;
-  if (!isRecord(priority)) return;
-  priority.type = ['integer', 'null'];
-}
-
-function normalizeJson(value) {
-  if (Array.isArray(value)) return value.map(normalizeJson);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .map((key) => [key, normalizeJson(value[key])]),
-  );
-}
-
-function isRecord(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+async function readDirectoryFiles(rootPath, relative = '') {
+  const currentPath = path.join(rootPath, relative);
+  const entries = await readdir(currentPath, { withFileTypes: true });
+  const files = {};
+  for (const entry of entries) {
+    const entryRelative = path.join(relative, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(files, await readDirectoryFiles(rootPath, entryRelative));
+      continue;
+    }
+    files[entryRelative] = await readFile(path.join(rootPath, entryRelative), 'utf8');
+  }
+  return files;
 }

@@ -1,6 +1,8 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TriageItem, TriageTierSection } from 'gas-city-dashboard-shared';
+import type { ReactElement } from 'react';
+import { NowProvider } from '../../../contexts/NowContext';
 import { IssueRow, TierSection } from './TriageSections';
 
 const FIXED_ISO = '2026-05-27T00:00:00.000Z';
@@ -41,7 +43,14 @@ function item(overrides: Partial<TriageItem> & { kind: 'issue' | 'pr'; number: n
 describe('maintainer triage sections', () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
+
+  function renderWithNow(ui: ReactElement, now = '2026-05-28T00:00:00.000Z') {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    return render(<NowProvider intervalMs={60_000}>{ui}</NowProvider>);
+  }
 
   it('renders tier counts and item count from a standalone component module', () => {
     const section: TriageTierSection = {
@@ -50,7 +59,7 @@ describe('maintainer triage sections', () => {
       unclustered: [item({ kind: 'issue', number: 1 })],
     };
 
-    render(
+    renderWithNow(
       <TierSection
         section={section}
         counts={{ vetted: 2, awaiting: 3 }}
@@ -79,7 +88,7 @@ describe('maintainer triage sections', () => {
       unclustered: [item({ kind: 'issue', number: 1 })],
     };
 
-    render(
+    renderWithNow(
       <TierSection
         section={section}
         counts={{ vetted: 2, awaiting: 3 }}
@@ -103,7 +112,7 @@ describe('maintainer triage sections', () => {
       unclustered: [item({ kind: 'issue', number: 1 }), item({ kind: 'issue', number: 2 })],
     };
 
-    render(
+    renderWithNow(
       <TierSection
         section={section}
         counts={{ vetted: 0, awaiting: 2 }}
@@ -122,7 +131,7 @@ describe('maintainer triage sections', () => {
   });
 
   it('renders issue row policy without importing the route module', () => {
-    render(
+    renderWithNow(
       <IssueRow
         item={item({ kind: 'issue', number: 42, title: 'Fix active run display' })}
         hasInListChildren={false}
@@ -133,5 +142,24 @@ describe('maintainer triage sections', () => {
 
     expect(screen.getByText('Fix active run display')).toBeTruthy();
     expect(screen.getByText(/needs PR/i)).toBeTruthy();
+  });
+
+  it('uses the shared 24h relative-age boundary for row timestamps', () => {
+    renderWithNow(
+      <IssueRow
+        item={item({
+          kind: 'issue',
+          number: 43,
+          title: 'Fix stale age grammar',
+          updated_at: '2026-05-27T00:00:00.000Z',
+        })}
+        hasInListChildren={false}
+        selection={new Set()}
+        onToggleSelect={null}
+      />,
+    );
+
+    expect(screen.getByText('1d')).toBeTruthy();
+    expect(screen.queryByText('24h')).toBeNull();
   });
 });

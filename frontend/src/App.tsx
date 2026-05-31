@@ -77,11 +77,6 @@ export function App() {
               <Route path="/beads" element={<BeadsPage />} />
               <Route path="/runs" element={<RunsPage />} />
               <Route path="/runs/:runId" element={<FormulaRunDetailPage />} />
-              {/* /workflows + /kanban superseded by /runs (gascity-dashboard-0t6
-                  + dkb Q3 + #61 formula-run rename); redirects preserved so
-                  bookmarks keep working. */}
-              <Route path="/workflows" element={<Navigate to="/runs" replace />} />
-              <Route path="/kanban" element={<Navigate to="/runs" replace />} />
               <Route path="/mail" element={<MailPage />} />
               <Route path="/activity" element={<ActivityPage />} />
               {/* Modular-dashboard registry routes, filtered by the
@@ -93,10 +88,22 @@ export function App() {
                 const Element = v.element;
                 return <Route key={v.id} path={v.path} element={<Element />} />;
               })}
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </Suspense>
         </Layout>
       </NowProvider>
     </ViewingAsProvider>
+  );
+}
+
+function NotFoundPage() {
+  return (
+    <section aria-labelledby="not-found-title" className="space-y-3">
+      <h1 id="not-found-title" className="text-5xl font-semibold tracking-tight text-fg">
+        Page not found
+      </h1>
+      <p className="text-title text-fg-muted">No dashboard route matches this path.</p>
+    </section>
   );
 }

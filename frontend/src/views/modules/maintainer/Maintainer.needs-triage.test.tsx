@@ -1,15 +1,17 @@
 import { cleanup, render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   TriageAssessment,
   TriageItem,
   TriageTierSection,
 } from 'gas-city-dashboard-shared';
+import { NowProvider } from '../../../contexts/NowContext';
+import { TierSection } from './TriageSections';
 import {
-  TierSection,
   countTierByVetted,
   filterTierByAwaitingTriage,
-} from './Maintainer';
+} from './triageFilters';
 
 // gascity-dashboard-x8q: render-level + helper coverage for the
 // "Awaiting triage only" filter chip and the per-tier "N vetted ·
@@ -71,6 +73,10 @@ function mkItem(
     updated_at: overrides.updated_at ?? '2026-05-22T00:00:00Z',
     has_in_flight_pr: overrides.has_in_flight_pr ?? false,
   };
+}
+
+function renderWithNow(ui: ReactElement) {
+  return render(<NowProvider intervalMs={1_000_000}>{ui}</NowProvider>);
 }
 
 describe('filterTierByAwaitingTriage — pure filter helper', () => {
@@ -260,7 +266,7 @@ describe('TierSection — header counts render', () => {
       number: 2,
       triage_assessment: mkAssessment(),
     });
-    render(
+    renderWithNow(
       <TierSection
         section={mkSection([awaiting, vetted])}
         counts={{ vetted: 12, awaiting: 8 }}
@@ -288,7 +294,7 @@ describe('TierSection — header counts render', () => {
       number: 1,
       triage_assessment: mkAssessment(),
     });
-    render(
+    renderWithNow(
       <TierSection
         section={mkSection([vetted])}
         counts={{ vetted: 5, awaiting: 0 }}
@@ -312,7 +318,7 @@ describe('TierSection — header counts render', () => {
     // This is the integration contract: the chip filters the rendered
     // items, but the header counts come from the unfiltered tier.
     const onlyAwaiting = mkItem({ kind: 'issue', number: 1, triage_assessment: null });
-    render(
+    renderWithNow(
       <TierSection
         section={mkSection([onlyAwaiting])}
         counts={{ vetted: 12, awaiting: 8 }}

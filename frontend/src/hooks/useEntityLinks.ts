@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { EntityLinkView } from 'gas-city-dashboard-shared';
-import { api, ApiClientError } from '../api/client';
+import { api, formatApiError } from '../api/client';
 
 // Fetch the bead-ID linked view for a focus ref (gascity-dashboard-j4x).
 //
@@ -36,13 +36,7 @@ export function useEntityLinks(ref: string | null): UseEntityLinks {
         if (!cancelled) setView(result);
       } catch (err) {
         if (cancelled) return;
-        const msg =
-          err instanceof ApiClientError
-            ? `${err.status} ${err.message}`
-            : err instanceof Error
-              ? err.message
-              : 'related entities failed';
-        setError(msg);
+        setError(formatApiError(err, 'related entities failed'));
         setView(null);
       } finally {
         if (!cancelled) setLoading(false);

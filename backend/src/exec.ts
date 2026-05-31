@@ -13,6 +13,7 @@ import {
   runExec,
   type ExecResult,
 } from './exec-core.js';
+import { RUN_REVIEWABLE_PATHS } from './runs/run-diff-policy.js';
 
 export { AGENT_ALIAS_RE, ExecError };
 export type { ExecResult };
@@ -67,15 +68,6 @@ const GIT_LOG_TIMEOUT_MS = 10_000;
 const RUN_GIT_TIMEOUT_MS = 5_000;
 const GH_LIST_TIMEOUT_MS = 30_000;
 const GH_HISTORY_LIST_TIMEOUT_MS = 60_000;
-const RUN_REVIEWABLE_PATHS = [
-  '--',
-  ':/',
-  ':(exclude,top).beads',
-  ':(exclude,top).beads/**',
-  ':(exclude,top).gc',
-  ':(exclude,top).gc/**',
-];
-
 function sanitiseTerminalOutput(raw: string): string {
   return raw
     .replace(OSC_RE, '')

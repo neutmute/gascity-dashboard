@@ -5,9 +5,9 @@ import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
 import { Table, type TableColumn } from '../components/Table';
+import { useNow } from '../contexts/NowContext';
 import { useCachedData } from '../hooks/useCachedData';
 import { formatRelative } from '../hooks/time';
-import { useVisibleInterval } from '../hooks/useVisibleInterval';
 
 const VIEW_OPTIONS: ReadonlyArray<{ value: GitView; label: string }> = [
   { value: 'recent-main', label: 'Recent · main' },
@@ -18,8 +18,7 @@ const VIEW_OPTIONS: ReadonlyArray<{ value: GitView; label: string }> = [
 
 export function ActivityPage() {
   const [view, setView] = useState<GitView>('recent-main');
-  const [now, setNow] = useState(() => Date.now());
-  useVisibleInterval(() => setNow(Date.now()), 15_000);
+  const now = useNow();
 
   const {
     data: commitsData,

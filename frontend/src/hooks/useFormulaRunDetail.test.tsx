@@ -40,7 +40,6 @@ describe("useFormulaRunDetail", () => {
 
   it("reports run detail load failures to the centralized client log", async () => {
     mockFormulaRun.mockRejectedValue(new Error("detail unavailable"));
-    mockRunDiff.mockResolvedValue({ kind: "ok" });
 
     const { result } = renderHook(() => useFormulaRunDetail("wf-1"));
 
@@ -56,9 +55,10 @@ describe("useFormulaRunDetail", () => {
       operation: "load detail",
       message: "wf-1: detail unavailable",
     });
+    expect(mockRunDiff).not.toHaveBeenCalled();
   });
 
-  it("keeps the detail visible and reports diff load failures", async () => {
+  it("loads only the detail resource and leaves diff fetching to useRunDiff", async () => {
     mockFormulaRun.mockResolvedValue(detail());
     mockRunDiff.mockRejectedValue(new Error("git unavailable"));
 
@@ -70,15 +70,9 @@ describe("useFormulaRunDetail", () => {
       throw new Error("run detail did not load");
     expect(result.current.detail.runId).toBe("wf-1");
     expect(result.current.refreshState).toEqual({ kind: "idle" });
-    expect(result.current.diff).toMatchObject({
-      kind: "error",
-      error: "git unavailable",
-    });
-    expect(mockReportClientError).toHaveBeenCalledWith({
-      component: "formula-run-detail",
-      operation: "load diff",
-      message: "wf-1: git unavailable",
-    });
+    expect("diff" in result.current).toBe(false);
+    expect(mockRunDiff).not.toHaveBeenCalled();
+    expect(mockReportClientError).not.toHaveBeenCalled();
   });
 });
 

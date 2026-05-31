@@ -7,6 +7,7 @@ import type {
   TriageTierSection,
 } from 'gas-city-dashboard-shared';
 import { execGhIssueList, execGhPrList, ExecError } from '../../../exec.js';
+import { parseJsonArray } from '../../../lib/parse-json.js';
 import { classifyItem } from './classifier.js';
 import { computeContributorStats } from './contributor.js';
 import { buildClusters, inheritIssueFiles } from './blast-radius.js';
@@ -149,22 +150,6 @@ export async function fetchTriage(repo: string): Promise<MaintainerTriage> {
   }
 
   return composeEnvelope(repo, [...issueItems, ...prItems]);
-}
-
-function parseJsonArray<T>(stdout: string, source: string): T[] {
-  if (stdout.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(stdout) as unknown;
-    if (!Array.isArray(parsed)) {
-      throw new Error(`${source} did not return an array`);
-    }
-    return parsed as T[];
-  } catch (err) {
-    throw new ExecError(
-      `${source} returned unparseable JSON: ${(err as Error).message}`,
-      'spawn',
-    );
-  }
 }
 
 function mapIssue(it: GhIssue): TriageItem {
@@ -320,10 +305,7 @@ export function collectItems(envelope: MaintainerTriage): TriageItem[] {
  * Idempotent: safe to re-run; each call overwrites the field on every
  * item in the input.
  */
-export function computeHasInFlightPr(items: TriageItem[]): void {
-  // Build the set of issue numbers that have at least one in-flight
-  // PR in this envelope. A PR is in-flight when its status is
-  // anything other than merged / closed.
+export function issueNumbersWithInFlightPr(items: ReadonlyArray<TriageItem>): ReadonlySet<number> {
   const issuesWithInFlightPr = new Set<number>();
   for (const item of items) {
     if (item.kind !== 'pr') continue;
@@ -332,6 +314,11 @@ export function computeHasInFlightPr(items: TriageItem[]): void {
       issuesWithInFlightPr.add(linkedNum);
     }
   }
+  return issuesWithInFlightPr;
+}
+
+export function computeHasInFlightPr(items: TriageItem[]): void {
+  const issuesWithInFlightPr = issueNumbersWithInFlightPr(items);
   for (const item of items) {
     if (item.kind === 'issue') {
       item.has_in_flight_pr = issuesWithInFlightPr.has(item.number);
@@ -375,22 +362,11 @@ export function computeHasInFlightPr(items: TriageItem[]): void {
  * Items whose is_marked is already false are passed over.
  */
 export function selectOneMark(items: TriageItem[]): void {
-  // (1) Build the set of issue numbers whose in-flight PR is in view.
-  // A PR is in-flight when its status is anything other than merged /
-  // closed — gh issue/pr list returns only open items today, so all PRs
-  // here qualify, but the explicit predicate future-proofs against a
-  // wider fetch. Any candidate issue in this set is dropped from the
-  // mark scan so the eye lands on the action (the PR), not the problem.
-  const issueNumbersWithInFlightPr = new Set<number>();
+  // (1) Drop candidate issues whose in-flight PR is in view so the eye
+  // lands on the action (the PR), not the problem.
+  const issueNumbersWithInFlightPrSet = issueNumbersWithInFlightPr(items);
   for (const item of items) {
-    if (item.kind !== 'pr') continue;
-    if (item.status === 'merged' || item.status === 'closed') continue;
-    for (const linkedNum of item.linked_numbers) {
-      issueNumbersWithInFlightPr.add(linkedNum);
-    }
-  }
-  for (const item of items) {
-    if (item.kind === 'issue' && issueNumbersWithInFlightPr.has(item.number)) {
+    if (item.kind === 'issue' && issueNumbersWithInFlightPrSet.has(item.number)) {
       item.is_marked = false;
     }
   }
@@ -441,7 +417,7 @@ export function selectOneMark(items: TriageItem[]): void {
       if (
         parent !== undefined &&
         parent !== topMark &&
-        !issueNumbersWithInFlightPr.has(parent.number)
+        !issueNumbersWithInFlightPrSet.has(parent.number)
       ) {
         topMark.is_marked = false;
         parent.is_marked = true;

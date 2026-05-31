@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FormulaRunDetailPage } from './FormulaRunDetail';
 import { invalidate } from '../api/cache';
 import { setActiveCity } from '../api/cityBase';
+import { NowProvider } from '../contexts/NowContext';
 import {
   GC_EVENT_PREFIX,
   type TranscriptResult,
@@ -163,6 +164,7 @@ describe('FormulaRunDetailPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
     expect(nodePressed(reviewPipelineName)).toBe('true');
+    openSessionTab();
     await screen.findByText(/checking graph\.v2 node grouping/i);
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(
       'run-evidence-tab-session',
@@ -199,6 +201,7 @@ describe('FormulaRunDetailPage', () => {
     renderPage('/runs/gc-adopt-pr-active?node=review-pipeline', true);
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     await waitFor(() => expect(nodePressed(reviewPipelineName)).toBe('true'));
+    openSessionTab();
 
     fireEvent.click(screen.getByRole('button', { name: /clear node query/i }));
 
@@ -244,7 +247,7 @@ describe('FormulaRunDetailPage', () => {
     const cityStream = requireCityEventSource();
 
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
-    await screen.findByText(/checking graph\.v2 node grouping/i);
+    expect(nodePressed(reviewPipelineName)).toBe('true');
     fireEvent.click(screen.getByRole('tab', { name: /diff/i }));
     await screen.findByRole('heading', { name: /local changes/i });
 
@@ -370,6 +373,7 @@ describe('FormulaRunDetailPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
+    openSessionTab();
     await screen.findByText(/checking graph\.v2 node grouping/i);
 
     fireEvent.click(screen.getByRole('radio', { name: /iteration 1/i }));
@@ -382,6 +386,7 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByRole('heading', { name: /adopt pr #42/i });
 
     expect(screen.queryByRole('button', { name: /old-only review/i })).toBeNull();
+    openSessionTab();
     await screen.findByText(/historical-only/i);
     await screen.findByText(/found two issues/i);
     expect(requireCityEventSource()).toBeTruthy();
@@ -392,6 +397,7 @@ describe('FormulaRunDetailPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
+    openSessionTab();
     await screen.findByText(/checking graph\.v2 node grouping/i);
     await screen.findByText(/command: node --import tsx --test/i);
     await screen.findByText(/stdout: 5 graph\.v2 enrichment tests passed/i);
@@ -424,6 +430,7 @@ describe('FormulaRunDetailPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
+    openSessionTab();
     await screen.findByText(/checking graph\.v2 node grouping/i);
     await waitFor(() => expect(sessionEventSources()).toHaveLength(1));
 
@@ -453,12 +460,14 @@ describe('FormulaRunDetailPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: reviewPipelineName }));
+    openSessionTab();
     await screen.findByText(/checking graph\.v2 node grouping/i);
     await waitFor(() => expect(sessionEventSources()).toHaveLength(1));
     const firstStream = sessionEventSources()[0];
     expect(firstStream?.closed).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: applyFixesName }));
+    openSessionTab();
     await screen.findByText(/apply the iteration 1 review fixes/i);
     await waitFor(() => expect(firstStream?.closed).toBe(true));
 
@@ -478,6 +487,7 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByRole('heading', { name: /adopt pr #42/i });
 
     fireEvent.click(screen.getByRole('button', { name: applyFixesName }));
+    openSessionTab();
     await screen.findByText(/apply the iteration 1 review fixes/i);
 
     fireEvent.click(screen.getByRole('radio', { name: /iteration 2/i }));
@@ -492,6 +502,7 @@ describe('FormulaRunDetailPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /pre-approval ci repair loop/i }));
 
+    openSessionTab();
     await screen.findByText(/session unresolved for this node/i);
     const sessionTab = screen.getByRole('tab', { name: /session/i }) as HTMLButtonElement;
     expect(sessionTab.disabled).toBe(false);
@@ -545,6 +556,7 @@ describe('FormulaRunDetailPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /adopt pr #42/i });
     fireEvent.click(screen.getByRole('button', { name: /pre-approval ci repair loop/i }));
+    openSessionTab();
     expect(screen.getByText(/session unresolved for this node/i)).toBeTruthy();
   });
 
@@ -554,6 +566,7 @@ describe('FormulaRunDetailPage', () => {
     await screen.findByRole('heading', { name: /adopt pr #42/i });
 
     fireEvent.click(screen.getByRole('button', { name: /rebase and local validation/i }));
+    openSessionTab();
 
     expect(screen.getByRole('radio', { name: /attempt 1/i })).toBeTruthy();
     expect(screen.getByRole('radio', { name: /attempt 2/i })).toBeTruthy();
@@ -574,10 +587,10 @@ function renderPage(
         <Route
           path="/runs/:runId"
           element={
-            <>
+            <NowProvider intervalMs={1_000_000}>
               <FormulaRunDetailPage />
               {includeRouteControls && <RouteControls />}
-            </>
+            </NowProvider>
           }
         />
       </Routes>
@@ -606,6 +619,10 @@ function jsonResponse(payload: unknown): Response {
 
 function nodePressed(name: RegExp): string | null {
   return screen.getByRole('button', { name }).getAttribute('aria-pressed');
+}
+
+function openSessionTab(): void {
+  fireEvent.click(screen.getByRole('tab', { name: /session/i }));
 }
 
 function requireCityEventSource(): FakeEventSource {

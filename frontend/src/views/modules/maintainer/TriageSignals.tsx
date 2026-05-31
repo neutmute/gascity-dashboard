@@ -36,11 +36,11 @@ export function TriageScore({
   return null;
 }
 
-export function RunLink({ item }: { item: Pick<TriageItem, 'workflow_run_id'> }) {
+export function RunLink({ item }: { item: Pick<TriageItem, 'run_id'> }) {
   // Tri-state (gascity-dashboard-djpk): undefined = never slung, null =
   // slung but no run yet — both render nothing. Only a string run id is
   // linkable, used directly as the /runs/:runId route key.
-  const runId = item.workflow_run_id;
+  const runId = item.run_id;
   if (runId === undefined || runId === null) return null;
   return (
     <>

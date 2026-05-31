@@ -8,7 +8,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveSessionForTarget, lastSegment } from './session-resolve.js';
-import type { GcSession } from './index.js';
+import type { GcSession } from './gc-client-types.js';
 
 function sess(partial: Partial<GcSession> & { id: string }): GcSession {
   return {

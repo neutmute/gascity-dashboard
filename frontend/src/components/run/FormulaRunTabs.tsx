@@ -1,21 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
-import type { RunDisplayNode, RunDiffResponse } from 'gas-city-dashboard-shared';
+import type { RunDisplayNode } from 'gas-city-dashboard-shared';
+import type { RunDiffLoadState } from '../../hooks/useRunDiff';
 import { RunNodeEvidencePanel } from './RunNodeEvidencePanel';
 
 interface FormulaRunTabsProps {
-  diff: RunDiffResponse;
+  diff: RunDiffLoadState;
   selectedNode: RunDisplayNode | null;
 }
 
 export function FormulaRunTabs({ diff, selectedNode }: FormulaRunTabsProps) {
   const [tab, setTab] = useState<'diff' | 'session'>('diff');
-  const selectedNodeId = selectedNode?.id ?? null;
   const activeTabId = `run-evidence-tab-${tab}`;
-
-  useEffect(() => {
-    if (selectedNodeId !== null) setTab('session');
-  }, [selectedNodeId]);
 
   return (
     <section aria-label="Run evidence">

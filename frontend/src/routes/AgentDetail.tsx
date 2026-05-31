@@ -7,7 +7,7 @@ import {
 } from "gas-city-dashboard-shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiClientError } from "../api/client";
+import { api, apiErrorParts, formatApiError } from "../api/client";
 import { BeadDetailModal } from "../components/BeadDetailModal";
 import { Button } from "../components/Button";
 import { PageHeader } from "../components/PageHeader";
@@ -22,10 +22,10 @@ import {
 import { AgentLivePeek } from "../components/agent/AgentLivePeek";
 import { AgentMetadata } from "../components/agent/AgentMetadata";
 import { useViewingAs } from "../contexts/ViewingAsContext";
+import { useNow } from "../contexts/NowContext";
 import { useAbortableVisibleRefresh } from "../hooks/useAbortableVisibleRefresh";
 import { useEntityLinks } from "../hooks/useEntityLinks";
 import { useGcEventRefresh } from "../hooks/useGcEvents";
-import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { reportClientError } from "../lib/clientErrorReporting";
 import { stateTone } from "./Agents";
@@ -57,7 +57,7 @@ export function AgentDetailPage() {
   const [viewingBead, setViewingBead] = useState<GcBead | null>(null);
   const [viewingBeadId, setViewingBeadId] = useState<string | null>(null);
 
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow();
 
   const [directivesPrompt, setDirectivesPrompt] = useState<string | null>(null);
   const [directivesLoading, setDirectivesLoading] = useState(false);
@@ -112,8 +112,6 @@ export function AgentDetailPage() {
   // guards for dropped or unavailable event streams.
   useVisibleRefresh(refreshSessions, SESSIONS_REFRESH_MS);
   useVisibleRefresh(refreshBeads, BEADS_REFRESH_MS);
-  useVisibleInterval(() => setNow(Date.now()), 5_000);
-
   useGcEventRefresh([GC_EVENT_PREFIX.session, GC_EVENT_PREFIX.bead], () => {
     void refreshSessions();
     void refreshBeads();
@@ -211,21 +209,14 @@ export function AgentDetailPage() {
       setDirectivesPrompt(result.prompt);
       setDirectivesAliasFetched(primeAlias);
     } catch (err) {
-      const status = err instanceof ApiClientError ? err.status : undefined;
-      const kind = err instanceof ApiClientError ? err.kind : undefined;
-      const message =
-        err instanceof ApiClientError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "directives fetch failed";
+      const parts = apiErrorParts(err, "directives fetch failed");
       const directivesError: {
         status?: number;
         kind?: string;
         message: string;
-      } = { message };
-      if (status !== undefined) directivesError.status = status;
-      if (kind !== undefined) directivesError.kind = kind;
+      } = { message: parts.message };
+      if (parts.status !== undefined) directivesError.status = parts.status;
+      if (parts.kind !== undefined) directivesError.kind = parts.kind;
       setDirectivesError(directivesError);
       setDirectivesPrompt(null);
       setDirectivesAliasFetched(primeAlias);
@@ -406,10 +397,4 @@ export function AgentDetailPage() {
       />
     </section>
   );
-}
-
-function formatApiError(err: unknown): string {
-  if (err instanceof ApiClientError) return `${err.status} ${err.message}`;
-  if (err instanceof Error) return err.message;
-  return "mail failed";
 }

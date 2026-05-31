@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiClientError } from '../../api/client';
+import { api, formatApiError } from '../../api/client';
 import { OPERATOR_ALIAS, useViewingAs } from '../../contexts/ViewingAsContext';
 import { displayLabel } from '../../hooks/aliasPriority';
 import { Button } from '../Button';
@@ -37,13 +37,7 @@ export function ComposeModal({ open, onClose, onSent }: ComposeModalProps) {
       await api.sendMail({ to, subject, body });
       onSent();
     } catch (err) {
-      const msg =
-        err instanceof ApiClientError
-          ? `${err.status} ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : 'send failed';
-      setError(msg);
+      setError(formatApiError(err, 'send failed'));
     } finally {
       setSending(false);
     }

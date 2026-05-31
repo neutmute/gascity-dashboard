@@ -24,6 +24,11 @@ export interface SlingRequest {
   readonly target?: string;
 }
 
+export interface SlingRequestBatch {
+  readonly requests: ReadonlyArray<SlingRequest>;
+  readonly skippedKeys: ReadonlyArray<string>;
+}
+
 /** Immutable add/remove on a selection set, keyed by selectionKey. */
 export function toggleSelectionItem(
   current: ReadonlySet<string>,
@@ -43,25 +48,30 @@ export function toggleSelectionItem(
  * Build the per-item sling request payloads for every selected
  * `{kind, number}` that survives the lookup. Items that no longer exist
  * in the current envelope (e.g. closed between selection and send) are
- * silently skipped — the request would 4xx anyway, and the user already
- * picked them so the operator-side intent is clear. The optional `target`
- * is omitted when undefined so the backend's MAINTAINER_TRIAGE_TARGET /
- * MAINTAINER_SLING_TARGET fallback chain owns the routing decision.
+ * returned as `skippedKeys`: no request should be sent for them, but the
+ * operator must see why the sent count is lower than the selected count.
+ * The optional `target` is omitted when undefined so the backend's
+ * MAINTAINER_TRIAGE_TARGET / MAINTAINER_SLING_TARGET fallback chain owns
+ * the routing decision.
  */
 export function buildSlingRequests(
   selection: ReadonlySet<string>,
   items: ReadonlyArray<TriageItem>,
   intent: MaintainerSlingIntent = 'triage',
   target?: string,
-): SlingRequest[] {
+): SlingRequestBatch {
   const byKey = new Map<string, TriageItem>();
   for (const it of items) {
     byKey.set(selectionKey({ kind: it.kind, number: it.number }), it);
   }
-  const out: SlingRequest[] = [];
+  const requests: SlingRequest[] = [];
+  const skippedKeys: string[] = [];
   for (const key of selection) {
     const item = byKey.get(key);
-    if (item === undefined) continue;
+    if (item === undefined) {
+      skippedKeys.push(key);
+      continue;
+    }
     const req: SlingRequest = {
       kind: item.kind,
       number: item.number,
@@ -69,9 +79,9 @@ export function buildSlingRequests(
       intent,
       ...(target !== undefined ? { target } : {}),
     };
-    out.push(req);
+    requests.push(req);
   }
-  return out;
+  return { requests, skippedKeys };
 }
 
 /** Flatten every TriageItem in a MaintainerTriage envelope. */

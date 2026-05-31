@@ -199,10 +199,10 @@ export interface FormulaRunDetail {
  *   See gascity-dashboard-e7hj for the precedent.
  */
 export type RunFormula =
-  | { kind: 'known'; name: string; source: WorkflowFormulaSource }
+  | { kind: 'known'; name: string; source: RunFormulaSource }
   | { kind: 'unavailable'; reason: 'missing_formula_metadata' };
 
-export type WorkflowFormulaSource = 'metadata' | 'title_fallback';
+export type RunFormulaSource = 'metadata' | 'title_fallback';
 
 export type RunFormulaDetailFetchFailure =
   | 'timeout'
