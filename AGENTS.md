@@ -6,11 +6,14 @@ The durable conventions, invariants, and gotchas an agent must load to contribut
 
 An editorial-typographic ambient dashboard surfacing live state from a [Gas City](https://github.com/gastownhall/gascity) (`gc`) supervisor over its HTTP API. npm workspaces: `backend` (Node + Express + TS), `frontend` (React + Vite + Tailwind), and `shared`.
 
+- **This repository is temporary.** It is the standalone workspace for the next Gas City dashboard and is intended to replace the existing `gc dashboard` implementation in `gastownhall/gascity` once it is ready to fold back into the main `gc` codebase.
 - **`shared` is the single source of truth for wire-shape types.** Both sides import it, so a wire mismatch is a compile error, not a runtime `undefined`. Change a shape there, not ad hoc on either side.
 - **The backend binds `127.0.0.1` only, by design.** For remote dev, forward the Vite port over SSH; never expose the backend.
+- **User-facing product language is Formula / Run / Formula Run.** The GC supervisor API still uses `workflow` in some wire paths and field names. Keep that vocabulary at the edge and translate to dashboard-owned run/formula-run DTOs before data flows through the app.
 
 ## The contracts (they outrank assumed conventions)
 
+- **`README.md`** — repo status, quick start, supported surface, and operations overview.
 - **`PRODUCT.md`** — what's being built and for whom. Strategic decisions defer to it.
 - **`DESIGN.md`** — the binding visual contract; re-read it before any UI or UI-copy change. It defines the named rules and style absolutes and outranks habit. Don't restate it here — it would go stale against the source of truth.
 - **`docs/{ARCHITECTURE,SECURITY,EXTENDING}.md`** — how things are wired, the security/impersonation model, and how to add a route or endpoint.
@@ -21,12 +24,43 @@ Published at **github.com/gastownhall/gascity-dashboard**. Land feature work on 
 
 `main` is branch-protected — land work via a PR that passes CI (`.github/workflows`); you cannot push straight to `main`. **Match CI locally before pushing or the merge blocks:** the root `npm run typecheck` covers only each workspace's _app_ tsconfig, but CI also runs `typecheck:test` (backend + frontend), `frontend run build`, and both test suites. A change to a `shared` wire-shape type breaks `*.test.ts(x)` fixtures the app typecheck never sees — run both `typecheck:test`s too.
 
+## Commands
+
+Use npm workspaces from the repo root:
+
+- `npm install`
+- `npm run build:shared`
+- `npm run dev:backend`
+- `npm run dev:frontend`
+- `npm run lint`
+- `npm run typecheck`
+- `npm --workspace backend test`
+- `npm --workspace frontend test`
+- `npm --workspace frontend run build`
+
+For GC supervisor OpenAPI work:
+
+- `npm run openapi:gc-supervisor:update` refreshes `backend/openapi/gc-supervisor.openapi.json`.
+- `npm run openapi:gc-supervisor:generate` regenerates supervisor client/schema artifacts.
+- `npm run openapi:gc-supervisor:check` verifies generated artifacts are current.
+
+Do **not** hand-edit generated supervisor API artifacts. Change the OpenAPI schema or generator inputs, regenerate, and commit the generated result.
+
 ## Gotchas the code won't tell you
 
 - **Tailwind config changes need a full Vite restart**, not HMR: `rm -rf node_modules/.vite && npm run dev:frontend`, or stale class definitions are served.
 - **The Vite proxy's `changeOrigin: true` is load-bearing** — it makes write requests carry the backend's expected `Origin` and pass its allow-list. Don't remove it.
 - **`.env.local` (gitignored) must be sourced** before the backend runs (it defines `GC_CITY_NAME`, `ADMIN_AUDIT_LOG_PATH`, etc.): `set -a; . ./.env.local; set +a`.
 - **Formula run detail has a focused browser harness:** `node scripts/snap-formula-run-detail.mjs --test` clicks through `/runs` into a mocked run detail and fails on any broken `/api/*` call. It hardcodes `BASE=http://127.0.0.1:5174` and **does not start its own server** — it drives whatever vite is already serving there, so it tests the working tree of whichever checkout is running `npm run dev:frontend`. Running the harness from a worktree without retargeting the dev server just retests the primary tree. Playwright lives at `scripts/node_modules/` (per-script install), not at the root.
+- **Hidden paths are ignored by default.** `.gitignore` intentionally ignores dotfiles/dot-directories except allow-listed project files such as `.github`, `.claude`, and `.agents`. Be deliberate before adding new hidden project paths.
+
+## Project agent files
+
+- `AGENTS.md` is the canonical shared project guide.
+- `CLAUDE.md` and `GEMINI.md` are import shims that point at `AGENTS.md`.
+- `.claude/skills/` is the real shared project skill tree.
+- `.agents/skills` symlinks to `.claude/skills`.
+- Preserve this layout when adding project-scoped skills or guidance.
 
 ## Issue tracking
 
