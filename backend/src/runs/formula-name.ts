@@ -26,7 +26,7 @@ export interface ResolvedRunFormulaName {
  * convention (verified against live ds-research data: title equals the
  * registered formula name for every observed graph.v2 root, including
  * `mol-focus-review`, `mol-dashboard-graphv2-smoke`). Without this
- * fallback, both the formula-detail fetch in routes/workflows.ts and the
+ * fallback, both the formula-detail fetch in routes/runs.ts and the
  * presentation-enrichment in formula-run.ts would treat graph.v2 lanes as
  * missing a formula, collapsing every graph.v2 run-detail page to an
  * empty `formula_detail_unavailable` state.

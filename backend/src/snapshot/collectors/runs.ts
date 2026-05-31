@@ -1072,7 +1072,7 @@ async function discoverFromFeed(gc: GcClient): Promise<FeedDiscovery> {
       // Gate on SCOPE_REF_RE so a malformed supervisor scope_ref can't be
       // propagated into a lane that the routes layer would reject when the
       // user clicks the deep-link. Validation here matches the inbound gate
-      // at backend/src/routes/workflows.ts; SSOT regex lives in shared.
+      // at backend/src/routes/runs.ts; SSOT regex lives in shared.
       if (
         rootId !== null &&
         scopeKind !== null &&
