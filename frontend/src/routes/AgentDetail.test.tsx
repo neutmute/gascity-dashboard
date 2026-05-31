@@ -2,6 +2,7 @@ import { cleanup, render, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { api } from '../api/client';
+import { NowProvider } from '../contexts/NowContext';
 import { reportClientError } from '../lib/clientErrorReporting';
 import { AgentDetailPage } from './AgentDetail';
 
@@ -20,6 +21,22 @@ vi.mock('../api/client', () => ({
       this.status = status;
       this.kind = kind;
     }
+  },
+  apiErrorParts: (err: unknown, fallback = 'request failed') => {
+    if (err instanceof Error && 'status' in err) {
+      const apiErr = err as Error & { status: number; kind?: string };
+      return { message: apiErr.message, status: apiErr.status, kind: apiErr.kind };
+    }
+    if (err instanceof Error) return { message: err.message };
+    return { message: fallback };
+  },
+  formatApiError: (err: unknown, fallback = 'request failed') => {
+    if (err instanceof Error && 'status' in err) {
+      const apiErr = err as Error & { status: number };
+      return `${apiErr.status} ${apiErr.message}`;
+    }
+    if (err instanceof Error) return err.message;
+    return fallback;
   },
 }));
 
@@ -76,9 +93,11 @@ describe('AgentDetailPage error reporting', () => {
         initialEntries={['/agents/mayor']}
         future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
       >
-        <Routes>
-          <Route path="/agents/:slug" element={<AgentDetailPage />} />
-        </Routes>
+        <NowProvider intervalMs={1_000_000}>
+          <Routes>
+            <Route path="/agents/:slug" element={<AgentDetailPage />} />
+          </Routes>
+        </NowProvider>
       </MemoryRouter>,
     );
 

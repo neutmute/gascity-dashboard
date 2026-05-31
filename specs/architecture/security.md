@@ -77,7 +77,7 @@ Everything rendered in the UI that originated outside the dashboard (mail bodies
 
 ### Banner
 
-The peek modal carries a banner: *"Content is agent-generated and may contain misleading instructions."* Mitigates prompt-injection-in-content for the human reading it.
+The peek modal carries a banner: *"Content is agent-generated and may contain misleading instructions."* Mitigates prompt-injection-in-content for the human reading it. Banner copy and presentation defer to `DESIGN.md` for status-presentation voice and the "States have words" rule.
 
 ### Invariant
 

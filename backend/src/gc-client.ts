@@ -24,14 +24,41 @@ import type {
   SlingResponse,
   SupervisorHealth,
 } from 'gas-city-dashboard-shared';
-import createClient, { type Client } from 'openapi-fetch';
 import {
   gcSupervisorDecoders,
   type GcDecoder,
   type GcTranscriptResponse,
+  invalidGeneratedSupervisorPayload,
   type SupervisorCity,
 } from './gc-supervisor-decoders.js';
-import type { paths } from './generated/gc-supervisor.js';
+import {
+  createClient as createGeneratedSupervisorClient,
+  type Client as GeneratedSupervisorClient,
+} from '@hey-api/client-fetch';
+import {
+  getV0Cities,
+  getV0CityByCityNameAgentByBase,
+  getV0CityByCityNameAgents,
+  getV0CityByCityNameBeadById,
+  getV0CityByCityNameBeads,
+  getV0CityByCityNameEvents,
+  getV0CityByCityNameFormulasByName,
+  getV0CityByCityNameFormulasByNameRuns,
+  getV0CityByCityNameFormulasFeed,
+  getV0CityByCityNameHealth,
+  getV0CityByCityNameMail,
+  getV0CityByCityNameOrderHistoryByBeadId,
+  getV0CityByCityNameOrdersFeed,
+  getV0CityByCityNameOrdersHistory,
+  getV0CityByCityNameRigs,
+  getV0CityByCityNameSessionByIdTranscript,
+  getV0CityByCityNameSessions,
+  getV0CityByCityNameStatus,
+  getV0CityByCityNameWorkflowByWorkflowId,
+  patchV0CityByCityNameBeadById,
+  postV0CityByCityNameSling,
+  sendMail as sendSupervisorMail,
+} from './generated/gc-supervisor-client/sdk.gen.js';
 
 // Typed client for the gc supervisor HTTP API. All reads of supervisor
 // state go through here; no other module fetches from supervisor
@@ -59,40 +86,11 @@ const DEFAULT_TIMEOUT_MS = (() => {
 // enough headroom while still bounding a hung supervisor.
 const SLING_TIMEOUT_MS = 60_000;
 
-const SUPERVISOR_PATHS = {
-  agent: '/v0/city/{cityName}/agent/{base}',
-  agents: '/v0/city/{cityName}/agents',
-  bead: '/v0/city/{cityName}/bead/{id}',
-  // Non-city supervisor endpoint: the registry of managed cities. The
-  // only path here that is NOT city-scoped (gascity-dashboard-ucc).
-  cities: '/v0/cities',
-  beads: '/v0/city/{cityName}/beads',
-  events: '/v0/city/{cityName}/events',
-  eventsStream: '/v0/city/{cityName}/events/stream',
-  formulaDetail: '/v0/city/{cityName}/formulas/{name}',
-  formulaRuns: '/v0/city/{cityName}/formulas/{name}/runs',
-  formulasFeed: '/v0/city/{cityName}/formulas/feed',
-  health: '/v0/city/{cityName}/health',
-  mail: '/v0/city/{cityName}/mail',
-  orderHistoryDetail: '/v0/city/{cityName}/order/history/{bead_id}',
-  ordersFeed: '/v0/city/{cityName}/orders/feed',
-  ordersHistory: '/v0/city/{cityName}/orders/history',
-  rigs: '/v0/city/{cityName}/rigs',
-  sessionStream: '/v0/city/{cityName}/session/{id}/stream',
-  sessions: '/v0/city/{cityName}/sessions',
-  sling: '/v0/city/{cityName}/sling',
-  status: '/v0/city/{cityName}/status',
-  transcript: '/v0/city/{cityName}/session/{id}/transcript',
-  workflow: '/v0/city/{cityName}/workflow/{workflow_id}',
-} as const satisfies Record<string, keyof paths>;
-
 type SupervisorFetchResult<RawValue> = {
-  response: Response;
-  data?: RawValue;
+  response?: Response | undefined;
+  data?: RawValue | undefined;
   error?: unknown;
 };
-
-type SupervisorPath = keyof paths & string;
 
 export interface GcClientOptions {
   baseUrl: string;
@@ -104,13 +102,15 @@ export interface GcClientOptions {
 export class GcClient {
   private readonly defaultTimeoutMs: number;
   private readonly inflight = new Map<string, Promise<unknown>>();
-  private readonly supervisor: Client<paths>;
+  private readonly supervisor: GeneratedSupervisorClient;
 
   constructor(private readonly opts: GcClientOptions) {
     this.defaultTimeoutMs = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.supervisor = createClient<paths>({
+    this.supervisor = createGeneratedSupervisorClient({
       baseUrl: opts.baseUrl,
       headers: { Accept: 'application/json' },
+      responseStyle: 'fields',
+      throwOnError: false,
     });
   }
 
@@ -122,10 +122,6 @@ export class GcClient {
   /** City name this client is scoped to. */
   get cityName(): string {
     return this.opts.cityName;
-  }
-
-  private cityPath(suffix: string): string {
-    return `${this.opts.baseUrl}/v0/city/${encodeURIComponent(this.opts.cityName)}${suffix}`;
   }
 
   /**
@@ -157,7 +153,11 @@ export class GcClient {
       return this.awaitWithSignal(existing as Promise<DecodedValue>, signal);
     }
 
-    const promise = this.fetchOnce(run, timeoutMs).then(decoder);
+    const promise = this.fetchOnce(
+      run,
+      timeoutMs,
+      decoderPayloadName(decoder),
+    ).then(decoder);
     this.inflight.set(key, promise);
     // Detach a no-throw cleanup so the slot is released on both settle
     // paths. Returning the original `promise` keeps the rejection surface
@@ -201,26 +201,41 @@ export class GcClient {
   private async fetchOnce<RawValue>(
     run: (signal: AbortSignal) => Promise<SupervisorFetchResult<RawValue>>,
     timeoutMs: number,
+    payloadName?: string,
   ): Promise<RawValue> {
     // Default timeout only. Caller-supplied signals are handled at the
     // `awaitWithSignal` layer so that one caller's abort does not kill a
     // coalesced fetch shared with other waiters.
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const result = await run(timeoutSignal);
+    let result: SupervisorFetchResult<RawValue>;
+    try {
+      result = await run(timeoutSignal);
+    } catch (err) {
+      throw errorFromGeneratedClient(err, payloadName);
+    }
+    if (result.response === undefined) {
+      throw errorFromGeneratedClient(result.error, payloadName);
+    }
     if (!result.response.ok) {
       throw sanitizedSupervisorStatusError(result.response.status);
     }
-    if (result.data === undefined) {
+    if (result.error !== undefined) {
+      throw errorFromGeneratedClient(result.error, payloadName);
+    }
+    if (
+      result.data === undefined ||
+      isGeneratedEmptyJsonBody(result.response, result.data)
+    ) {
       throw new Error('gc supervisor returned an empty response body');
     }
     return result.data;
   }
 
   private operationKey(
-    path: SupervisorPath,
+    operation: string,
     params: readonly (string | number | boolean | undefined)[] = [],
   ): string {
-    return JSON.stringify([path, ...params]);
+    return JSON.stringify([operation, ...params]);
   }
 
   private cityPathParams(): { cityName: string } {
@@ -228,57 +243,70 @@ export class GcClient {
   }
 
   private cityUrl(
-    path: SupervisorPath,
+    url: string,
     pathParams: Record<string, string>,
     queryParams: Record<string, string> = {},
   ): URL {
-    const renderedPath = path.replace(/\{([^}]+)\}/g, (_match, key: string) => {
-      const value = pathParams[key];
-      if (value === undefined) {
-        throw new Error(`missing gc supervisor path parameter ${key}`);
-      }
-      return encodeURIComponent(value);
-    });
-    const url = new URL(`${this.opts.baseUrl}${renderedPath}`);
-    for (const [key, value] of Object.entries(queryParams)) {
-      url.searchParams.set(key, value);
-    }
-    return url;
+    return new URL(this.supervisor.buildUrl({
+      baseUrl: this.baseUrl,
+      url,
+      path: pathParams,
+      query: queryParams,
+    }));
   }
 
-  /**
-   * Send a JSON body to a city-scoped write endpoint with the given HTTP
-   * `method` (gascity-dashboard-mq2). Defaults to POST; bead-claim uses PATCH.
-   * Deliberately NOT coalesced — single-flight is a read-side optimisation;
-   * writes must each hit the supervisor. The `X-GC-Request` header is the
-   * supervisor's anti-CSRF presence check (any non-empty value is accepted).
-   *
-   * `timeoutMs` overrides the read default because writes do real work
-   * (a sling creates a bead, attaches a wisp, dispatches to a rig — ~30s
-   * measured), far longer than a GET. Same redaction contract as
-   * fetchOnce: the thrown message carries only the status, never the URL.
-   */
-  private async writeJson<T>(
-    suffix: string,
-    body: unknown,
+  private async writeOperation<RawValue>(
+    run: (signal: AbortSignal) => Promise<SupervisorFetchResult<RawValue>>,
     timeoutMs: number,
-    method: 'POST' | 'PATCH' = 'POST',
-  ): Promise<T> {
-    const url = this.cityPath(suffix);
-    const res = await fetch(url, {
-      method,
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-GC-Request': 'dashboard',
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      throw new Error(`gc supervisor returned ${res.status}`);
-    }
-    return (await res.json()) as T;
+    payloadName: string,
+  ): Promise<RawValue> {
+    return this.fetchOnce(run, timeoutMs, payloadName);
+  }
+
+  private mutationHeaders(): { 'X-GC-Request': string } {
+    return { 'X-GC-Request': 'dashboard' };
+  }
+
+  private async writeSling(input: SlingInput): Promise<unknown> {
+    return this.writeOperation(
+      (upstreamSignal) => postV0CityByCityNameSling({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        headers: this.mutationHeaders(),
+        body: input,
+        signal: upstreamSignal,
+      }),
+      SLING_TIMEOUT_MS,
+      'sling',
+    );
+  }
+
+  private async writeBeadUpdate(id: string, body: BeadUpdateInput): Promise<unknown> {
+    return this.writeOperation(
+      (upstreamSignal) => patchV0CityByCityNameBeadById({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), id },
+        headers: this.mutationHeaders(),
+        body,
+        signal: upstreamSignal,
+      }),
+      this.defaultTimeoutMs,
+      'updateBead',
+    );
+  }
+
+  private async writeMail(body: MailSendInput): Promise<unknown> {
+    return this.writeOperation(
+      (upstreamSignal) => sendSupervisorMail({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        headers: this.mutationHeaders(),
+        body,
+        signal: upstreamSignal,
+      }),
+      this.defaultTimeoutMs,
+      'sendMail',
+    );
   }
 
   /**
@@ -287,7 +315,7 @@ export class GcClient {
    * record slung-state.
    */
   async sling(input: SlingInput): Promise<SlingResponse> {
-    const raw = await this.writeJson<unknown>('/sling', input, SLING_TIMEOUT_MS);
+    const raw = await this.writeSling(input);
     // Decode at the write edge: the supervisor emits the wire field
     // `workflow_id`, which the decoder maps onto the renamed `run_id`
     // property (#61). A raw cast would silently drop the routed run id.
@@ -304,12 +332,7 @@ export class GcClient {
    * on the CLI (no reason field / no HTTP route respectively).
    */
   async updateBead(id: string, body: BeadUpdateInput): Promise<void> {
-    await this.writeJson<{ status?: string }>(
-      `/bead/${encodeURIComponent(id)}`,
-      body,
-      this.defaultTimeoutMs,
-      'PATCH',
-    );
+    await this.writeBeadUpdate(id, body);
   }
 
   /**
@@ -319,15 +342,17 @@ export class GcClient {
    * never the browser; the browser-facing shape has no `from` slot.
    */
   async sendMail(body: MailSendInput): Promise<MailSendResponse> {
-    return this.writeJson<MailSendResponse>('/mail', body, this.defaultTimeoutMs);
+    const raw = await this.writeMail(body);
+    return gcSupervisorDecoders.sendMail(raw);
   }
 
   async listSessions(signal?: AbortSignal): Promise<GcSessionList> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.sessions),
+      this.operationKey('getV0CityByCityNameSessions'),
       gcSupervisorDecoders.listSessions,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.sessions, {
-        params: { path: this.cityPathParams() },
+      (upstreamSignal) => getV0CityByCityNameSessions({
+        client: this.supervisor,
+        path: this.cityPathParams(),
         signal: upstreamSignal,
       }),
       signal,
@@ -344,10 +369,11 @@ export class GcClient {
    */
   async getStatus(signal?: AbortSignal): Promise<GcStatus> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.status),
+      this.operationKey('getV0CityByCityNameStatus'),
       gcSupervisorDecoders.getStatus,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.status, {
-        params: { path: this.cityPathParams() },
+      (upstreamSignal) => getV0CityByCityNameStatus({
+        client: this.supervisor,
+        path: this.cityPathParams(),
         signal: upstreamSignal,
       }),
       signal,
@@ -365,10 +391,11 @@ export class GcClient {
    */
   async listRigs(signal?: AbortSignal): Promise<GcRigList> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.rigs),
+      this.operationKey('getV0CityByCityNameRigs'),
       gcSupervisorDecoders.listRigs,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.rigs, {
-        params: { path: this.cityPathParams() },
+      (upstreamSignal) => getV0CityByCityNameRigs({
+        client: this.supervisor,
+        path: this.cityPathParams(),
         signal: upstreamSignal,
       }),
       signal,
@@ -386,9 +413,10 @@ export class GcClient {
    */
   async listCities(signal?: AbortSignal): Promise<CityList> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.cities),
+      this.operationKey('getV0Cities'),
       gcSupervisorDecoders.listCities,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.cities, {
+      (upstreamSignal) => getV0Cities({
+        client: this.supervisor,
         signal: upstreamSignal,
       }),
       signal,
@@ -407,9 +435,10 @@ export class GcClient {
     signal?: AbortSignal,
   ): Promise<readonly SupervisorCity[]> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.cities, ['supervisor']),
+      this.operationKey('getV0Cities', ['supervisor']),
       gcSupervisorDecoders.listSupervisorCities,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.cities, {
+      (upstreamSignal) => getV0Cities({
+        client: this.supervisor,
         signal: upstreamSignal,
       }),
       signal,
@@ -428,10 +457,11 @@ export class GcClient {
    */
   async listAgents(signal?: AbortSignal): Promise<GcAgentList> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.agents),
+      this.operationKey('getV0CityByCityNameAgents'),
       gcSupervisorDecoders.listAgents,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.agents, {
-        params: { path: this.cityPathParams() },
+      (upstreamSignal) => getV0CityByCityNameAgents({
+        client: this.supervisor,
+        path: this.cityPathParams(),
         signal: upstreamSignal,
       }),
       signal,
@@ -443,15 +473,16 @@ export class GcClient {
    * agent's alias (`base` in the supervisor's path naming, but it is the
    * agent's `name`, not a session id). gascity-dashboard-ay6. The caller
    * is responsible for URL-encoding any '/' inside qualified names
-   * (e.g. 'thriva/devpipeline.architect') — openapi-fetch handles the
+   * (e.g. 'thriva/devpipeline.architect') — the generated SDK handles the
    * `{base}` substitution and applies encodeURIComponent.
    */
   async getAgent(base: string, signal?: AbortSignal): Promise<GcAgent> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.agent, [base]),
+      this.operationKey('getV0CityByCityNameAgentByBase', [base]),
       gcSupervisorDecoders.getAgent,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.agent, {
-        params: { path: { ...this.cityPathParams(), base } },
+      (upstreamSignal) => getV0CityByCityNameAgentByBase({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), base },
         signal: upstreamSignal,
       }),
       signal,
@@ -460,10 +491,11 @@ export class GcClient {
 
   async getBead(id: string, signal?: AbortSignal): Promise<GcBead> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.bead, [id]),
+      this.operationKey('getV0CityByCityNameBeadById', [id]),
       gcSupervisorDecoders.getBead,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.bead, {
-        params: { path: { ...this.cityPathParams(), id } },
+      (upstreamSignal) => getV0CityByCityNameBeadById({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), id },
         signal: upstreamSignal,
       }),
       signal,
@@ -505,7 +537,7 @@ export class GcClient {
     if (params?.rig !== undefined) query.rig = params.rig;
     if (params?.all !== undefined) query.all = params.all;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.beads, [
+      this.operationKey('getV0CityByCityNameBeads', [
         params?.limit,
         params?.status,
         params?.type,
@@ -515,8 +547,10 @@ export class GcClient {
         params?.all,
       ]),
       gcSupervisorDecoders.listBeads,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.beads, {
-        params: { path: this.cityPathParams(), query },
+      (upstreamSignal) => getV0CityByCityNameBeads({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        query,
         signal: upstreamSignal,
       }),
       signal,
@@ -536,14 +570,16 @@ export class GcClient {
     const query: { limit?: number } = {};
     if (params?.limit !== undefined) query.limit = params.limit;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.mail, [
+      this.operationKey('getV0CityByCityNameMail', [
         params?.box,
         params?.alias,
         params?.limit,
       ]),
       gcSupervisorDecoders.listMail,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.mail, {
-        params: { path: this.cityPathParams(), query },
+      (upstreamSignal) => getV0CityByCityNameMail({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        query,
         signal: upstreamSignal,
       }),
       signal,
@@ -554,10 +590,12 @@ export class GcClient {
     const query: { index?: string } = {};
     if (after !== undefined) query.index = String(after);
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.events, [after]),
+      this.operationKey('getV0CityByCityNameEvents', [after]),
       gcSupervisorDecoders.listEvents,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.events, {
-        params: { path: this.cityPathParams(), query },
+      (upstreamSignal) => getV0CityByCityNameEvents({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        query,
         signal: upstreamSignal,
       }),
       signal,
@@ -575,17 +613,16 @@ export class GcClient {
       query.scope_ref = scope.scopeRef;
     }
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.workflow, [
+      this.operationKey('getV0CityByCityNameWorkflowByWorkflowId', [
         runId,
         scope?.scopeKind,
         scope?.scopeRef,
       ]),
       gcSupervisorDecoders.getRun,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.workflow, {
-        params: {
-          path: { ...this.cityPathParams(), workflow_id: runId },
-          query,
-        },
+      (upstreamSignal) => getV0CityByCityNameWorkflowByWorkflowId({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), workflow_id: runId },
+        query,
         signal: upstreamSignal,
       }),
       signal,
@@ -609,13 +646,15 @@ export class GcClient {
       scope_ref: scope.scopeRef,
     };
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.formulasFeed, [
+      this.operationKey('getV0CityByCityNameFormulasFeed', [
         scope.scopeKind,
         scope.scopeRef,
       ]),
       gcSupervisorDecoders.listFormulaRuns,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.formulasFeed, {
-        params: { path: this.cityPathParams(), query },
+      (upstreamSignal) => getV0CityByCityNameFormulasFeed({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        query,
         signal: upstreamSignal,
       }),
       signal,
@@ -634,18 +673,17 @@ export class GcClient {
       target,
     };
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.formulaDetail, [
+      this.operationKey('getV0CityByCityNameFormulasByName', [
         formulaName,
         scope.scopeKind,
         scope.scopeRef,
         target,
       ]),
       gcSupervisorDecoders.getFormulaDetail,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.formulaDetail, {
-        params: {
-          path: { ...this.cityPathParams(), name: formulaName },
-          query,
-        },
+      (upstreamSignal) => getV0CityByCityNameFormulasByName({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), name: formulaName },
+        query,
         signal: upstreamSignal,
       }),
       signal,
@@ -686,18 +724,17 @@ export class GcClient {
     };
     if (options.limit !== undefined) query.limit = options.limit;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.formulaRuns, [
+      this.operationKey('getV0CityByCityNameFormulasByNameRuns', [
         formulaName,
         scope.scopeKind,
         scope.scopeRef,
         options.limit,
       ]),
       gcSupervisorDecoders.listFormulaRunsByName,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.formulaRuns, {
-        params: {
-          path: { ...this.cityPathParams(), name: formulaName },
-          query,
-        },
+      (upstreamSignal) => getV0CityByCityNameFormulasByNameRuns({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), name: formulaName },
+        query,
         signal: upstreamSignal,
       }),
       options.signal,
@@ -725,14 +762,16 @@ export class GcClient {
     }
     if (options.limit !== undefined) query.limit = options.limit;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.ordersFeed, [
+      this.operationKey('getV0CityByCityNameOrdersFeed', [
         options.scope?.scopeKind,
         options.scope?.scopeRef,
         options.limit,
       ]),
       gcSupervisorDecoders.listOrdersFeed,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.ordersFeed, {
-        params: { path: this.cityPathParams(), query },
+      (upstreamSignal) => getV0CityByCityNameOrdersFeed({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        query,
         signal: upstreamSignal,
       }),
       options.signal,
@@ -757,14 +796,16 @@ export class GcClient {
     if (options.limit !== undefined) query.limit = options.limit;
     if (options.before !== undefined) query.before = options.before;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.ordersHistory, [
+      this.operationKey('getV0CityByCityNameOrdersHistory', [
         scopedName,
         options.limit,
         options.before,
       ]),
       gcSupervisorDecoders.listOrderHistory,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.ordersHistory, {
-        params: { path: this.cityPathParams(), query },
+      (upstreamSignal) => getV0CityByCityNameOrdersHistory({
+        client: this.supervisor,
+        path: this.cityPathParams(),
+        query,
         signal: upstreamSignal,
       }),
       options.signal,
@@ -785,16 +826,15 @@ export class GcClient {
     const query: { store_ref?: string } = {};
     if (options.storeRef !== undefined) query.store_ref = options.storeRef;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.orderHistoryDetail, [
+      this.operationKey('getV0CityByCityNameOrderHistoryByBeadId', [
         beadId,
         options.storeRef,
       ]),
       gcSupervisorDecoders.getOrderHistoryDetail,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.orderHistoryDetail, {
-        params: {
-          path: { ...this.cityPathParams(), bead_id: beadId },
-          query,
-        },
+      (upstreamSignal) => getV0CityByCityNameOrderHistoryByBeadId({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), bead_id: beadId },
+        query,
         signal: upstreamSignal,
       }),
       options.signal,
@@ -807,10 +847,11 @@ export class GcClient {
   } = {}): Promise<SupervisorHealth> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.health, [timeoutMs]),
+      this.operationKey('getV0CityByCityNameHealth', [timeoutMs]),
       gcSupervisorDecoders.health,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.health, {
-        params: { path: this.cityPathParams() },
+      (upstreamSignal) => getV0CityByCityNameHealth({
+        client: this.supervisor,
+        path: this.cityPathParams(),
         signal: upstreamSignal,
       }),
       options.signal,
@@ -821,7 +862,7 @@ export class GcClient {
   eventsStreamUrl(after?: string): URL {
     const query = after === undefined || after.length === 0 ? {} : { after };
     return this.cityUrl(
-      SUPERVISOR_PATHS.eventsStream,
+      '/v0/city/{cityName}/events/stream',
       this.cityPathParams(),
       query,
     );
@@ -830,7 +871,7 @@ export class GcClient {
   sessionStreamUrl(sessionId: string, after?: string): URL {
     const query = after === undefined || after.length === 0 ? {} : { after };
     return this.cityUrl(
-      SUPERVISOR_PATHS.sessionStream,
+      '/v0/city/{cityName}/session/{id}/stream',
       { ...this.cityPathParams(), id: sessionId },
       query,
     );
@@ -845,10 +886,11 @@ export class GcClient {
     signal?: AbortSignal,
   ): Promise<GcTranscriptResponse> {
     return this.getOperation(
-      this.operationKey(SUPERVISOR_PATHS.transcript, [sessionId]),
+      this.operationKey('getV0CityByCityNameSessionByIdTranscript', [sessionId]),
       gcSupervisorDecoders.fetchTranscript,
-      (upstreamSignal) => this.supervisor.GET(SUPERVISOR_PATHS.transcript, {
-        params: { path: { ...this.cityPathParams(), id: sessionId } },
+      (upstreamSignal) => getV0CityByCityNameSessionByIdTranscript({
+        client: this.supervisor,
+        path: { ...this.cityPathParams(), id: sessionId },
         signal: upstreamSignal,
       }),
       signal,
@@ -863,4 +905,30 @@ function sanitizedSupervisorStatusError(status: number): Error {
   // The status code is enough: the route already labels the failure with
   // its own error string and kind:'upstream'.
   return new Error(`gc supervisor returned ${status}`);
+}
+
+function decoderPayloadName(decoder: unknown): string {
+  const entry = Object.entries(gcSupervisorDecoders).find(([, candidate]) =>
+    candidate === decoder
+  );
+  return entry?.[0] ?? 'response';
+}
+
+function errorFromGeneratedClient(error: unknown, payloadName?: string): Error {
+  if (payloadName !== undefined) {
+    const invalidPayload = invalidGeneratedSupervisorPayload(payloadName, error);
+    if (invalidPayload !== null) return invalidPayload;
+  }
+  if (error instanceof Error) return error;
+  if (typeof error === 'string' && error.length > 0) return new Error(error);
+  return new Error('gc supervisor request failed');
+}
+
+function isGeneratedEmptyJsonBody(response: Response, data: unknown): boolean {
+  if (response.status === 204) return false;
+  if (response.headers.get('Content-Length') !== '0') return false;
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+  return Object.keys(data).length === 0;
 }

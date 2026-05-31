@@ -23,7 +23,7 @@ import {
   type RunIssue,
 } from '../snapshot/collectors/phaseMapping.js';
 import { meta } from './bead-fields.js';
-import { resolveRunFormulaName } from './formula-name.js';
+import { resolveRunFormulaIdentity } from './formula-name.js';
 import { applyDisplayNodeStates } from './display-state.js';
 import { buildRunDisplayEdges } from './edges.js';
 import {
@@ -205,14 +205,6 @@ function fromGcRunBead(bead: GcRunBead): RunIssue {
   return issue;
 }
 
-function runFormula(root: GcRunBead): string | null {
-  return meta(root, 'gc.formula') ?? meta(root, 'gc.formula_name') ?? null;
-}
-
-function runFormulaTarget(root: GcRunBead): string | null {
-  return meta(root, 'gc.run_target') ?? meta(root, 'gc.routed_to') ?? root.assignee ?? null;
-}
-
 function runFormulaState(
   root: GcRunBead | undefined,
   formulaDetail: GcFormulaDetail | undefined,
@@ -223,14 +215,20 @@ function runFormulaState(
   //   1. `gc.formula` / `gc.formula_name` metadata   → source: 'metadata'
   //   2. supervisor formula detail name               → source: 'metadata'
   //      (canonical even when the root metadata key is absent)
-  //   3. graph.v2 title fallback (resolveRunFormulaName) → 'title_fallback'
-  // The title fallback shares resolveRunFormulaName with the route-side
-  // formula-detail fetch (routes/runs.ts) so both agree on which graph.v2
-  // roots get a title-derived name. See gascity-dashboard-sadp.
-  const metadataName = (root ? runFormula(root) : null) ?? formulaDetail?.name;
-  if (metadataName) return { kind: 'known', name: metadataName, source: 'metadata' };
-  const resolved = resolveRunFormulaName(root);
-  if (resolved !== null) return { kind: 'known', name: resolved.name, source: resolved.source };
+  //   3. graph.v2 title fallback (resolveRunFormulaIdentity) → 'title_fallback'
+  // The title fallback shares the mode-aware identity resolver with the
+  // route-side formula-detail fetch (routes/runs.ts) so both agree on which
+  // graph.v2 roots get a title-derived name. See gascity-dashboard-sadp.
+  const resolved = resolveRunFormulaIdentity('state', { root, formulaDetail });
+  if (resolved.name !== null) {
+    const source =
+      resolved.source === 'title_fallback' ? 'title_fallback' : 'metadata';
+    return {
+      kind: 'known',
+      name: resolved.name,
+      source,
+    };
+  }
   return {
     kind: 'unavailable',
     reason: 'missing_formula_metadata',
@@ -241,9 +239,10 @@ function runFormulaDetailState(
   root: GcRunBead | undefined,
   formulaDetail: GcFormulaDetail | undefined,
 ): RunFormulaDetailState {
-  const name = root ? runFormula(root) ?? formulaDetail?.name : formulaDetail?.name;
-  if (!name) return { kind: 'unavailable', reason: 'missing_formula_metadata' };
-  const target = root ? runFormulaTarget(root) : null;
+  const resolved = resolveRunFormulaIdentity('detail', { root, formulaDetail });
+  const name = resolved.name;
+  if (name === null) return { kind: 'unavailable', reason: 'missing_formula_metadata' };
+  const target = resolved.target;
   if (!target) return { kind: 'unavailable', reason: 'missing_run_target', name };
   if (formulaDetail !== undefined) return { kind: 'available', name, target };
   return {

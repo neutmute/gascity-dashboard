@@ -216,11 +216,11 @@ describe('buildRunSummary', () => {
     assert.equal(summary.totalActive, 1);
     assert.deepEqual(summary.census, {
       status: 'unavailable',
-      error: 'workflow health has not been derived',
+      error: 'run health has not been derived',
     });
     assert.deepEqual(summary.lanes[0]?.health, {
       status: 'unavailable',
-      error: 'workflow health has not been derived',
+      error: 'run health has not been derived',
     });
     assert.equal(summary.lanes.length, 1);
     const lane = summary.lanes[0]!;
@@ -228,7 +228,7 @@ describe('buildRunSummary', () => {
     assert.equal(lane.title, 'Adopt PR workflow');
     assert.deepEqual(lane.formula, {
       status: 'unavailable',
-      error: 'workflow formula unavailable',
+      error: 'run formula unavailable',
     });
     assert.equal(lane.phase, 'review');
     assert.deepEqual(lane.activeAssignees, ['workflows.codex-max']);
@@ -245,11 +245,11 @@ describe('buildRunSummary', () => {
         key: 'review',
         label: 'Review round 3',
       },
-      error: 'active workflow step unavailable',
+      error: 'active run step unavailable',
     });
   });
 
-  test('carries workflow formula as an explicit known state', () => {
+  test('carries run formula as an explicit known state', () => {
     const summary = buildRunSummary([
       issue({
         id: 'ga-root',
@@ -292,7 +292,7 @@ describe('buildRunSummary', () => {
     assert.equal(summary.lanes.length, 1);
     assert.deepEqual(summary.lanes[0]!.formula, {
       status: 'unavailable',
-      error: 'workflow formula unavailable',
+      error: 'run formula unavailable',
     });
   });
 
@@ -363,7 +363,7 @@ describe('buildRunSummary', () => {
     // Pre-fix this would have surfaced 'mol-child-impostor' from the child.
     assert.deepEqual(summary.lanes[0]!.formula, {
       status: 'unavailable',
-      error: 'workflow formula unavailable',
+      error: 'run formula unavailable',
     });
   });
 
@@ -388,7 +388,7 @@ describe('buildRunSummary', () => {
     assert.equal(summary.historicalLanes.length, 1);
     assert.deepEqual(summary.historicalLanes[0]!.formula, {
       status: 'unavailable',
-      error: 'workflow formula unavailable',
+      error: 'run formula unavailable',
     });
   });
 
@@ -438,7 +438,7 @@ describe('buildRunSummary', () => {
     });
   });
 
-  test('carries active workflow progress as an explicit state', () => {
+  test('carries active run progress as an explicit state', () => {
     const summary = buildRunSummary([
       issue({
         id: 'pr-root',
@@ -481,7 +481,7 @@ describe('buildRunSummary', () => {
     assert.equal(lane.formulaStageResolved, true);
   });
 
-  test('carries workflow scope metadata onto lanes for supervisor detail links', () => {
+  test('carries run scope metadata onto lanes for supervisor detail links', () => {
     const summary = buildRunSummary([
       issue({
         id: 'ga-root',
@@ -546,7 +546,7 @@ describe('buildRunSummary', () => {
     const lane = summary.lanes[0]!;
     assert.deepEqual(lane.scope, {
       status: 'unavailable',
-      error: 'workflow scope metadata unavailable',
+      error: 'run scope metadata unavailable',
     });
   });
 
@@ -653,7 +653,7 @@ describe('buildRunSummary', () => {
     const lane = summary.lanes[0]!;
     assert.deepEqual(lane.scope, {
       status: 'unavailable',
-      error: 'workflow scope metadata unavailable',
+      error: 'run scope metadata unavailable',
     });
   });
 
@@ -1295,7 +1295,7 @@ describe('createRunsSourceCache', () => {
                 target: '/home/ds/gascity/polecat',
                 started_at: '2026-05-28T23:24:42Z',
                 updated_at: '2026-05-28T23:24:42Z',
-                workflow_id: 'gc-0ioyjp',
+                run_id: 'gc-0ioyjp',
                 root_bead_id: 'gc-0ioyjp',
                 root_store_ref: 'rig:gascity',
                 run_detail_available: true,
@@ -1572,7 +1572,7 @@ describe('createRunsSourceCache', () => {
               target: '/tmp/feed-target',
               started_at: '2026-05-28T00:00:00Z',
               updated_at: '2026-05-28T00:00:00Z',
-              workflow_id: 'feed-run',
+              run_id: 'feed-run',
               root_bead_id: 'feed-run',
               root_store_ref: 'rig:shared',
               run_detail_available: true,
@@ -1648,7 +1648,7 @@ describe('createRunsSourceCache', () => {
               target: '/home/ds/gascity/polecat',
               started_at: '2026-05-28T00:00:00Z',
               updated_at: '2026-05-28T00:00:00Z',
-              workflow_id: 'rig-only-root',
+              run_id: 'rig-only-root',
               root_bead_id: 'rig-only-root',
               root_store_ref: 'rig:gascity',
               run_detail_available: true,
@@ -1724,7 +1724,7 @@ describe('createRunsSourceCache', () => {
               target: '/home/ds/gascity/polecat',
               started_at: '2026-05-28T00:00:00Z',
               updated_at: '2026-05-28T00:00:00Z',
-              workflow_id: 'malformed-feed-root',
+              run_id: 'malformed-feed-root',
               root_bead_id: 'malformed-feed-root',
               root_store_ref: 'rig:gascity',
               run_detail_available: true,
@@ -1744,7 +1744,7 @@ describe('createRunsSourceCache', () => {
       assert.ok(lane, 'lane should still be discoverable; only its scope is dropped');
       assert.deepEqual(lane.scope, {
         status: 'unavailable',
-        error: 'workflow scope metadata unavailable',
+        error: 'run scope metadata unavailable',
       });
     }
   });

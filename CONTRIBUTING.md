@@ -114,9 +114,9 @@ Small, focused PRs land faster than sweeping ones. Some defaults:
   and into [`.env.example`](.env.example) and the README config table in
   the same PR.
 - New routes or backend endpoints follow the patterns in
-  [`docs/EXTENDING.md`](docs/EXTENDING.md).
+  [`specs/architecture/extending.md`](specs/architecture/extending.md).
 - Security-touching changes (auth, CSRF, exec, host allow-list) need a
-  matching update to [`docs/SECURITY.md`](docs/SECURITY.md) in the same PR.
+  matching update to [`specs/architecture/security.md`](specs/architecture/security.md) in the same PR.
 
 Commits use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`,
 `test:`, `chore:`, `perf:`, `ci:`). The PR title is usually the same as the
@@ -147,19 +147,19 @@ of truth. Do not soften that boundary.
 
 If your change touches the impersonation model, expect close review.
 [`CLAUDE.md`](CLAUDE.md#the-operator) and
-[`docs/SECURITY.md`](docs/SECURITY.md) have the longer version.
+[`specs/architecture/security.md`](specs/architecture/security.md) have the longer version.
 
 ## Where to look next
 
-- [`PRODUCT.md`](PRODUCT.md): strategic context. Who the operator is, what
+- [`specs/requirements/product.md`](specs/requirements/product.md): strategic context. Who the operator is, what
   the dashboard is and is not, the brand and anti-references.
 - [`DESIGN.md`](DESIGN.md): the visual system. Palette, type, the Named
   Rules, Do's and Don'ts.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): how the pieces fit. The
+- [`specs/architecture/overview.md`](specs/architecture/overview.md): how the pieces fit. The
   systemd-separated-from-supervisor decision, the shared types story.
-- [`docs/EXTENDING.md`](docs/EXTENDING.md): adding a new route or backend
+- [`specs/architecture/extending.md`](specs/architecture/extending.md): adding a new route or backend
   endpoint, the conventions to follow.
-- [`docs/SECURITY.md`](docs/SECURITY.md): threat model, CSRF, host
+- [`specs/architecture/security.md`](specs/architecture/security.md): threat model, CSRF, host
   allow-list, exec whitelist.
 
 ## License

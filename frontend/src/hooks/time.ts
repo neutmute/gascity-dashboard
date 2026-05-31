@@ -3,8 +3,8 @@
  *
  * `formatRelative` produces compact human-readable durations relative to a
  * caller-supplied `now`. Passing `now` in (rather than calling `Date.now()`
- * internally) lets a parent component drive the tick via `useState(Date.now())`
- * so every relative timestamp in a render is consistent with every other.
+ * internally) lets the app-level `NowProvider` drive one shared tick so every
+ * relative timestamp in a render is consistent with every other.
  *
  * Output grammar (diffs are rounded to the nearest second before bucketing,
  * so e.g. 4.5s renders as '5s', not 'now'):

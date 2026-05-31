@@ -1,6 +1,5 @@
 import type {
   RunChangedFile,
-  RunChangedFileKind,
   RunDiffComparison,
   RunDiffResponse,
   RunDiffRootPath,
@@ -14,10 +13,13 @@ import {
 } from '../exec.js';
 import { MAX_RUN_DIFF_BYTES } from '../exec-core.js';
 import { LOG_COMPONENT, errorMessage, logWarn } from '../logging.js';
+import {
+  classifyRunDiffFile,
+  isReviewableRunDiffPath,
+} from './run-diff-policy.js';
 
 const MAX_UNTRACKED_PATCH_FILES = 50;
 const MAX_UNTRACKED_FILE_DIFF_BYTES = 96 * 1024;
-const CONTROL_PLANE_PATH_PREFIXES = ['.beads', '.gc'] as const;
 
 export async function readRunGitDiff(
   executionPath: RunExecutionPath,
@@ -276,7 +278,7 @@ function parseNameStatusLine(line: string): RunChangedFile | null {
   return {
     path: filePath,
     status,
-    kind: classifyChangedFile(filePath),
+    kind: classifyRunDiffFile(filePath),
   };
 }
 
@@ -284,56 +286,16 @@ function untrackedChangedFile(filePath: string): RunChangedFile {
   return {
     path: filePath,
     status: '??',
-    kind: classifyChangedFile(filePath),
+    kind: classifyRunDiffFile(filePath),
   };
 }
 
 function mergeChangedFiles(files: RunChangedFile[]): RunChangedFile[] {
   const byPath = new Map<string, RunChangedFile>();
   for (const file of files) {
-    if (!isReviewableRunDiffPath(file.path)) continue;
     byPath.set(file.path, file);
   }
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
-}
-
-function classifyChangedFile(filePath: string): RunChangedFileKind {
-  const lower = filePath.toLowerCase();
-  if (
-    lower.endsWith('.test.ts') ||
-    lower.endsWith('.test.tsx') ||
-    lower.endsWith('.spec.ts') ||
-    lower.endsWith('.spec.tsx') ||
-    lower.includes('/test/') ||
-    lower.includes('/tests/')
-  ) {
-    return 'test';
-  }
-  if (
-    lower.endsWith('.md') ||
-    lower.endsWith('.mdx') ||
-    lower.includes('/docs/')
-  ) {
-    return 'docs';
-  }
-  if (
-    lower.endsWith('.json') ||
-    lower.endsWith('.toml') ||
-    lower.endsWith('.yaml') ||
-    lower.endsWith('.yml') ||
-    lower.endsWith('.config.ts') ||
-    lower.endsWith('.config.js') ||
-    lower === 'package.json' ||
-    lower.endsWith('/package.json')
-  ) {
-    return 'config';
-  }
-  if (
-    /\.(ts|tsx|js|jsx|go|rs|py|rb|java|kt|swift|c|cc|cpp|h|hpp|css|scss|html)$/.test(lower)
-  ) {
-    return 'code';
-  }
-  return 'other';
 }
 
 function compareUntrackedPaths(a: string, b: string): number {
@@ -342,7 +304,7 @@ function compareUntrackedPaths(a: string, b: string): number {
 }
 
 function untrackedPatchPriority(filePath: string): number {
-  const kind = classifyChangedFile(filePath);
+  const kind = classifyRunDiffFile(filePath);
   if (kind === 'docs') return 0;
   if (kind === 'code' || kind === 'test' || kind === 'config') return 1;
   return 2;
@@ -360,13 +322,6 @@ function isReviewableNameStatusLine(line: string): boolean {
   const parts = line.split('\t').filter((part) => part.length > 0);
   if (parts.length < 2) return true;
   return parts.slice(1).every((filePath) => isReviewableRunDiffPath(filePath));
-}
-
-function isReviewableRunDiffPath(filePath: string): boolean {
-  const normalized = filePath.replace(/^"?[ab]\//, '').replace(/"$/, '');
-  return CONTROL_PLANE_PATH_PREFIXES.every(
-    (prefix) => normalized !== prefix && !normalized.startsWith(`${prefix}/`),
-  );
 }
 
 function filterReviewablePatch(patch: string): string {

@@ -5,6 +5,8 @@
 // Sources stay out of the runtime contract until they have real collectors and
 // visible product surface.
 
+import type { Avail } from '../lists.js';
+
 export type SourceName =
   | 'city'
   | 'resources'
@@ -236,15 +238,9 @@ export interface RunSummary {
   lanesPartial?: true;
 }
 
-export type RunCensusState =
-  | {
-    status: 'available';
-    data: RunCensus;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunCensusState = Avail<{
+  data: RunCensus;
+}>;
 
 /**
  * Threshold-independent city census (gascity-dashboard-3ax, PRD §4 / R5).
@@ -328,15 +324,9 @@ export interface RunLaneHealth {
   session: RunLaneSessionState;
 }
 
-export type RunLaneHealthState =
-  | {
-    status: 'available';
-    data: RunLaneHealth;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneHealthState = Avail<{
+  data: RunLaneHealth;
+}>;
 
 export interface RunCounts {
   total: number;
@@ -377,15 +367,9 @@ export interface RunLane {
   health: RunLaneHealthState;
 }
 
-export type RunLaneUpdatedAt =
-  | {
-    status: 'available';
-    at: string;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneUpdatedAt = Avail<{
+  at: string;
+}>;
 
 export type RunLaneProgress =
   | {
@@ -405,37 +389,19 @@ export type RunLaneProgress =
     error: string;
   };
 
-export type RunLaneStagePosition =
-  | {
-    status: 'available';
-    index: number;
-    key: string;
-    label: string;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneStagePosition = Avail<{
+  index: number;
+  key: string;
+  label: string;
+}>;
 
-export type RunLaneStepAttempt =
-  | {
-    status: 'available';
-    value: number;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneStepAttempt = Avail<{
+  value: number;
+}>;
 
-export type RunLaneStuckNode =
-  | {
-    status: 'available';
-    id: string;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneStuckNode = Avail<{
+  id: string;
+}>;
 
 export type RunLaneSessionState =
   | {
@@ -449,35 +415,17 @@ export type RunLaneSessionState =
     error: string;
   };
 
-export type RunLaneSessionLastActive =
-  | {
-    status: 'available';
-    at: string;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneSessionLastActive = Avail<{
+  at: string;
+}>;
 
-export type RunLaneSessionRunning =
-  | {
-    status: 'available';
-    value: boolean;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneSessionRunning = Avail<{
+  value: boolean;
+}>;
 
-export type RunLaneSessionActivity =
-  | {
-    status: 'available';
-    value: string;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneSessionActivity = Avail<{
+  value: string;
+}>;
 
 export type RunLaneFormula =
   | {
@@ -504,17 +452,11 @@ export type RunLaneExternalReference =
     error: string;
   };
 
-export type RunLaneScope =
-  | {
-    status: 'available';
-    kind: 'city' | 'rig';
-    ref: string;
-    rootStoreRef: string;
-  }
-  | {
-    status: 'unavailable';
-    error: string;
-  };
+export type RunLaneScope = Avail<{
+  kind: 'city' | 'rig';
+  ref: string;
+  rootStoreRef: string;
+}>;
 
 export type RunPhase =
   | 'intake'

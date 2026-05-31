@@ -27,26 +27,33 @@ export interface RunBeadGroups {
   badgesByTarget: Map<string, RunControlBadge[]>;
 }
 
+interface BeadIdentity {
+  base: string;
+  disambiguator: string | undefined;
+  semanticNodeId: string;
+}
+
 export function groupRunBeads(
   beads: GcRunBead[],
   rootBeadId: string,
 ): RunBeadGroups {
-  const groupsById = new Map<string, RunNodeGroup>();
+  const groupedBeads = new Map<string, GcRunBead[]>();
   const physicalToSemantic = new Map<string, string>();
   const badgesByTarget = new Map<string, RunControlBadge[]>();
   const physicalLogicalTargets = referencedPhysicalLogicalTargets(beads);
-  const semanticIds = resolveSemanticIds(beads, rootBeadId, physicalLogicalTargets);
+  const identities = resolveBeadIdentities(beads, rootBeadId, physicalLogicalTargets);
   const badgeTargetAliases = buildBadgeTargetAliases(
     beads,
     rootBeadId,
-    semanticIds,
+    identities,
     physicalLogicalTargets,
   );
 
   for (const bead of beads) {
     const beadId = nonEmpty(bead.id) ?? '';
     const constructKind = constructKindFor(bead, rootBeadId);
-    const semanticNodeId = semanticIds.get(bead) ?? semanticNodeIdFor(bead, rootBeadId);
+    const semanticNodeId =
+      identities.get(bead)?.semanticNodeId ?? semanticNodeIdFor(bead, rootBeadId);
     physicalToSemantic.set(beadId, semanticNodeId);
 
     if (isHiddenConstruct(constructKind)) {
@@ -64,94 +71,142 @@ export function groupRunBeads(
       continue;
     }
 
-    const existing = groupsById.get(semanticNodeId);
-    const group =
-      existing ??
-      buildRunNodeGroup(bead, semanticNodeId, constructKind);
-    if (existing && shouldPromoteGroupShape(existing.constructKind, constructKind)) {
-      existing.title = displayTitleFor(bead, semanticNodeId);
-      existing.kind = externalKindFor(bead, constructKind);
-      existing.constructKind = constructKind;
-      assignOptional(existing, 'scopeRef', meta(bead, 'gc.scope_ref') ?? nonEmpty(bead.scope_ref));
-      assignOptional(existing, 'loopControlNodeId', loopControlNodeIdFor(bead));
-    }
-    group.beads.push(bead);
-    if (!existing) groupsById.set(semanticNodeId, group);
+    const group = groupedBeads.get(semanticNodeId) ?? [];
+    group.push(bead);
+    groupedBeads.set(semanticNodeId, group);
   }
 
   return {
-    groups: [...groupsById.values()],
+    groups: [...groupedBeads].map(([semanticNodeId, groupBeads]) =>
+      buildRunNodeGroup(semanticNodeId, groupBeads, rootBeadId),
+    ),
     physicalToSemantic,
     badgesByTarget,
   };
 }
 
 function buildRunNodeGroup(
-  bead: GcRunBead,
   semanticNodeId: string,
-  constructKind: RunNodeGroup['constructKind'],
+  beads: GcRunBead[],
+  rootBeadId: string,
 ): RunNodeGroup {
-  const group: RunNodeGroup = {
+  const shapeBead = preferredShapeBead(beads, rootBeadId);
+  const constructKind = constructKindFor(shapeBead, rootBeadId);
+  const scopeRef = groupOptional(beads, shapeBead, (bead) =>
+    meta(bead, 'gc.scope_ref') ?? nonEmpty(bead.scope_ref),
+  );
+  const loopControlNodeId = groupOptional(beads, shapeBead, loopControlNodeIdFor);
+
+  return {
     semanticNodeId,
-    title: displayTitleFor(bead, semanticNodeId),
-    kind: externalKindFor(bead, constructKind),
+    title: displayTitleFor(shapeBead, semanticNodeId),
+    kind: externalKindFor(shapeBead, constructKind),
     constructKind,
-    beads: [] as GcRunBead[],
+    beads,
+    ...(scopeRef !== undefined ? { scopeRef } : {}),
+    ...(loopControlNodeId !== undefined ? { loopControlNodeId } : {}),
   };
-  assignOptional(group, 'scopeRef', meta(bead, 'gc.scope_ref') ?? nonEmpty(bead.scope_ref));
-  assignOptional(group, 'loopControlNodeId', loopControlNodeIdFor(bead));
-  return group;
 }
 
-function assignOptional<K extends 'scopeRef' | 'loopControlNodeId'>(
-  group: RunNodeGroup,
-  key: K,
-  value: RunNodeGroup[K] | undefined,
-): void {
-  if (value === undefined) {
-    delete group[key];
-    return;
+function preferredShapeBead(
+  beads: readonly GcRunBead[],
+  rootBeadId: string,
+): GcRunBead {
+  const [first] = [...beads].sort((left, right) => {
+    const priorityDiff =
+      constructPriority(constructKindFor(right, rootBeadId)) -
+      constructPriority(constructKindFor(left, rootBeadId));
+    if (priorityDiff !== 0) return priorityDiff;
+    return beadSortKey(left).localeCompare(beadSortKey(right));
+  });
+  if (!first) throw new Error('cannot build run node group from zero beads');
+  return first;
+}
+
+function groupOptional(
+  beads: readonly GcRunBead[],
+  shapeBead: GcRunBead,
+  resolve: (bead: GcRunBead) => string | undefined,
+): string | undefined {
+  return resolve(shapeBead) ?? sortedBeads(beads).map(resolve).find(isDefined);
+}
+
+function constructPriority(kind: RunNodeGroup['constructKind']): number {
+  switch (kind) {
+    case 'run-root':
+      return 100;
+    case 'check-loop':
+      return 90;
+    case 'retry':
+      return 80;
+    case 'condition':
+    case 'fanout':
+    case 'scope':
+    case 'expansion':
+      return 70;
+    case 'step':
+      return 10;
+    case 'control':
+    case 'run-finalize':
+    case 'scope-check':
+    case 'spec':
+    case 'unknown':
+      return 0;
   }
-  group[key] = value;
 }
 
-function shouldPromoteGroupShape(
-  current: RunNodeGroup['constructKind'],
-  candidate: RunNodeGroup['constructKind'],
-): boolean {
-  if (current !== 'step') return false;
-  return candidate !== 'step' && !isHiddenConstruct(candidate);
+function sortedBeads(beads: readonly GcRunBead[]): GcRunBead[] {
+  return [...beads].sort((left, right) => beadSortKey(left).localeCompare(beadSortKey(right)));
 }
 
-function resolveSemanticIds(
+function beadSortKey(bead: GcRunBead): string {
+  return [
+    nonEmpty(bead.id),
+    normalizedStepRef(bead),
+    nonEmpty(bead.title),
+  ]
+    .filter(isDefined)
+    .join('\u0000');
+}
+
+function resolveBeadIdentities(
   beads: readonly GcRunBead[],
   rootBeadId: string,
   physicalLogicalTargets: ReadonlySet<string>,
-): Map<GcRunBead, string> {
-  const baseIds = new Map<GcRunBead, string>();
+): Map<GcRunBead, BeadIdentity> {
+  const partialIdentities = new Map<GcRunBead, Omit<BeadIdentity, 'semanticNodeId'>>();
   const identitiesByBase = new Map<string, Set<string>>();
 
   for (const bead of beads) {
     const constructKind = constructKindFor(bead, rootBeadId);
     if (isHiddenConstruct(constructKind)) continue;
     const base = groupingBaseSemanticId(bead, rootBeadId, physicalLogicalTargets);
-    const identity =
-      duplicateResolutionIdentity(bead, rootBeadId, base, physicalLogicalTargets) ?? base;
-    baseIds.set(bead, base);
-    identitiesByBase.set(base, new Set([...(identitiesByBase.get(base) ?? []), identity]));
-  }
-
-  const resolved = new Map<GcRunBead, string>();
-  for (const bead of beads) {
-    const base = baseIds.get(bead) ?? semanticNodeIdFor(bead, rootBeadId);
-    const identities = identitiesByBase.get(base);
-    const identity = duplicateResolutionIdentity(
+    const disambiguator = duplicateResolutionIdentity(
       bead,
       rootBeadId,
       base,
       physicalLogicalTargets,
     );
-    resolved.set(bead, identities && identities.size > 1 && identity ? identity : base);
+    partialIdentities.set(bead, { base, disambiguator });
+    const identity = disambiguator ?? base;
+    const identities = identitiesByBase.get(base) ?? new Set<string>();
+    identities.add(identity);
+    identitiesByBase.set(base, identities);
+  }
+
+  const resolved = new Map<GcRunBead, BeadIdentity>();
+  for (const bead of beads) {
+    const partial =
+      partialIdentities.get(bead) ?? {
+        base: semanticNodeIdFor(bead, rootBeadId),
+        disambiguator: undefined,
+      };
+    const identities = identitiesByBase.get(partial.base);
+    const semanticNodeId =
+      identities && identities.size > 1 && partial.disambiguator
+        ? partial.disambiguator
+        : partial.base;
+    resolved.set(bead, { ...partial, semanticNodeId });
   }
   return resolved;
 }
@@ -192,7 +247,7 @@ function duplicateResolutionIdentity(
 function buildBadgeTargetAliases(
   beads: readonly GcRunBead[],
   rootBeadId: string,
-  semanticIds: Map<GcRunBead, string>,
+  identities: Map<GcRunBead, BeadIdentity>,
   physicalLogicalTargets: ReadonlySet<string>,
 ): Map<string, string> {
   const candidates = new Map<string, Set<string>>();
@@ -200,11 +255,13 @@ function buildBadgeTargetAliases(
   for (const bead of beads) {
     const constructKind = constructKindFor(bead, rootBeadId);
     if (isHiddenConstruct(constructKind)) continue;
-    const resolved = semanticIds.get(bead) ?? semanticNodeIdFor(bead, rootBeadId);
+    const identity = identities.get(bead);
+    const resolved = identity?.semanticNodeId ?? semanticNodeIdFor(bead, rootBeadId);
     for (const alias of visibleNodeAliases(
       bead,
       rootBeadId,
       resolved,
+      identity,
       physicalLogicalTargets,
     )) {
       const existing = candidates.get(alias) ?? new Set<string>();
@@ -227,12 +284,14 @@ function visibleNodeAliases(
   bead: GcRunBead,
   rootBeadId: string,
   resolved: string,
+  identity: BeadIdentity | undefined,
   physicalLogicalTargets: ReadonlySet<string>,
 ): string[] {
   return [
     resolved,
     semanticNodeIdFor(bead, rootBeadId),
-    groupingBaseSemanticId(bead, rootBeadId, physicalLogicalTargets),
+    identity?.base ?? groupingBaseSemanticId(bead, rootBeadId, physicalLogicalTargets),
+    identity?.disambiguator,
     stableSemanticIdentity(bead, rootBeadId),
     meta(bead, 'gc.step_id'),
     fullStepRefIdentity(normalizedStepRef(bead)),
@@ -240,6 +299,10 @@ function visibleNodeAliases(
   ]
     .filter((value): value is string => value !== undefined)
     .map((value) => externalizeId(value));
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function referencedPhysicalLogicalTargets(

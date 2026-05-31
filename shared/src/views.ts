@@ -1,4 +1,4 @@
-// Modular dashboard contract — Phase 1 of docs/PRD-modular-dashboard.md.
+// Modular dashboard contract — Phase 1 of specs/requirements/modular-dashboard-prd.md.
 //
 // These descriptors are the single source of truth for "what is a view"
 // and "what is a backend module" on BOTH sides of the wire. Living in
@@ -66,8 +66,6 @@ export interface ViewDescriptor<TElement = unknown> {
   /** Module's declared candidacy for `/`. Operator may override via
    *  DEFAULT_VIEW env. Registry validates exactly-one resolution. */
   defaultRoute?: boolean;
-  /** Optional 302 redirects to `path`. Replaces hand-rolled `/kanban -> /workflows`. */
-  legacyPaths?: readonly string[];
 }
 
 // ── Backend module ───────────────────────────────────────────────────────

@@ -17,18 +17,55 @@ import type {
   GcRunSnapshot,
   GcSessionList,
   GcStatus,
+  MailSendResponse,
   SlingResponse,
   SupervisorHealth,
   TranscriptTurn,
 } from 'gas-city-dashboard-shared';
 import { z } from 'zod';
-import {
-  openApiIssuePath,
-  validateGcSupervisorComponent,
-} from './gc-supervisor-schema-validator.js';
-import type { components } from './generated/gc-supervisor.js';
+import type {
+  AgentResponse,
+  Bead,
+  FormulaDetailResponse,
+  FormulaFeedBody,
+  FormulaRunsResponse,
+  HealthOutputBody,
+  ListBodyAgentResponse,
+  ListBodyBead,
+  ListBodyRigResponse,
+  ListBodySessionResponse,
+  ListBodyWireEvent,
+  MailListBody,
+  OrderHistoryDetailResponse,
+  OrderHistoryListBody,
+  OrdersFeedBody,
+  SessionTranscriptGetResponse,
+  StatusBody,
+  SupervisorCitiesOutputBody,
+  WorkflowSnapshotResponse,
+} from './generated/gc-supervisor-client/types.gen.js';
 
-type RawSupervisorSchema = components['schemas'];
+type RawSupervisorSchema = {
+  AgentResponse: AgentResponse;
+  Bead: Bead;
+  FormulaDetailResponse: FormulaDetailResponse;
+  FormulaFeedBody: FormulaFeedBody;
+  FormulaRunsResponse: FormulaRunsResponse;
+  HealthOutputBody: HealthOutputBody;
+  ListBodyAgentResponse: ListBodyAgentResponse;
+  ListBodyBead: ListBodyBead;
+  ListBodyRigResponse: ListBodyRigResponse;
+  ListBodySessionResponse: ListBodySessionResponse;
+  ListBodyWireEvent: ListBodyWireEvent;
+  MailListBody: MailListBody;
+  OrderHistoryDetailResponse: OrderHistoryDetailResponse;
+  OrderHistoryListBody: OrderHistoryListBody;
+  OrdersFeedBody: OrdersFeedBody;
+  SessionTranscriptGetResponse: SessionTranscriptGetResponse;
+  StatusBody: StatusBody;
+  SupervisorCitiesOutputBody: SupervisorCitiesOutputBody;
+  WorkflowSnapshotResponse: WorkflowSnapshotResponse;
+};
 
 /**
  * Decoder-edge type for the supervisor's session-transcript response.
@@ -167,7 +204,7 @@ export interface SupervisorCity {
 
 // Per-agent wire shape from `GET /v0/city/{name}/agents` and
 // `GET /v0/city/{name}/agent/{base}`. Mirrors the supervisor's
-// AgentResponse schema (backend/src/generated/gc-supervisor.ts:2070).
+// AgentResponse schema (backend/src/generated/gc-supervisor-client/types.gen.ts).
 // gascity-dashboard-ay6.
 //
 // Required fields per OpenAPI: name, available, running, suspended,
@@ -211,6 +248,21 @@ const MailItemSchema = z.object({
   body: z.string(),
   created_at: z.string(),
   read: z.boolean(),
+  thread_id: z.string().optional(),
+  rig: z.string().optional(),
+  priority: z.number().finite().optional(),
+  cc: z.array(z.string()).nullable().optional(),
+  reply_to: z.string().optional(),
+}).passthrough();
+
+const MailSendResponseSchema = z.object({
+  id: z.string(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  subject: z.string().optional(),
+  body: z.string().optional(),
+  created_at: z.string().optional(),
+  read: z.boolean().optional(),
   thread_id: z.string().optional(),
   rig: z.string().optional(),
   priority: z.number().finite().optional(),
@@ -331,10 +383,11 @@ const TranscriptResponseSchema = z.object({
 }).passthrough();
 
 // gascity-dashboard-ej9y: one entry from /v0/city/<city>/formulas/feed.
-// Mirrors supervisor `MonitorFeedItemResponse`. Used by the workflows
-// snapshot collector to discover rig-stored workflow roots that the
-// city-scoped listBeads endpoint does NOT return.
-const FormulaRunSchema = z.object({
+// Mirrors supervisor `MonitorFeedItemResponse` at the wire edge, then maps
+// `workflow_id` to dashboard `run_id`. Used by the runs snapshot collector
+// to discover rig-stored run roots that the city-scoped listBeads endpoint
+// does NOT return.
+const FormulaRunWireSchema = z.object({
   id: z.string(),
   type: z.string(),
   status: z.string(),
@@ -354,17 +407,27 @@ const FormulaRunSchema = z.object({
   detail_available: z.boolean().optional(),
   run_detail_available: z.boolean().optional(),
 }).passthrough();
+const FormulaRunSchema = FormulaRunWireSchema.transform(({ workflow_id: workflowId, ...rest }) =>
+  workflowId !== undefined ? { ...rest, run_id: workflowId } : rest,
+);
 
 // gascity-dashboard-hvx: per-formula run history. One entry from
 // FormulaRunsResponse.recent_runs. Mirrors supervisor `FormulaRecentRunResponse`
-// — workflow_id + target + status + the two timestamps are all required.
-const FormulaRecentRunSchema = z.object({
+// — workflow_id + target + status + the two timestamps are all required on
+// the wire. The dashboard DTO maps workflow_id to run_id.
+const FormulaRecentRunWireSchema = z.object({
   workflow_id: z.string(),
   target: z.string(),
   status: z.string(),
   started_at: z.string(),
   updated_at: z.string(),
 }).passthrough();
+const FormulaRecentRunSchema = FormulaRecentRunWireSchema.transform(
+  ({ workflow_id: workflowId, ...rest }) => ({
+    ...rest,
+    run_id: workflowId,
+  }),
+);
 
 // gascity-dashboard-hvx: one entry from OrderHistoryListBody.entries.
 // Mirrors supervisor `OrderHistoryEntry`. duration_ms / exit_code / signal
@@ -445,7 +508,6 @@ const PartialErrorsField = z.array(z.string())
 export const gcSupervisorDecoders = {
   listSessions(value: RawSupervisorSchema['ListBodySessionResponse']): GcSessionList {
     return decodeSupervisorPayload(
-      'ListBodySessionResponse',
       z.object({
         items: listItemsField(SessionSchema),
         // 6bv7 F14: OpenAPI ListBodySessionResponse declares total required.
@@ -460,7 +522,6 @@ export const gcSupervisorDecoders = {
 
   listRigs(value: RawSupervisorSchema['ListBodyRigResponse']): GcRigList {
     return decodeSupervisorPayload(
-      null,
       z.object({
         items: listItemsField(RigSchema),
         partial: PartialField,
@@ -473,7 +534,6 @@ export const gcSupervisorDecoders = {
 
   listCities(value: RawSupervisorSchema['SupervisorCitiesOutputBody']): CityList {
     return decodeSupervisorPayload(
-      null,
       z.object({
         items: listItemsField(CitySchema),
         // SupervisorCitiesOutputBody declares total required.
@@ -496,7 +556,6 @@ export const gcSupervisorDecoders = {
       items: SupervisorCity[];
       total: number;
     }>(
-      null,
       z.object({
         items: listItemsField(SupervisorCitySchema),
         total: z.number().finite(),
@@ -509,7 +568,6 @@ export const gcSupervisorDecoders = {
 
   listAgents(value: RawSupervisorSchema['ListBodyAgentResponse']): GcAgentList {
     return decodeSupervisorPayload(
-      null,
       z.object({
         items: listItemsField(AgentSchema),
         partial: PartialField,
@@ -521,21 +579,15 @@ export const gcSupervisorDecoders = {
   },
 
   getAgent(value: RawSupervisorSchema['AgentResponse']): GcAgent {
-    return decodeSupervisorPayload(null, AgentSchema, value, 'getAgent');
+    return decodeSupervisorPayload(AgentSchema, value, 'getAgent');
   },
 
   getBead(value: RawSupervisorSchema['Bead']): GcBead {
-    return decodeSupervisorPayload('Bead', BeadSchema, value, 'getBead');
+    return decodeSupervisorPayload(BeadSchema, value, 'getBead');
   },
 
   listBeads(value: RawSupervisorSchema['ListBodyBead']): GcBeadList {
     return decodeSupervisorPayload(
-      // izgc/6bv7 F16: Zod-only (no OpenAPI component gate). The supervisor
-      // may still emit legacy bead fields (owner/updated_at/closed_at/…)
-      // that the typed interior no longer declares; passthrough() must
-      // tolerate them rather than reject the whole list. The OpenAPI gate
-      // (additionalProperties:false on Bead) would reject those fields.
-      null,
       z.object({
         items: listItemsField(BeadSchema),
         // 6bv7 F14: OpenAPI ListBodyBead declares total required.
@@ -550,7 +602,6 @@ export const gcSupervisorDecoders = {
 
   listMail(value: RawSupervisorSchema['MailListBody']): GcMailList {
     return decodeSupervisorPayload(
-      'MailListBody',
       z.object({
         items: listItemsField(MailItemSchema),
         // 6bv7 F14: OpenAPI MailListBody declares total required.
@@ -563,13 +614,12 @@ export const gcSupervisorDecoders = {
     );
   },
 
+  sendMail(value: unknown): MailSendResponse {
+    return decodeSupervisorPayload(MailSendResponseSchema, value, 'sendMail');
+  },
+
   listEvents(value: RawSupervisorSchema['ListBodyWireEvent']): GcEventList {
     return decodeSupervisorPayload(
-      // izgc F13/F14: Zod-only (no OpenAPI component gate). passthrough()
-      // must tolerate the supervisor's phantom `next` key without rejecting
-      // the payload — the OpenAPI gate would reject any field not in the
-      // generated component, defeating the forward-compat passthrough.
-      null,
       z.object({
         items: listItemsField(EventSchema),
         // 6bv7 F13/F14: OpenAPI ListBodyWireEvent declares total required and
@@ -587,7 +637,6 @@ export const gcSupervisorDecoders = {
 
   getRun(value: RawSupervisorSchema['WorkflowSnapshotResponse']): GcRunSnapshot {
     const wire = decodeSupervisorPayload<GcWorkflowSnapshot>(
-      'WorkflowSnapshotResponse',
       WorkflowSnapshotSchema,
       value,
       'getRun',
@@ -609,7 +658,6 @@ export const gcSupervisorDecoders = {
 
   listFormulaRuns(value: RawSupervisorSchema['FormulaFeedBody']): GcFormulaRunList {
     return decodeSupervisorPayload(
-      null,
       z.object({
         items: listItemsField(FormulaRunSchema),
         // mfb9: FormulaFeedBody.partial is required (`boolean`) per OpenAPI —
@@ -631,7 +679,6 @@ export const gcSupervisorDecoders = {
   // required; `recent_runs` is `T[] | null` (the listItemsField pattern).
   listFormulaRunsByName(value: RawSupervisorSchema['FormulaRunsResponse']): GcFormulaRunsResponse {
     return decodeSupervisorPayload(
-      null,
       z.object({
         formula: z.string(),
         run_count: z.number().finite(),
@@ -649,7 +696,6 @@ export const gcSupervisorDecoders = {
   // OrdersFeedBody.partial is required (mirrors FormulaFeedBody).
   listOrdersFeed(value: RawSupervisorSchema['OrdersFeedBody']): GcOrdersFeedResponse {
     return decodeSupervisorPayload(
-      null,
       z.object({
         items: listItemsField(FormulaRunSchema),
         partial: RequiredPartialField,
@@ -666,7 +712,6 @@ export const gcSupervisorDecoders = {
   // listItemsField pattern.
   listOrderHistory(value: RawSupervisorSchema['OrderHistoryListBody']): GcOrderHistoryList {
     return decodeSupervisorPayload(
-      null,
       z.object({
         entries: listItemsField(OrderHistoryEntrySchema),
       }).passthrough(),
@@ -687,7 +732,6 @@ export const gcSupervisorDecoders = {
   // on the cleanup wave.
   getOrderHistoryDetail(value: RawSupervisorSchema['OrderHistoryDetailResponse']): GcOrderHistoryDetail {
     return decodeSupervisorPayload(
-      null,
       z.object({
         bead_id: z.string(),
         store_ref: z.string(),
@@ -701,17 +745,11 @@ export const gcSupervisorDecoders = {
   },
 
   getFormulaDetail(value: RawSupervisorSchema['FormulaDetailResponse']): GcFormulaDetail {
-    // izgc F5/F6: validate with the Zod schema only (no OpenAPI component
-    // gate). The generated OpenAPI marks `description` required, but the
-    // dashboard reads only name/preview/steps/deps — gating on description
-    // would reject otherwise-usable formula details that omit it, and would
-    // also reject the steps/deps=null degraded shape the schema tolerates.
-    return decodeSupervisorPayload(null, FormulaDetailSchema, value, 'getFormulaDetail');
+    return decodeSupervisorPayload(FormulaDetailSchema, value, 'getFormulaDetail');
   },
 
   fetchTranscript(value: RawSupervisorSchema['SessionTranscriptGetResponse']): GcTranscriptResponse {
     return decodeSupervisorPayload(
-      'SessionTranscriptGetResponse',
       TranscriptResponseSchema,
       value,
       'fetchTranscript',
@@ -720,7 +758,6 @@ export const gcSupervisorDecoders = {
 
   health(value: RawSupervisorSchema['HealthOutputBody']): SupervisorHealth {
     return decodeSupervisorPayload(
-      'HealthOutputBody',
       HealthSchema,
       value,
       'health',
@@ -728,7 +765,7 @@ export const gcSupervisorDecoders = {
   },
 
   getStatus(value: RawSupervisorSchema['StatusBody']): GcStatus {
-    return decodeSupervisorPayload(null, StatusSchema, value, 'getStatus');
+    return decodeSupervisorPayload(StatusSchema, value, 'getStatus');
   },
 
   // gascity-dashboard sling wire-field mapping. #61 renamed
@@ -738,7 +775,6 @@ export const gcSupervisorDecoders = {
   // run id is NOT silently dropped on the cast at the write edge.
   decodeSling(value: unknown): SlingResponse {
     const wire = decodeSupervisorPayload<SlingWire>(
-      null,
       SlingResponseSchema,
       value,
       'sling',
@@ -773,20 +809,13 @@ const SlingResponseSchema = z.object({
 // wire-shape contract. Verified by
 // backend/test/gc-supervisor-decoders-types.test.ts.
 function decodeSupervisorPayload<Decoded>(
-  componentName: string | null,
   schema: z.ZodType<SchemaOutputFor<NoInfer<Decoded>>>,
   value: unknown,
   payload: string,
 ): Decoded {
-  if (componentName !== null) {
-    const openApiIssue = validateGcSupervisorComponent(componentName, value);
-    if (openApiIssue !== undefined) {
-      throw invalidOpenApi(payload, openApiIssue);
-    }
-  }
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
-    throw invalid(payload, parsed.error);
+    throw invalidSupervisorPayload(payload, parsed.error);
   }
   // `parsed.data` is `SchemaOutputFor<Decoded>` — structurally identical
   // to `Decoded` at runtime but TS-noisier on optional fields (see
@@ -795,13 +824,25 @@ function decodeSupervisorPayload<Decoded>(
   return parsed.data as Decoded;
 }
 
-function invalidOpenApi(
+export function invalidGeneratedSupervisorPayload(
   payload: string,
-  issue: { readonly path: readonly (string | number)[]; readonly expected: string },
-): Error {
-  return new Error(
-    `invalid gc supervisor ${payload} payload: ${openApiIssuePath(issue.path)} must be ${issue.expected}`,
-  );
+  error: unknown,
+): Error | null {
+  const zodError = zodErrorFromUnknown(error);
+  if (zodError === null) return null;
+  return invalidSupervisorPayload(payload, zodError);
+}
+
+function zodErrorFromUnknown(error: unknown): z.ZodError | null {
+  if (error instanceof z.ZodError) return error;
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    Array.isArray((error as { issues?: unknown }).issues)
+  ) {
+    return error as z.ZodError;
+  }
+  return null;
 }
 
 // Maps a shared SSOT type into the structural shape a Zod schema is
@@ -839,7 +880,7 @@ type OptionalKeysOf<T> = {
   [K in keyof T]-?: {} extends Pick<T, K> ? K : never;
 }[keyof T];
 
-function invalid(payload: string, error: z.ZodError): Error {
+function invalidSupervisorPayload(payload: string, error: z.ZodError): Error {
   const issue = error.issues[0];
   const path = issue ? zodPath(issue.path) : 'payload';
   const expected = issue ? zodExpected(issue) : 'valid';

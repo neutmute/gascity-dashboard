@@ -2,6 +2,11 @@
 
 Status: first implementation slice shipped on `csells/runs-formula-runs`; post-audit alignment passes added same-origin SSE docs, OpenAPI-shaped graph.v2 enrichment fixtures, failed-attempt transcript preservation, scoped summary-to-detail links, complete-scope-pair query handling, malformed scope-query rejection on both backend and frontend routes, run route validation/redaction coverage, distinct first-pass construct shape classes, status-summary header copy, latest-iteration loop visibility, historical-only transcript access, partial snapshot surfacing, staged/unstaged diff sections, a deterministic detail-route browser harness, focused backend run presentation modules, runtime `step_ref` suffix stripping for supervisor execution refs, strict positive-integer parsing for runtime attempt/iteration metadata, `gc.scope_ref` loop context and `gc.control_for` badge targeting for current `.run.N` paths, and red/green coverage that accepts only current supervisor run snapshot fields for graph.v2 roots, step refs, construct kinds, and session links.
 
+Archived note: current upstream GC supervisor API and shared-presentation gaps
+are now consolidated in
+[`../../gc-supervisor-api-gaps.md`](../../gc-supervisor-api-gaps.md). Treat any
+older gap wording below as historical context, not the active tracking list.
+
 Latest alignment: the backend now builds a dedicated `RunningFormulaRun` projection before emitting browser data. The UI consumes `FormulaRunDetail.progress` rather than recomputing aggregate node status from the raw node list. The grouping adapter now matches the Gasworks presentation rules that a check-loop control bead and its generated execution bead collapse into one display node when runtime metadata links them with `gc.logical_bead_id`, and that an `in_progress`/`active` bead is only displayed as running when it has a non-empty assignee. When a run root exposes `gc.formula` and a run target, the detail route fetches the supervisor formula detail/preview response and uses that compiled formula step order for the vertical graph; it still does not parse formula files locally. A live sample-city browser/API harness verifies the two planning runs present in `formula-detail-demo-city` and still fails explicitly because the expected todo and tic-tac-toe implementation runs are not present yet.
 Mockup: [assets/formula-run-detail-graphv2-adopt-pr.svg](assets/formula-run-detail-graphv2-adopt-pr.svg)
 
@@ -288,7 +293,7 @@ This audit compares the codebase's established patterns with the formula-run det
    - Direct `enrichFormulaRun()` tests now assert stable semantic node ids, current/latest iteration selection, hidden badge collapse, streamability, retry/fanout/condition handling, and no leaked internal check-loop terminology.
    - Live evidence rechecked on May 25, 2026: the local racoon-city supervisor exposes formulas, but `/v0/city/racoon-city/formulas/feed?scope_kind=city&scope_ref=racoon-city` still returns an empty feed, the only matching formula with run text is `mol-dog-stale-db` with `run_count=0`, no bead advertises `gc.kind=run` or `gc.formula_contract=graph.v2`, and `/v0/city/racoon-city/run/rc-lkr9?scope_kind=city&scope_ref=racoon-city` returns 404.
    - Live capture added after that audit: an isolated suspended rig produced a side-effect-free cooked graph.v2 smoke run whose supervisor snapshot has current OpenAPI fields, empty logical presentation fields, physical `tracks` containment deps, hidden `scope-check` controls, and a hidden `run-finalize` control. The captured shape now lives in `backend/test/fixtures/run-snapshots.ts` as `capturedDashboardGraphV2SmokeSnapshot`.
-   - Remaining gap: replace or augment the modeled active/completed fixtures with captured live supervisor snapshots once `/v0/city/{name}/run/{id}` can return known completed and active graph.v2 runs in the local environment.
+   - Remaining fixture-evidence gap: replace or augment the modeled active/completed fixtures with captured live supervisor snapshots once `/v0/city/{name}/run/{id}` can return known completed and active graph.v2 runs in the local environment.
 
 4. Session streaming is still transcript-shaped rather than agent-step-shaped.
    - `useSessionStream()` fetches a sanitized transcript snapshot, opens the session SSE stream for active nodes, appends named `turn` events, and exposes visible connection state.
@@ -1122,7 +1127,10 @@ Answer: show a subtle stack/history cue on the left graph, but only render/selec
 
 ## Residual External Evidence Gap
 
-The implementation is in place for the v1 dashboard-owned presentation adapter. The remaining gap is not local code structure; it is live fixture evidence from an actual supervisor run.
+The implementation is in place for the v1 dashboard-owned presentation adapter. The remaining evidence gap is not local code structure; it is live fixture evidence from an actual supervisor run.
+Current upstream API and shared-presentation gaps are tracked separately in
+[`../../gc-supervisor-api-gaps.md`](../../gc-supervisor-api-gaps.md); this
+section is about evidence coverage, not a second API-gap list.
 
 Runtime bead kinds already cover the first-pass graph.v2 constructs implemented here: normal work, retry, check loops, fanout, scope-check, run-finalize, skipped conditions, and completed/active/ready/failed states. The known uncertainty is source-construct fidelity for source-level forms that may be flattened after compile, especially `condition`, `expand`, `map`, and `compose.branch`.
 

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type {
-  MaintainerTriage,
-  TriageItem,
-  TriageTierSection,
-} from 'gas-city-dashboard-shared';
+import type { MaintainerTriage } from 'gas-city-dashboard-shared';
 import { filterTierByNeedsYou, NEEDS_YOU_VIEW_PARAM } from './needsYou';
+import {
+  countTierByVetted,
+  filterTierByAwaitingTriage,
+  filterTierByNeedsPr,
+} from './triageFilters';
 import { useNow } from '../../../contexts/NowContext';
 import { api } from '../../../api/client';
 import { cityPath } from '../../../api/cityBase';
@@ -15,8 +16,10 @@ import { PageHeader } from '../../../components/PageHeader';
 import { SlungSection, TierSection } from './TriageSections';
 import { useCachedData } from '../../../hooks/useCachedData';
 import { useViewingAs } from '../../../contexts/ViewingAsContext';
+import { formatDate as formatCalendarDate } from '../../../lib/format';
 import { readBrowserStorage, writeBrowserStorage } from '../../../lib/browserStorage';
-import { reportClientError } from '../../../lib/clientErrorReporting';
+import { usePersistedCollapseSet } from '../../../hooks/usePersistedCollapseSet';
+import { MaintainerFooter, SelectionActionBar } from './MaintainerChrome';
 import {
   buildSlingRequests,
   dispatchSlings,
@@ -25,7 +28,6 @@ import {
   toggleSelectionItem,
   useSlingSuccess,
   type MaintainerSlingIntent,
-  type SlingSuccess,
 } from './maintainerSelection';
 
 export { SlungLink, TriageScore } from './TriageSignals';
@@ -57,128 +59,6 @@ const NEEDS_PR_KEY = 'maintainer:needsPrOnly';
 // FOCUS_KEY and NEEDS_PR_KEY; all three filters compose.
 const AWAITING_KEY = 'maintainer:awaitingOnly';
 
-/**
- * Pure filter helper for the "Needs PR only" toggle
- * (gascity-dashboard-omv). Returns a new TriageTierSection containing
- * only issue items where `has_in_flight_pr === false`. PR items are
- * dropped entirely — the filter is issue-focused ("show me work that
- * needs someone to write a fix") per the bead. Clusters that become
- * empty after the filter are dropped from the result.
- */
-export function filterTierByNeedsPr(section: TriageTierSection): TriageTierSection {
-  const needsPr = (item: TriageItem): boolean =>
-    item.kind === 'issue' && item.has_in_flight_pr === false;
-  const filteredClusters = section.clusters
-    .map((cluster) => ({
-      ...cluster,
-      items: cluster.items.filter(needsPr),
-    }))
-    .filter((cluster) => cluster.items.length > 0);
-  return {
-    ...section,
-    clusters: filteredClusters,
-    unclustered: section.unclustered.filter(needsPr),
-  };
-}
-
-/**
- * Pure filter helper for the "Awaiting triage only" toggle
- * (gascity-dashboard-x8q). Returns a new TriageTierSection containing
- * only items whose `triage_assessment` is null — i.e. the unvetted
- * backlog the operator wants to focus on. Both kinds (issue, PR) are
- * kept; vetted-ness, not item type, is the filter axis. Clusters that
- * become empty are dropped.
- */
-export function filterTierByAwaitingTriage(
-  section: TriageTierSection,
-): TriageTierSection {
-  const awaiting = (item: TriageItem): boolean => item.triage_assessment === null;
-  const filteredClusters = section.clusters
-    .map((cluster) => ({
-      ...cluster,
-      items: cluster.items.filter(awaiting),
-    }))
-    .filter((cluster) => cluster.items.length > 0);
-  return {
-    ...section,
-    clusters: filteredClusters,
-    unclustered: section.unclustered.filter(awaiting),
-  };
-}
-
-/**
- * Per-tier vetted / awaiting tally (gascity-dashboard-x8q). Drives the
- * "N vetted · M awaiting" line in each tier header so the operator
- * sees the size of the unvetted backlog without scanning rows.
- *
- * `vetted` counts items with a non-null `triage_assessment`; `awaiting`
- * counts the rest.
- *
- * Callers should compute this from the UNFILTERED tier and pass it
- * into `TierSection` as a prop — toggling the awaiting-only chip must
- * not rewrite the tally, it just hides vetted rows.
- */
-export function countTierByVetted(
-  section: TriageTierSection,
-): { vetted: number; awaiting: number } {
-  let vetted = 0;
-  let awaiting = 0;
-  const tally = (item: TriageItem): void => {
-    if (item.triage_assessment !== null) vetted += 1;
-    else awaiting += 1;
-  };
-  for (const item of section.unclustered) tally(item);
-  for (const cluster of section.clusters) {
-    for (const item of cluster.items) tally(item);
-  }
-  return { vetted, awaiting };
-}
-
-// Persists which tier / cluster headings the operator has collapsed.
-// Set of ids; default empty (all expanded). LocalStorage-backed so the
-// preference holds across the page being open in an ambient tab.
-function useCollapseState() {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
-    const stored = readBrowserStorage('localStorage', COLLAPSE_KEY, COMPONENT);
-    if (stored.status !== 'found') return new Set();
-    try {
-      const parsed = JSON.parse(stored.value);
-      return new Set(Array.isArray(parsed) ? (parsed as string[]) : []);
-    } catch (err) {
-      reportStorageParseFailure(COLLAPSE_KEY, err);
-      return new Set<string>();
-    }
-  });
-
-  const persist = useCallback((next: Set<string>) => {
-    writeBrowserStorage('localStorage', COLLAPSE_KEY, JSON.stringify(Array.from(next)), COMPONENT);
-  }, []);
-
-  const toggle = useCallback(
-    (id: string) => {
-      setCollapsed((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        persist(next);
-        return next;
-      });
-    },
-    [persist],
-  );
-
-  const setExact = useCallback(
-    (ids: Iterable<string>) => {
-      const next = new Set(ids);
-      persist(next);
-      setCollapsed(next);
-    },
-    [persist],
-  );
-
-  return { isCollapsed: (id: string) => collapsed.has(id), toggle, setExact };
-}
-
 export function MaintainerPage() {
   const { data, loading, error, refresh } = useCachedData<MaintainerTriage>(
     CACHE_KEY,
@@ -195,7 +75,7 @@ export function MaintainerPage() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const collapse = useCollapseState();
+  const collapse = usePersistedCollapseSet({ key: COLLAPSE_KEY, component: COMPONENT });
   // Bulk-sling selection (gascity-dashboard-0nn). Lives only in component
   // state; refresh / route change clears it. Bulk triage is a 'do it
   // now' operation, not a saved view.
@@ -211,6 +91,7 @@ export function MaintainerPage() {
   // calls setSuccess on the happy path.
   const { success: slingSuccess, setSuccess: setSlingSuccess, clearSuccess: clearSlingSuccess } =
     useSlingSuccess();
+  const [slingSkippedCount, setSlingSkippedCount] = useState(0);
   const [focusBreaking, setFocusBreaking] = useState<boolean>(() => {
     return readStorageFlag(FOCUS_KEY);
   });
@@ -293,6 +174,7 @@ export function MaintainerPage() {
   const clearSelection = useCallback(() => {
     setSelection(new Set());
     setSlingError(null);
+    setSlingSkippedCount(0);
     // Operator's 'Clear' is a deliberate action: drop the success line
     // too so the bar exits cleanly instead of lingering on a stale ack.
     clearSlingSuccess();
@@ -313,13 +195,15 @@ export function MaintainerPage() {
       intent === 'triage' ? TRIAGE_TARGET_LABEL : DRAFT_TARGET_LABEL;
     setSlinging(intent);
     setSlingError(null);
+    setSlingSkippedCount(0);
     // New dispatch supersedes any prior success line. The TTL would also
     // clear it eventually, but clearing now avoids a stale 'Slung 3 to X'
     // lingering next to 'Sending' on the next batch.
     clearSlingSuccess();
     try {
-      const requests = buildSlingRequests(selection, allItems, intent);
-      const summary = await dispatchSlings(requests, (req) => api.maintainerSling(req));
+      const batch = buildSlingRequests(selection, allItems, intent);
+      const summary = await dispatchSlings(batch.requests, (req) => api.maintainerSling(req));
+      setSlingSkippedCount(batch.skippedKeys.length);
       if (summary.failed === 0) {
         setSelection(new Set());
         if (summary.succeeded > 0) {
@@ -406,7 +290,7 @@ export function MaintainerPage() {
               </span>
             )}
             <span className="text-fg-muted tnum normal-case tracking-normal">
-              {formatDate(new Date())}
+              {formatCalendarDate(new Date(nowMs))}
             </span>
           </>
         }
@@ -469,10 +353,12 @@ export function MaintainerPage() {
                 );
               })}
           </div>
-          <Footer computedAt={data.computed_at} />
-          {viewingAs.isOperator && (selection.size > 0 || slingSuccess !== null) && (
+          <MaintainerFooter computedAt={data.computed_at} now={nowMs} />
+          {viewingAs.isOperator &&
+            (selection.size > 0 || slingSuccess !== null || slingSkippedCount > 0) && (
             <SelectionActionBar
               count={selection.size}
+              skippedCount={slingSkippedCount}
               onSend={() => void handleSend('triage')}
               onSendDraft={() => void handleSend('draft')}
               onClear={clearSelection}
@@ -493,136 +379,6 @@ export function MaintainerPage() {
   );
 }
 
-// Bottom-pinned action bar (gascity-dashboard-0nn). Renders when
-// selection > 0 OR a post-sling success line is currently visible
-// (gascity-dashboard-5ly). Editorial register, NOT a sticky toolbar
-// with chrome: single line of type with a hairline top rule, on the
-// page's surface color. No card, no rounded panel, no drop-shadow.
-// Per the Flat Page Rule, the separator is space + type + a single
-// 1px rule, not a container.
-//
-// Exported so vitest can render it in isolation without standing up
-// the full MaintainerPage (useCachedData / EventSource / context
-// providers). The success-state lifecycle is owned by useSlingSuccess
-// in maintainerSelection.ts and tested there.
-export function SelectionActionBar({
-  count,
-  onSend,
-  onSendDraft,
-  onClear,
-  sending,
-  error,
-  success,
-}: {
-  count: number;
-  /** Dispatch with intent='triage' (asks an agent to assess prioritisation). */
-  onSend: () => void;
-  /** Dispatch with intent='draft' (asks an agent to write a PR). */
-  onSendDraft: () => void;
-  onClear: () => void;
-  /** Which intent is mid-flight, or null when idle. */
-  sending: MaintainerSlingIntent | null;
-  error: string | null;
-  success: SlingSuccess | null;
-}) {
-  const isSending = sending !== null;
-  // Inner container mirrors Layout's main column (max-w-[1280px] + the
-  // same horizontal padding) so the action line sits under the page
-  // content, not above the gutters.
-  return (
-    <div
-      className="fixed inset-x-0 bottom-0 border-t border-rule bg-surface"
-      role="region"
-      aria-label="bulk triage actions"
-    >
-      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-baseline justify-between gap-6">
-        <div className="flex items-baseline gap-3 text-body text-fg-muted">
-          {/*
-            Suppress "0 selected" when only the success line is visible
-            (count == 0 happens right after a fully successful dispatch
-            when the selection set is cleared but the success banner is
-            still up). Reads as a quiet acknowledgement instead of a
-            confusing "0 selected · Slung N ...".
-          */}
-          {count > 0 && (
-            <>
-              <span className="tnum text-fg">{count}</span>
-              <span>selected</span>
-            </>
-          )}
-          {error !== null && (
-            <>
-              {count > 0 && <span aria-hidden>·</span>}
-              <span className="text-accent" role="alert">
-                {error}
-              </span>
-            </>
-          )}
-          {success !== null && (
-            <>
-              {(count > 0 || error !== null) && <span aria-hidden>·</span>}
-              {/*
-                Success copy stays in the neutral text-fg register, not
-                the maroon accent: the One Mark Rule reserves accent for
-                anomalies and destructive moments. A successful dispatch
-                is a quiet acknowledgement, not a celebration.
-              */}
-              <span className="text-fg" role="status">
-                Slung <span className="tnum">{success.count}</span> to {success.target}.{' '}
-                <Link
-                  to="/agents"
-                  className="text-fg hover:text-accent focus-mark underline-offset-2 hover:underline"
-                >
-                  View in Agents <span aria-hidden>→</span>
-                </Link>
-              </span>
-            </>
-          )}
-        </div>
-        <div className="flex items-baseline gap-3">
-          <Button size="sm" onClick={onSend} disabled={isSending || count === 0}>
-            {sending === 'triage' ? 'Sending' : 'Send to triage agent'}
-          </Button>
-          {/*
-            Draft is the secondary intent in this dual-action bar
-            (gascity-dashboard-4co). Triage is what the operator
-            reaches for first — vetting a batch before any PR work.
-            Drop draft to tone='quiet' so the visual weight matches
-            the intent hierarchy; both buttons sharing the default
-            border made them read as equal-weight choices.
-          */}
-          <Button
-            size="sm"
-            tone="quiet"
-            onClick={onSendDraft}
-            disabled={isSending || count === 0}
-          >
-            {sending === 'draft' ? 'Sending' : 'Send to draft agent'}
-          </Button>
-          <Button size="sm" tone="quiet" onClick={onClear} disabled={isSending}>
-            Clear
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Footer({ computedAt }: { computedAt: string | null }) {
-  if (computedAt === null) {
-    return (
-      <p className="mt-16 text-label uppercase tracking-wider text-fg-faint">
-        enrichment not yet computed · status data is live
-      </p>
-    );
-  }
-  return (
-    <p className="mt-16 text-label uppercase tracking-wider text-fg-faint tnum">
-      clusters computed {formatTimestamp(computedAt)} · {formatRelative(computedAt)} ago
-    </p>
-  );
-}
-
 function buildSynopsis(data: MaintainerTriage): string {
   const breaking = data.tiers.find((t) => t.tier === 'regression_breaking');
   const breakingCount = breaking
@@ -638,26 +394,6 @@ function buildSynopsis(data: MaintainerTriage): string {
   return `${data.totals.issues_open} issues, ${data.totals.prs_open} PRs open across ${data.repo}. Awaiting tier classification.`;
 }
 
-function formatDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso);
-  return `${formatDate(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const hours = Math.round(ms / 3_600_000);
-  if (hours < 1) return `${Math.max(1, Math.round(ms / 60_000))}m`;
-  if (hours < 48) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
-}
-
 function readStorageFlag(key: string): boolean {
   const stored = readBrowserStorage('localStorage', key, COMPONENT);
   return stored.status === 'found' && stored.value === '1';
@@ -665,18 +401,4 @@ function readStorageFlag(key: string): boolean {
 
 function writeStorageFlag(key: string, value: boolean): void {
   writeBrowserStorage('localStorage', key, value ? '1' : '0', COMPONENT);
-}
-
-function reportStorageParseFailure(key: string, err: unknown): void {
-  void reportClientError({
-    component: COMPONENT,
-    operation: 'localStorage.parse',
-    message: `${key}: ${errorMessage(err)}`,
-  });
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  return 'unknown error';
 }

@@ -11,7 +11,7 @@
 // renders the EntityLinkView without recomputing anything — same posture
 // as the maintainer triage envelope and the formula run detail.
 
-import type { IsoTimestamp } from './index.js';
+import type { IsoTimestamp } from './gc-client-types.js';
 
 /**
  * Entity kinds a relation node can point at. Bead-native kinds resolve

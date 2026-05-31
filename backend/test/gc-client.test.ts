@@ -387,7 +387,7 @@ describe('GcClient error handling', () => {
     );
   });
 
-  test('rejects payloads that violate the generated OpenAPI envelope schema', async () => {
+  test('rejects payloads missing required session list envelope fields', async () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
@@ -400,7 +400,7 @@ describe('GcClient error handling', () => {
     });
     await assert.rejects(
       () => gc.listSessions(),
-      /invalid gc supervisor listSessions payload: payload\.total must be present/i,
+      /invalid gc supervisor listSessions payload: payload\.total must be/i,
     );
   });
 
@@ -694,7 +694,11 @@ describe('GcClient error handling', () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ name: 'mol-demo', steps: null, deps: [] }));
+      res.end(JSON.stringify({
+        ...validFormulaDetail('mol-demo'),
+        steps: null,
+        deps: [],
+      }));
     });
     const gc = new GcClient({
       baseUrl: fake.baseUrl,
@@ -710,7 +714,11 @@ describe('GcClient error handling', () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ name: 'mol-demo', steps: [], deps: null }));
+      res.end(JSON.stringify({
+        ...validFormulaDetail('mol-demo'),
+        steps: [],
+        deps: null,
+      }));
     });
     const gc = new GcClient({
       baseUrl: fake.baseUrl,
@@ -779,7 +787,8 @@ describe('GcClient error handling', () => {
     });
     const out = await gc.listFormulaRuns({ scopeKind: 'city', scopeRef: 'ds-research' });
     assert.equal(out.items.length, 1);
-    assert.equal(out.items[0]?.workflow_id, 'gc-0ioyjp');
+    assert.equal(out.items[0]?.run_id, 'gc-0ioyjp');
+    assert.equal((out.items[0] as unknown as Record<string, unknown>)?.workflow_id, undefined);
     assert.equal(out.items[0]?.root_store_ref, 'rig:gascity');
     assert.equal(out.items[0]?.target, '/home/ds/gascity/polecat');
   });
@@ -858,13 +867,26 @@ describe('GcClient error handling', () => {
       // Supervisor's RigResponse carries more fields (agent_count, suspended,
       // git status, etc.); GcRig is intentionally narrowed to name+path.
       // RigSchema uses passthrough, so the extras are accepted but not
-      // surfaced in the typed output.
-      res.end(JSON.stringify({
-        items: [
-          { name: 'gascity', path: '/home/ds/gascity/polecat', agent_count: 3, suspended: false },
-          { name: 'shared',  path: '/home/ds/shared/work',     agent_count: 0, suspended: false },
-        ],
-      }));
+          // surfaced in the typed output.
+          res.end(JSON.stringify({
+            items: [
+              {
+                name: 'gascity',
+                path: '/home/ds/gascity/polecat',
+                agent_count: 3,
+                running_count: 1,
+                suspended: false,
+              },
+              {
+                name: 'shared',
+                path: '/home/ds/shared/work',
+                agent_count: 0,
+                running_count: 0,
+                suspended: false,
+              },
+            ],
+            total: 2,
+          }));
     });
     const gc = new GcClient({
       baseUrl: fake.baseUrl,
@@ -885,6 +907,7 @@ describe('GcClient error handling', () => {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({
         items: null,
+        total: 0,
         partial: true,
         partial_errors: ['rig backend gascity unreachable'],
       }));
@@ -975,6 +998,7 @@ describe('GcClient error handling', () => {
             provider: 'codex',
           },
         ],
+        total: 2,
       }));
     });
     const gc = new GcClient({
@@ -1003,6 +1027,7 @@ describe('GcClient error handling', () => {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({
         items: null,
+        total: 0,
         partial: true,
         partial_errors: ['agent backend gascity unreachable'],
       }));
@@ -1081,7 +1106,7 @@ describe('GcClient error handling', () => {
     );
   });
 
-  test('rejects mail lists that violate the generated OpenAPI envelope schema', async () => {
+  test('rejects mail lists missing required envelope fields', async () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
@@ -1094,7 +1119,7 @@ describe('GcClient error handling', () => {
     });
     await assert.rejects(
       () => gc.listMail(),
-      /invalid gc supervisor listMail payload: payload\.total must be present/i,
+      /invalid gc supervisor listMail payload: payload\.total must be/i,
     );
   });
 
@@ -1115,7 +1140,7 @@ describe('GcClient error handling', () => {
     );
   });
 
-  test('rejects event lists that violate the generated OpenAPI envelope schema', async () => {
+  test('rejects event lists missing required envelope fields', async () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
@@ -1487,10 +1512,14 @@ describe('GcClient.getStatus', () => {
       res.setHeader('content-type', 'application/json');
       res.end(
         JSON.stringify({
+          ...validStatusBody('city one'),
           store_health: {
+            path: '/tmp/city one/.beads',
             size_bytes: 123_456,
             live_rows: 2139,
             ratio_mb_per_row: 0.05,
+            warning: false,
+            threshold_mb_per_row: 10,
             last_gc_at: '2026-05-26T00:00:00Z',
           },
         }),
@@ -1516,7 +1545,7 @@ describe('GcClient.getStatus', () => {
     fake.setHandler((_req, res) => {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({}));
+      res.end(JSON.stringify(validStatusBody('test-city')));
     });
     const gc = new GcClient({
       baseUrl: fake.baseUrl,
@@ -1646,6 +1675,7 @@ describe('GcClient.sling', () => {
     assert.doesNotMatch(msg, /secret-city/, `message leaked city name: ${msg}`);
     assert.doesNotMatch(msg, /127\.0\.0\.1/, `message leaked loopback address: ${msg}`);
   });
+
 });
 
 // gascity-dashboard-mq2: GcClient.updateBead PATCHes /bead/{id} (the canonical
@@ -1726,6 +1756,7 @@ describe('GcClient.updateBead', () => {
     assert.doesNotMatch(msg, /secret-city/, `message leaked city name: ${msg}`);
     assert.doesNotMatch(msg, /127\.0\.0\.1/, `message leaked loopback address: ${msg}`);
   });
+
 });
 
 // gascity-dashboard-mq2: GcClient.sendMail POSTs to /mail in place of the
@@ -1804,6 +1835,23 @@ describe('GcClient.sendMail', () => {
     assert.doesNotMatch(msg, /secret-city/, `message leaked city name: ${msg}`);
     assert.doesNotMatch(msg, /127\.0\.0\.1/, `message leaked loopback address: ${msg}`);
   });
+
+  test('rejects malformed mail-send responses at the supervisor boundary', async () => {
+    fake.setHandler((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.statusCode = 201;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ subject: 'missing id' }));
+      });
+    });
+    const gc = new GcClient({ baseUrl: fake.baseUrl, cityName: 'test-city', defaultTimeoutMs: 5_000 });
+
+    await assert.rejects(
+      () => gc.sendMail({ to: 'mayor', subject: 'x', body: 'y', from: 'human' }),
+      /invalid gc supervisor sendMail payload/i,
+    );
+  });
 });
 
 // gascity-dashboard-hvx: per-formula run history + order feed/history.
@@ -1860,7 +1908,8 @@ describe('GcClient formula/order run history', () => {
     assert.equal(out.formula, 'mol-adopt-pr-v2');
     assert.equal(out.run_count, 2);
     assert.equal(out.recent_runs.length, 2);
-    assert.equal(out.recent_runs[0]?.workflow_id, 'gc-aaa');
+    assert.equal(out.recent_runs[0]?.run_id, 'gc-aaa');
+    assert.equal((out.recent_runs[0] as unknown as Record<string, unknown>)?.workflow_id, undefined);
     assert.equal(out.partial, false);
   });
 
@@ -2272,6 +2321,52 @@ function validMail(id: string) {
     body: 'body',
     created_at: '2026-01-01T00:00:00.000Z',
     read: false,
+  };
+}
+
+function validFormulaDetail(name: string) {
+  return {
+    name,
+    description: 'demo formula',
+    version: 'v1',
+    var_defs: [],
+    steps: [],
+    deps: [],
+    preview: {
+      nodes: [],
+      edges: [],
+    },
+  };
+}
+
+function validStatusBody(name: string) {
+  return {
+    name,
+    path: `/tmp/${name}`,
+    uptime_sec: 123,
+    suspended: false,
+    agent_count: 0,
+    rig_count: 0,
+    running: 0,
+    agents: {
+      total: 0,
+      running: 0,
+      suspended: 0,
+      quarantined: 0,
+    },
+    rigs: {
+      total: 0,
+      suspended: 0,
+    },
+    work: {
+      open: 0,
+      in_progress: 0,
+      ready: 0,
+    },
+    mail: {
+      total: 0,
+      unread: 0,
+    },
   };
 }
 

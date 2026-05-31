@@ -1,5 +1,4 @@
 import type {
-  RunDiffResponse,
   FormulaRunDetail,
   RunScopeKind,
 } from 'gas-city-dashboard-shared';
@@ -23,7 +22,6 @@ type FormulaRunDetailPayload =
   | {
       kind: 'loaded';
       detail: FormulaRunDetail;
-      diff: RunDiffResponse;
     };
 
 export type FormulaRunDetailLoadState =
@@ -32,7 +30,6 @@ export type FormulaRunDetailLoadState =
   | (FormulaRunDetailState & {
       kind: 'ready';
       detail: FormulaRunDetail;
-      diff: RunDiffResponse;
       refreshState: FormulaRunRefreshState;
     })
   | (FormulaRunDetailState & { kind: 'failed'; error: string });
@@ -58,7 +55,6 @@ export function useFormulaRunDetail(
     return {
       kind: 'ready',
       detail: data.detail,
-      diff: data.diff,
       refresh,
       refreshState: refreshState(loading, error),
     };
@@ -76,23 +72,8 @@ async function loadFormulaRunDetail(
   const params: { scopeKind?: RunScopeKind; scopeRef?: string } = {};
   if (scopeKind !== undefined) params.scopeKind = scopeKind;
   if (scopeRef !== undefined) params.scopeRef = scopeRef;
-  const [detail, diff] = await Promise.all([
-    api.formulaRun(runId, params),
-    api.runDiff(runId, params).catch((err: unknown) => {
-      reportRunDetailError('load diff', runId, err);
-      return {
-        kind: 'error',
-        rootPath: { kind: 'unavailable', reason: 'error' },
-        comparison: { kind: 'unavailable', reason: 'error' },
-        status: [],
-        changedFiles: [],
-        patch: '',
-        truncated: false,
-        error: errorMessage(err) || 'Failed to load diff.',
-      } satisfies RunDiffResponse;
-    }),
-  ]);
-  return { kind: 'loaded', detail, diff };
+  const detail = await api.formulaRun(runId, params);
+  return { kind: 'loaded', detail };
 }
 
 async function noopRefresh(): Promise<void> {}

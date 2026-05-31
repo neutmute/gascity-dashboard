@@ -7,8 +7,8 @@ import type {
   FormulaRunCompleteness,
   FormulaRunDetail,
   FormulaRunPartialReason,
-  RunScopeKind,
 } from 'gas-city-dashboard-shared';
+import { fromSnapshotScope } from '../lib/run-scope.js';
 import { meta, nonEmpty } from './bead-fields.js';
 import type { RunningFormulaRunInput } from './formula-run.js';
 import { buildRunningFormulaRun } from './formula-run.js';
@@ -41,12 +41,11 @@ export function enrichFormulaRun(
   const resolvedRootStore = nonEmpty(raw.resolved_root_store);
   const beads = dedupeBeads(Array.isArray(raw.beads) ? raw.beads : []);
   const root = rootBead(beads, rootBeadId);
-  const scopeKind = parseScopeKind(raw.scope_kind);
-  const scopeRef = nonEmpty(raw.scope_ref);
+  const scope = fromSnapshotScope(raw);
   if (!runId || !rootStoreRef || !resolvedRootStore) {
     throw new UnsupportedRunError('run snapshot identity is missing or invalid');
   }
-  if (!scopeKind || !scopeRef) {
+  if (scope === null) {
     throw new UnsupportedRunError('run scope is missing or invalid');
   }
   if (!Number.isFinite(raw.snapshot_version)) {
@@ -62,8 +61,8 @@ export function enrichFormulaRun(
     rootBeadId,
     rootStoreRef,
     resolvedRootStore,
-    scopeKind,
-    scopeRef,
+    scopeKind: scope.scopeKind,
+    scopeRef: scope.scopeRef,
     beads,
   };
   if (root !== undefined) runInput.root = root;
@@ -82,8 +81,8 @@ export function enrichFormulaRun(
     rootBeadId,
     rootStoreRef,
     resolvedRootStore,
-    scopeKind,
-    scopeRef,
+    scopeKind: scope.scopeKind,
+    scopeRef: scope.scopeRef,
     title: formulaRun.title,
     formula: formulaRun.formula,
     formulaDetail: formulaRun.formulaDetail,
@@ -121,10 +120,6 @@ function rootBead(
   const rootId = nonEmpty(rootBeadId);
   if (!rootId) return undefined;
   return beads.find((bead) => nonEmpty(bead.id) === rootId);
-}
-
-function parseScopeKind(raw: string | undefined): RunScopeKind | undefined {
-  return raw === 'city' || raw === 'rig' ? raw : undefined;
 }
 
 function dedupeBeads(beads: GcRunBead[]): GcRunBead[] {

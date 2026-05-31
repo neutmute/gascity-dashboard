@@ -10,18 +10,19 @@ import type {
   FormulaRunPartialReason,
   RunScopeKind,
 } from 'gas-city-dashboard-shared';
-import { SCOPE_REF_RE } from 'gas-city-dashboard-shared';
 import { GcClient } from '../gc-client.js';
 import { BEAD_ID_RE } from '../lib/beadId.js';
 import { HTTP_STATUS } from '../lib/http-status.js';
+import { isPartialList } from '../lib/partial-list.js';
+import { fromRequestScope } from '../lib/run-scope.js';
 import { errorMessage, LOG_COMPONENT, logWarn } from '../logging.js';
 import {
   routeUpstreamError,
   routeValidationError,
   writeRouteError,
 } from '../route-errors.js';
-import { meta, nonEmpty } from '../runs/bead-fields.js';
-import { resolveRunFormulaName } from '../runs/formula-name.js';
+import { nonEmpty } from '../runs/bead-fields.js';
+import { resolveRunFormulaIdentity } from '../runs/formula-name.js';
 import { readRunGitDiff } from '../runs/diff.js';
 import {
   enrichFormulaRun,
@@ -124,14 +125,9 @@ async function getRunFormulaDetail(
   // supervisor has it (gascity-dashboard-sadp) — but when the supervisor
   // DID report an explicit `gc.formula_name` that is canonical and must not
   // be shadowed by the bead title.
-  const resolved = resolveRunFormulaName(root);
-  const formula =
-    (resolved?.source === 'metadata' ? resolved.name : undefined) ??
-    (root ? meta(root, 'gc.formula_name') : undefined) ??
-    resolved?.name;
-  const target = root
-    ? meta(root, 'gc.run_target') ?? meta(root, 'gc.routed_to') ?? nonEmpty(root.assignee)
-    : undefined;
+  const resolved = resolveRunFormulaIdentity('route', { root });
+  const formula = resolved.name ?? undefined;
+  const target = resolved.target ?? undefined;
   if (!formula) {
     return {
       kind: 'unavailable',
@@ -175,7 +171,7 @@ async function getRunSessions(
     // it as unavailable so run-detail completeness surfaces session_list_failed
     // instead of a misleadingly clean badge (matches links.ts; restored after
     // the workflow→run rename dropped the check).
-    if (list.partial === true || (list.partial_errors?.length ?? 0) > 0) {
+    if (isPartialList(list)) {
       logWarn(
         LOG_COMPONENT.runs,
         `supervisor reported partial session list for run detail; serving as unavailable`,
@@ -268,23 +264,11 @@ function parseRunRequest(
   if (query.scope_ref !== undefined && typeof query.scope_ref !== 'string') {
     return { ok: false, error: 'invalid scope ref' };
   }
-  const rawScopeKind = query.scope_kind;
-  const rawScopeRef = query.scope_ref;
-  if (rawScopeKind !== undefined && rawScopeKind !== 'city' && rawScopeKind !== 'rig') {
-    return { ok: false, error: 'invalid scope kind' };
-  }
-  if ((rawScopeKind === undefined) !== (rawScopeRef === undefined)) {
-    return { ok: false, error: 'scope kind and scope ref are required together' };
-  }
-  const scopeKind: RunScopeKind | undefined =
-    rawScopeKind === 'city' || rawScopeKind === 'rig' ? rawScopeKind : undefined;
-  if (rawScopeRef !== undefined && !SCOPE_REF_RE.test(rawScopeRef)) {
-    return { ok: false, error: 'invalid scope ref' };
-  }
-  if (scopeKind !== undefined && rawScopeRef !== undefined) {
-    return { ok: true, runId, scope: { scopeKind, scopeRef: rawScopeRef } };
-  }
-  return { ok: true, runId };
+  const scope = fromRequestScope(query);
+  if (!scope.ok) return scope;
+  return scope.scope !== undefined
+    ? { ok: true, runId, scope: scope.scope }
+    : { ok: true, runId };
 }
 
 function defaultRunScope(cityName: string): { scopeKind: RunScopeKind; scopeRef: string } {

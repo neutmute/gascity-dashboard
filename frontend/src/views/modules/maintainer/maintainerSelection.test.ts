@@ -96,9 +96,15 @@ describe('buildSlingRequests', () => {
     mkItem({ kind: 'pr', number: 12 }),
   ];
 
+  const requestsFor = (
+    selection: ReadonlySet<string>,
+    intent?: Parameters<typeof buildSlingRequests>[2],
+    target?: Parameters<typeof buildSlingRequests>[3],
+  ) => buildSlingRequests(selection, items, intent, target).requests;
+
   it('emits one request per selected item that exists in the envelope', () => {
     const selection = new Set(['pr:10', 'issue:11']);
-    const reqs = buildSlingRequests(selection, items);
+    const reqs = requestsFor(selection);
     expect(reqs).toHaveLength(2);
     const keys = reqs.map((r) => `${r.kind}:${r.number}`).sort();
     expect(keys).toEqual(['issue:11', 'pr:10']);
@@ -106,31 +112,31 @@ describe('buildSlingRequests', () => {
 
   it('always tags requests with intent="triage"', () => {
     const selection = new Set(['pr:10']);
-    const reqs = buildSlingRequests(selection, items);
+    const reqs = requestsFor(selection);
     expect(reqs[0]?.intent).toBe('triage');
   });
 
   it('copies html_url from the matched item (not synthesised)', () => {
     const selection = new Set(['issue:11']);
-    const reqs = buildSlingRequests(selection, items);
+    const reqs = requestsFor(selection);
     expect(reqs[0]?.html_url).toBe('https://github.com/gastownhall/gascity/issues/11');
   });
 
   it('omits target when none is provided so the backend default chain wins', () => {
     const selection = new Set(['pr:10']);
-    const reqs = buildSlingRequests(selection, items);
+    const reqs = requestsFor(selection);
     expect(reqs[0]).not.toHaveProperty('target');
   });
 
   it('passes target through when explicitly provided', () => {
     const selection = new Set(['pr:10']);
-    const reqs = buildSlingRequests(selection, items, 'triage', 'chief-of-staff');
+    const reqs = requestsFor(selection, 'triage', 'chief-of-staff');
     expect(reqs[0]?.target).toBe('chief-of-staff');
   });
 
   it("plumbs intent='draft' through when caller selects the draft action", () => {
     const selection = new Set(['issue:11']);
-    const reqs = buildSlingRequests(selection, items, 'draft');
+    const reqs = requestsFor(selection, 'draft');
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.intent).toBe('draft');
     expect(reqs[0]?.kind).toBe('issue');
@@ -138,22 +144,26 @@ describe('buildSlingRequests', () => {
 
   it("plumbs intent='draft' alongside an explicit target", () => {
     const selection = new Set(['issue:11']);
-    const reqs = buildSlingRequests(selection, items, 'draft', 'mayor');
+    const reqs = requestsFor(selection, 'draft', 'mayor');
     expect(reqs[0]?.intent).toBe('draft');
     expect(reqs[0]?.target).toBe('mayor');
   });
 
-  it('silently skips selected keys that no longer exist in the envelope', () => {
-    // An item might close between selection and send. The user picked it;
-    // skip rather than 4xx since the operator intent was clearly 'this
-    // batch should be triaged'.
+  it('returns selected keys that no longer exist in the envelope', () => {
+    // An item might close between selection and send. The request should
+    // not be sent, but the UI must surface the skipped count instead of
+    // making "Slung N" silently disagree with the selected count.
     const selection = new Set(['pr:10', 'pr:999', 'issue:11']);
-    const reqs = buildSlingRequests(selection, items);
-    expect(reqs).toHaveLength(2);
+    const batch = buildSlingRequests(selection, items);
+    expect(batch.requests).toHaveLength(2);
+    expect(batch.skippedKeys).toEqual(['pr:999']);
   });
 
-  it('returns an empty array when selection is empty', () => {
-    expect(buildSlingRequests(new Set(), items)).toEqual([]);
+  it('returns empty requests and skipped keys when selection is empty', () => {
+    expect(buildSlingRequests(new Set(), items)).toEqual({
+      requests: [],
+      skippedKeys: [],
+    });
   });
 });
 

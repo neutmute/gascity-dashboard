@@ -1,4 +1,4 @@
-// Single place for env-driven knobs. Anything new goes here so SECURITY.md
+// Single place for env-driven knobs. Anything new goes here so specs/architecture/security.md
 // can audit the configurable surface.
 
 import { AGENT_ALIAS_RE } from './exec.js';
@@ -10,7 +10,7 @@ import { LOG_COMPONENT, logWarn, sanitizeForLog } from './logging.js';
  * Per-module configuration slices, scoped under AdminConfig.modules.<id>.
  * The wire-shape `DashboardRuntimeConfig` deliberately omits these — module
  * config is host-side only; modules read it via their `needs(config)`
- * descriptor at bind time. See docs/PRD-modular-dashboard.md §7 audit-C8.
+ * descriptor at bind time. See specs/requirements/modular-dashboard-prd.md §7 audit-C8.
  */
 export interface MaintainerModuleConfig {
   /** owner/name repository the maintainer view fetches issues + PRs from. */

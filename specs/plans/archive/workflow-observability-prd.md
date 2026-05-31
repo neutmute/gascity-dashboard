@@ -8,6 +8,12 @@
 csells branch `csells/runs-formula-runs` (run-detail plan + SVG mockup at
 `specs/plans/formula-run-detail-plan.md` on that branch).
 
+Archived note: current upstream GC supervisor API and shared-presentation gaps
+are now consolidated in
+[`../../gc-supervisor-api-gaps.md`](../../gc-supervisor-api-gaps.md). The
+heartbeat/progress-signal gap discussed below is tracked there as GC-8; treat
+the older wording here as historical grounding.
+
 ---
 
 ## 1. Problem

@@ -1,8 +1,8 @@
 # Formula Run Detail Type Architecture
 
 Status: product naming boundary documented, current implementation aligned
-with dashboard run/formula-run vocabulary, and remaining data/API gaps called
-out.
+with dashboard run/formula-run vocabulary, and upstream GC supervisor gaps
+centralized in [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 Primary implementation files:
 
@@ -13,9 +13,9 @@ Primary implementation files:
 - `backend/src/runs/execution-instances.ts`
 - `backend/src/runs/display-state.ts`
 - `frontend/src/hooks/useFormulaRunDetail.ts`
+- `frontend/src/hooks/useRunDiff.ts`
 - `frontend/src/hooks/runEventIdentity.ts`
 - `frontend/src/routes/FormulaRunDetail.tsx`
-- `frontend/src/components/run/*`
 - `frontend/src/components/run/*`
 
 ## Purpose
@@ -79,6 +79,20 @@ Supervisor-facing names:
 normalize that payload to the dashboard-internal `GcRunSnapshot.run_id` shape
 before any route, enrichment, or React code sees it. Likewise, event identity
 collection must normalize `workflow_id`/`gc.workflow_id` into run identity.
+
+`GcClient` is a thin policy facade over a **generated** supervisor SDK, not a
+hand-written HTTP client. The supervisor client, endpoint SDK, and
+request/response types are generated from
+`backend/openapi/gc-supervisor.openapi.json` by `@hey-api/openapi-ts` (the same
+generator the upstream `gc dashboard` uses). `GcClient` owns only what the
+generator cannot: single-flight URL-keyed coalescing, topology-safe error
+redaction, timeouts/output caps, the `workflow_id → run_id` vocabulary
+normalization, and sane method names. Strict generated Zod response validation
+is enabled through the generated SDK. The legacy hand-Zod module is now only a
+temporary dashboard DTO adapter/normalizer over generated hey-api response
+types and should not remain a second schema authority. The migration and its
+remaining cleanup live in `specs/plans/code-quality-remediation-plan.md`
+(WS-10).
 
 ## Design Goals
 
@@ -379,11 +393,19 @@ nodes.
 
 ## UI Consumption
 
-The canonical detail hook should be `useFormulaRunDetail()`. The current
-implementation name is `useFormulaRunDetail()` and loads:
+The run detail page loads **two independent resources**, each its own hook:
 
-- `api.formulaRun(runId, scope)`
-- `api.runDiff(runId, scope)`
+- `useFormulaRunDetail()` → `api.formulaRun(runId, scope)` — the run projection.
+- `useRunDiff()` → `api.runDiff(runId, scope)` — the execution-folder diff.
+
+They are separate because the diff is independently refreshable and
+independently failable (it has its own `not_git`/`path_unknown`/`error`
+states). The page composes both. A diff fetch failure must surface as the diff
+resource's own `failed` state — never as a fabricated `RunDiffResponse` and
+never by collapsing the detail resource. (Earlier revisions of this spec
+described a single `useFormulaRunDetail()` returning a `{detail, diff}` pair;
+that is superseded by the two-resource model — see
+`specs/plans/code-quality-remediation-plan.md` WS-12.)
 
 `RunDiffResponse` is one renderable unified patch plus comparison metadata:
 upstream merge-base when a tracked upstream exists, HEAD fallback when no
@@ -409,14 +431,23 @@ implementation name is `FormulaRunDetailPage` and renders:
 - diff UI as a GitHub-style per-file patch view with a changed-file count, not
   a separate file-status summary list above the hunks
 
-`useFormulaRunDetail()` exposes a tagged load state: idle, loading, ready, or
-failed. A ready state contains a non-null detail and diff response; background
-refresh state is tagged separately so a stale visible detail can report refresh
-failures without collapsing into a nullable detail/diff pair.
+Each resource hook exposes its own tagged load state: idle, loading, ready, or
+failed, with a ready state carrying a non-null value and background refresh
+state tagged separately so a stale visible value can report refresh failures
+without collapsing into a nullable pair. Because detail and diff are separate
+resources, a failed diff leaves a ready detail visible and vice versa.
 
 `useRunNodeSelection()` owns the zero-or-one selected semantic node. A
 click selects a node; clicking the selected node clears selection. The selected
 node is looked up from the latest `detail.nodes`.
+
+Evidence-tab selection (`Diff` vs `Session`) is **explicit user state**. It
+responds only to user clicks and route initialization; selecting a graph node
+does not change the active tab. This follows from the diff being run-level
+evidence (see Invariants): node selection only changes the Session panel's
+content, so the tab must not be derived from node selection. (Earlier revisions
+auto-switched to `Session` on node selection; that is superseded — see
+`specs/plans/code-quality-remediation-plan.md` WS-12.)
 
 `RunNodeSessionPanel` reads the selected node's
 `executionInstances`. It groups attached sessions by iteration and attempt,
@@ -464,6 +495,24 @@ Visible refresh hooks have distinct responsibilities:
 
 ## Current Implementation Against The Ideal
 
+This list reflects the implementation after the WS-10 generated transport and
+generated-Zod response-validation cutover.
+The old `openapi-fetch` client, old generated `openapi-typescript` artifacts,
+custom schema-map extractor, and AJV component overlay have been deleted.
+Generated hey-api output is committed backend-only, has no `@ts-nocheck`, and
+is covered by the normal backend TypeScript and ESLint gates. The generated
+tree imports the `@hey-api/client-fetch` runtime package (`bundle: false`)
+instead of copying or patching hey-api runtime files into `src/generated`.
+`backend/src/types/hey-api-client-fetch-compat.d.ts` is a type-only shim for
+the current npm runtime package/generator version skew. It is included as an
+ambient declaration only, with no `tsconfig.paths` alias, so runtime imports
+still resolve to the real npm package. It is not a supervisor API schema
+authority and should disappear when the published runtime types catch up to the
+generator.
+Strict generated Zod response validation is wired into the SDK through
+`validator: { response: 'zod' }`; the remaining hand-Zod module is a temporary
+dashboard DTO adapter/normalizer over generated hey-api response types.
+
 Implemented:
 
 - graph.v2-only validation before enrichment
@@ -498,20 +547,18 @@ Implemented:
   diff values
 - route validation for run id and scope query pairs
 - deterministic browser harness for the detail route
-- generated OpenAPI path/query/response types plus `openapi-fetch` for
-  supervisor snapshot endpoint calls
-- generated OpenAPI runtime validation for the supervisor payloads that feed
-  run detail projection: session lists, run snapshots, formula
+- generated hey-api endpoint SDK, request path/query handling, and response
+  types for supervisor calls
+- generated Zod response validators for supervisor calls before dashboard DTO
+  mapping
+- temporary hand-Zod dashboard DTO adapter/normalizer for supervisor payloads
+  that feed run detail projection: session lists, run snapshots, formula
   details, transcripts, and health
-- runtime validator generation emits every OpenAPI component schema from
-  `backend/openapi/gc-supervisor.openapi.json` rather than relying on a
-  hand-maintained schema-root allowlist
-- generated OpenAPI runtime validation for bead, bead-list, mail-list, and
-  event-list payloads, with an explicit generated-schema overlay for the
-  observed nullable `Bead.priority` supervisor drift
-- strict runtime validation for generated numeric formats used by the
-  supervisor schema (`int64` and `double`) rather than treating those formats as
-  unknown annotations
+- temporary hand-Zod dashboard DTO adapter/normalizer for bead, bead-list,
+  mail-list, and event-list payloads; this must shrink to typed DTO mapping now
+  that generated response validation owns OpenAPI-shape rejection. The current
+  generated fetch client validates but does not replace the response with the
+  parsed/coerced Zod output, so DTO normalization still happens explicitly.
 - centralized client-error reporting for run detail load failures, diff
   failures, malformed city event payloads, and malformed selected-session
   stream events
@@ -563,123 +610,31 @@ Aligned with this spec:
   GC/control-plane state, keeps non-ignored untracked files visible, and leaves
   `.runtime/**` visible until the upstream GC `.runtime` writer bug is fixed.
 
-Remaining implementation gaps against the updated spec:
+## Upstream Gap Tracking
 
-1. **Formula identity is still missing for the fixture/live demo run.**
+All Gas City supervisor API and shared-presentation gaps for this type are
+tracked in [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
+That file owns the consolidated list of future `gastownhall/gascity` work. For
+Formula Run Detail, the relevant items are formula identity in snapshots,
+canonical graph.v2 presentation output,
+rig-store runtime freshness, per-execution session identity, event identity,
+OpenAPI schema accuracy, optional execution-instance fields, and optional
+formula-detail status.
 
-   The fixture intentionally captures the current GC producer gap: the root
-   graph bead has `gc.formula_contract=graph.v2` but lacks
-   `gc.formula`/`gc.formula_name`. Gas City can recover a formula name from the
-   root bead `ref` in other feed projections, but `WorkflowSnapshotResponse`
-   bead rows do not expose `ref`. The dashboard therefore cannot
-   authoritatively fetch formula detail for that run until GC emits formula
-   identity, exposes root `ref`, or puts an equivalent typed formula field on
-   the snapshot.
+That gap file also records the explicit non-gaps: current `gc.*` graph metadata
+is authoritative producer data, run/root identity is usable when present,
+formula-detail target selection already has supervisor-owned sources, and local
+git diff evidence is intentionally outside the supervisor API.
 
-2. **Graph presentation ownership is still local.**
+Local dashboard limitations that are not upstream API gaps:
 
-   The dashboard derives semantic nodes, hidden-control badges, loop/retry
-   grouping, historical visibility, and display statuses from authoritative
-   graph.v2 metadata. That metadata is real GC data, not a weak fallback, but
-   the projection code itself is still dashboard-owned TypeScript. The cleaner
-   target is a Gas City/shared presentation package or populated
-   `logical_nodes`, `logical_edges`, and `scope_groups`.
-
-3. **Rig-store runtime freshness is snapshot-bound.**
-
-   City-store runs can refresh each bead through `/bead/{id}`. Rig-store runs
-   cannot, because the supervisor does not expose scoped rig-store bead reads
-   through the city bead endpoint. For rig-store runs the embedded snapshot is
-   authoritative for the detail request, but freshness depends on the snapshot
-   being current.
-
-4. **Session resolution still has an ambiguity path.**
-
-   When beads carry `session_id`/`session_name`, `gc.session_id`/
-   `gc.session_name`, or t3bridge `gc.sessionName`, the dashboard can resolve
-   sessions robustly. When those fields are absent, it still falls back to
-   assignee/name matching against session summaries and may surface
-   `session_unresolved`.
-
-5. **Event refresh still broad-invalidates identity-less events.**
-
-   Events with `workflow_id`, `run_id`, `root_bead_id`, or corresponding
-   metadata are filtered to the current detail. Events without identity remain
-   broad invalidation signals. This is deliberate, but it is still a gap from
-   the ideal event contract where every run-affecting event carries canonical
-   run/root identity.
-
-6. **OpenAPI drift is reduced, not eliminated.**
-
-   The generated supervisor client has been refreshed to the current
-   `WorkflowSnapshotResponse` schema, and payloads are runtime-validated. The
-   dashboard still carries an explicit generated-schema overlay for observed
-   nullable `Bead.priority` drift until upstream OpenAPI marks that field
-   nullable.
-
-7. **Diff is dashboard-local evidence, not supervisor run state.**
-
-   The diff view is now an OSS-backed rendering of local git state. It is
-   intentionally outside the GC supervisor API. It can be unavailable when the
-   execution path is unknown or not a git work tree, and large generated
-   untracked patches can be capped/truncated by the backend. The dashboard
-   applies only two hard visibility exclusions: `.beads/**` and `.gc/**`.
-   Everything else follows git visibility, including non-ignored untracked
-   files.
-
-## Gas City And Shared Change Tracker
-
-These are the changes outside this repository that would move the architecture
-from dashboard-owned projection to an even cleaner target boundary:
-
-1. **Canonical graph.v2 presentation package.** Gas City or a shared package
-   should own semantic node ids, construct kinds, external display names,
-   hidden-control collapsing, control badge targeting, loop/retry grouping,
-   visible graph nodes, logical edges, scope groups, and compiled display order.
-   The dashboard should consume that shape instead of deriving it from bead
-   metadata in TypeScript.
-2. **Formula identity in supervisor snapshots.** Gas City already knows the root
-   bead `ref` and uses it as the first-choice formula name in feed projections,
-   but `WorkflowBeadResponse` does not expose `ref`. Expose root `ref`, a typed
-   `formula_name`, or equivalent on `WorkflowSnapshotResponse` so dashboard
-   formula-detail lookup does not depend on optional metadata.
-3. **Scoped runtime bead reads or fresh scoped snapshots.** The supervisor
-   should expose rig-store bead reads or guarantee that scoped run
-   snapshots include current runtime status for non-city stores.
-4. **OpenAPI schema alignment.** The supervisor OpenAPI schema should match
-   observed payloads, especially nullable `Bead.priority`, so dashboard schema
-   overlays can be removed.
-5. **Optional canonical execution-instance fields.** Existing metadata is
-   sufficient for the current detail page, but a canonical upstream/shared
-   presentation shape could expose execution instance ids, semantic node ids,
-   loop iteration, retry attempt, current/historical flags, and attached
-   session identity directly so the dashboard no longer derives them.
-
-Items that are not current supervisor API gaps after validating the Gas City and
-Gasworks implementations:
-
-- Run/root identity for projection invalidation is available from
-  top-level supervisor data or bead metadata `gc.workflow_id`/`gc.run_id`/
-  `gc.root_bead_id`;
-  events without identity still fall back to broad refresh.
-- Session identity is usable through `session_id`/`session_name`, current
-  session summaries, and t3bridge `gc.sessionName`; the dashboard also accepts
-  downstream/Gasworks `gc.session_id`/`gc.session_name`.
-- Formula detail target selection can use root-bead `gc.run_target`,
-  `gc.routed_to`, or assignee; no local formula-file parsing is required. The
-  remaining formula gap is identity exposure when only root `ref` knows the
-  formula name.
-- Logical grouping, loop scope, retry attempts, and hidden-control targeting
-  have usable metadata sources: `gc.logical_bead_id`, `gc.step_ref`,
-  `gc.scope_ref`, `gc.control_for`, `gc.iteration`, `gc.attempt`, and
-  `gc.max_attempts`.
-
-Intentionally outside the current dashboard-owned implementation target:
-
-- Incremental event application to the run projection. This is intentionally
-  not a goal until the backend can own the event reducer.
-- Durable analytics or metrics beyond the existing centralized client-error
-  log.
+- Incremental event application to the run projection is intentionally not a
+  goal until the backend owns an event reducer.
+- Durable analytics or metrics beyond the existing centralized client-error log
+  are out of scope for the current dashboard-owned implementation target.
+- Diff rendering is dashboard-local evidence from the execution folder. It can
+  be unavailable when the execution path is unknown or not a git work tree, and
+  large generated untracked patches can be capped/truncated by the backend.
 
 ## Ideal Target State
 
@@ -687,9 +642,17 @@ The ideal design keeps the same public concept but moves more ownership to
 stable backend boundaries:
 
 1. Supervisor client generation owns endpoint paths, params, and response
-   shapes.
+   shapes. The client, types, and runtime validators are generated from the
+   committed OpenAPI by `@hey-api/openapi-ts` (plugins `client-fetch`,
+   `typescript`, `sdk`, plus the `zod` plugin); `GcClient` is a thin facade for
+   dashboard-only policy (coalescing, redaction, timeouts, `workflow_id → run_id`).
 2. Runtime deserialization at `GcClient` rejects malformed supervisor payloads
-   before run projection sees them.
+   before run projection sees them, via the generated Zod response validators
+   wired into the SDK (`validator: { response: 'zod' }`) — not hand-written
+   decoders. Schema-accuracy gaps are fixed **upstream in the Gas City OpenAPI
+   source** so generation stays faithful, rather than papered over with a
+   dashboard-side validation overlay; the consolidated list lives in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 3. Gas City or a shared presentation package owns graph.v2 display semantics:
    semantic nodes, logical edges, scope groups, display graph, loop/retry
    collapsing, and session-link hints.
@@ -725,6 +688,18 @@ stable backend boundaries:
   `.gitignore`.
 - City SSE events invalidate cached views; they do not directly mutate
   Formula Run Detail in the browser.
+- Run detail and run diff are independent browser resources. A failed diff fetch
+  surfaces as the diff resource's own `failed` state; it must never fabricate a
+  `RunDiffResponse` nor null out the detail resource.
+- Evidence-tab selection is explicit user state. It is driven only by user
+  clicks and route initialization, never derived from node selection.
+- The supervisor client, types, and runtime response validators are generated
+  from the committed OpenAPI by `@hey-api/openapi-ts`. `GcClient` is a thin
+  policy facade; it does not hand-roll HTTP or per-endpoint response
+  validation. Any remaining hand code at this boundary must be explicit
+  dashboard DTO mapping/normalization, not an independent schema authority.
+  Supervisor schema-accuracy fixes belong upstream in the Gas City OpenAPI
+  source, not in a dashboard-side validation overlay.
 
 ## Architectural Risks
 
@@ -746,21 +721,26 @@ stable backend boundaries:
 
    When beads do not carry stable session metadata, the dashboard falls back to
    assignee/name matching. That is inherently weaker than a supervisor-owned
-   session id attached to each execution instance.
+   session id attached to each execution instance. The upstream fix is tracked
+   as GC-4 in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 4. Rig-store freshness.
 
    Rig-store run details cannot currently refresh each bead independently
    through the city bead endpoint. The embedded run snapshot needs to be
    fresh enough or the supervisor needs an API for scoped runtime bead reads.
+   The upstream fix is tracked as GC-3 in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
-5. Supervisor schema drift.
+5. Supervisor schema drift and the cross-repo accuracy dependency.
 
-   The current boundary uses generated OpenAPI types, `openapi-fetch`, and
-   generated runtime schema validation for the supervisor payloads read through
-   `GcClient`. The remaining drift risk is schema accuracy, such as the
-   dashboard's explicit nullable `Bead.priority` overlay until the upstream
-   OpenAPI schema matches observed supervisor output.
+   The target boundary generates the supervisor client, types, and Zod response
+   validators from the committed OpenAPI (`@hey-api/openapi-ts`). The dominant
+   risk is schema *accuracy*: future schema refreshes must not make generated
+   validators reject valid degraded payloads. The upstream source-of-truth work
+   is tracked as GC-6 in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md).
 
 6. Formula detail diagnostics live at the dashboard boundary.
 
@@ -781,10 +761,6 @@ stable backend boundaries:
 
 1. Capture real graph.v2 supervisor snapshots for completed, running, blocked,
    retried, and looped runs; use them as backend enrichment fixtures.
-2. Replace local graph.v2 presentation derivation with the canonical Gas City or
-   shared package once available.
-3. Remove the generated-schema `Bead.priority` nullable overlay once the
-   upstream supervisor OpenAPI schema matches the observed wire shape.
-4. Remove broad run-detail invalidation for identity-less city events once
-   the supervisor guarantees canonical run/root identity on all
-   run-affecting events.
+2. Work through the upstream gaps in
+   [`../gc-supervisor-api-gaps.md`](../gc-supervisor-api-gaps.md), then delete
+   local projection/adapter code that those upstream capabilities replace.

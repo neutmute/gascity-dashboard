@@ -13,6 +13,8 @@
 // the cycle this file exists to prevent. Keep it as a leaf node in the
 // module graph.
 
+import type { GcCountedList } from './lists.js';
+
 export type IsoTimestamp = string;
 export type SessionId = string;
 
@@ -60,19 +62,7 @@ export interface GcSession {
   provider: string;
 }
 
-export interface GcSessionList {
-  items: GcSession[];
-  /** Supervisor's own total count for the requested scope. Required per
-   *  OpenAPI ListBodySessionResponse. */
-  total: number;
-  /** True when the supervisor reports the list is incomplete (one or more
-   *  backends failed during aggregation). Wire shape is `items: null` +
-   *  `partial: true`; the decoder normalizes items to `[]` so consumers
-   *  always have an array, but the degradation signal survives here. */
-  partial?: boolean;
-  /** Human-readable errors from backends that failed during aggregation. */
-  partial_errors?: readonly string[];
-}
+export type GcSessionList = GcCountedList<GcSession>;
 
 /**
  * Body for `POST /v0/city/{city}/sling` (gascity-dashboard-mq2). Mirrors

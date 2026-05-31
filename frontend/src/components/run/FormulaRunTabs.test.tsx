@@ -4,6 +4,7 @@ import type {
     RunDisplayNode,
 } from "gas-city-dashboard-shared";
 import { afterEach, describe, expect, it } from "vitest";
+import type { RunDiffLoadState } from "../../hooks/useRunDiff";
 import { FormulaRunTabs } from "./FormulaRunTabs";
 
 afterEach(() => cleanup());
@@ -11,18 +12,19 @@ afterEach(() => cleanup());
 describe("FormulaRunTabs", () => {
   it("keeps the Session tab available so selected nodes can explain unresolved sessions", () => {
     render(
-      <FormulaRunTabs diff={emptyDiff()} selectedNode={nodeWithoutSession()} />,
+      <FormulaRunTabs diff={readyDiff(emptyDiff())} selectedNode={nodeWithoutSession()} />,
     );
 
     const sessionTab = screen.getByRole("tab", { name: "Session" });
     expect(sessionTab.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(sessionTab);
     expect(
       screen.getByText("Session unresolved for the current running node."),
     ).toBeTruthy();
   });
 
   it("keeps Session available before selection so the panel can prompt for a node", () => {
-    render(<FormulaRunTabs diff={emptyDiff()} selectedNode={null} />);
+    render(<FormulaRunTabs diff={readyDiff(emptyDiff())} selectedNode={null} />);
 
     const sessionTab = screen.getByRole("tab", { name: "Session" });
     expect(sessionTab.hasAttribute("disabled")).toBe(false);
@@ -31,14 +33,13 @@ describe("FormulaRunTabs", () => {
   it("does not force an explicit Diff choice back to Session on same-node refreshes", () => {
     const { rerender } = render(
       <FormulaRunTabs
-        diff={diffWithBody("+initial diff")}
+        diff={readyDiff(diffWithBody("+initial diff"))}
         selectedNode={nodeWithoutSession()}
       />,
     );
 
-    expect(
-      screen.getByText("Session unresolved for the current running node."),
-    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Session" }));
+    expect(screen.getByText("Session unresolved for the current running node.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Diff" }));
     expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
@@ -48,7 +49,7 @@ describe("FormulaRunTabs", () => {
 
     rerender(
       <FormulaRunTabs
-        diff={diffWithBody("+updated diff")}
+        diff={readyDiff(diffWithBody("+updated diff"))}
         selectedNode={{ ...nodeWithoutSession(), title: "Review refreshed" }}
       />,
     );
@@ -57,6 +58,38 @@ describe("FormulaRunTabs", () => {
       "run-evidence-tab-diff",
     );
     expect(screen.getByText("updated diff")).toBeTruthy();
+    expect(
+      screen.queryByText("Session unresolved for the current running node."),
+    ).toBeNull();
+  });
+
+  it("does not force an explicit Diff choice back to Session when a node becomes selected", () => {
+    const { rerender } = render(
+      <FormulaRunTabs diff={readyDiff(diffWithBody("+selected later"))} selectedNode={null} />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Session" }));
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+      "run-evidence-tab-session",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Diff" }));
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+      "run-evidence-tab-diff",
+    );
+    expect(screen.getByText("selected later")).toBeTruthy();
+
+    rerender(
+      <FormulaRunTabs
+        diff={readyDiff(diffWithBody("+selected later"))}
+        selectedNode={nodeWithoutSession()}
+      />,
+    );
+
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+      "run-evidence-tab-diff",
+    );
+    expect(screen.getByText("selected later")).toBeTruthy();
     expect(
       screen.queryByText("Session unresolved for the current running node."),
     ).toBeNull();
@@ -120,5 +153,14 @@ function diffWithBody(body: string): RunDiffResponse {
       "@@ -0,0 +1 @@",
       body,
     ].join("\n"),
+  };
+}
+
+function readyDiff(diff: RunDiffResponse): RunDiffLoadState {
+  return {
+    kind: "ready",
+    diff,
+    refresh: async () => {},
+    refreshState: { kind: "idle" },
   };
 }

@@ -6,6 +6,12 @@ fully before producing or critiquing the PRD. It encodes (a) the product/design 
 converged thesis from a 30-idea brainstorm. Do NOT re-derive from scratch — pressure-test
 and refine THIS direction.
 
+Archived note: current upstream GC supervisor API and shared-presentation gaps
+are now consolidated in
+[`../../gc-supervisor-api-gaps.md`](../../gc-supervisor-api-gaps.md). This
+grounding file may mention missing data sources as historical context; the
+active upstream gap list lives in the consolidated file.
+
 ## The operator and the two use modes (from PRODUCT.md)
 
 One operator (`stephanie`), maintainer of a Gas City workspace, keeps the dashboard open in

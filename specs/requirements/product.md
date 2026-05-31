@@ -64,6 +64,8 @@ Reference flavour: the *FT Edit* app, *NYT Cooking* in its quiet moments,
 
 ## Design Principles
 
+These principles set the direction; `DESIGN.md` is the binding visual contract that operationalizes them into the concrete palette, typography, elevation, and named rules. Defer to it for any visual, typographic, copy, or component decision.
+
 1. **Quiet by default, loud on demand.** Nothing should pull the eye unless
    something is wrong. Anomalies — a stuck agent, a memory ceiling, a
    failing supervisor — earn the only visual emphasis on the page.

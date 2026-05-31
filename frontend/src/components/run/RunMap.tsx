@@ -10,7 +10,7 @@ import { LaneCard } from "./LaneCard";
 // gascity-dashboard-yh5i: the active/historical split is rendered as two
 // optional sections. Active lanes always show; historical lanes show only
 // when `showHistory` is true (controlled by ?history=1 in the URL,
-// threaded down from /workflows). The historical section is labeled and
+// threaded down from /runs). The historical section is labeled and
 // hairlined to keep the typographic register continuous with active.
 
 interface RunMapProps {

@@ -48,7 +48,6 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/.claude/**',
-      'backend/src/generated/**',
     ],
   },
   {
@@ -204,7 +203,7 @@ export default tseslint.config(
  */
 function moduleIsolationConfigs() {
   const MESSAGE =
-    'cross-module import forbidden — modules talk via CityContext / ModuleResources, not direct imports. See docs/MODULE-AUTHOR-CHECKLIST.md.';
+    'cross-module import forbidden — modules talk via CityContext / ModuleResources, not direct imports. See specs/architecture/module-author-checklist.md.';
 
   // PR-C Phase-4 HIGH fix: extend the `no-restricted-imports` patterns to
   // cover ALL practical depths from a module subdir, closing the bypass
@@ -269,4 +268,3 @@ function moduleIsolationConfigs() {
     },
   ];
 }
-

@@ -36,4 +36,18 @@ describe('api client error handling', () => {
       kind: 'validation',
     });
   });
+
+  it('rejects malformed successful response bodies at the frontend API edge', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ cityName: 'demo-city' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ));
+
+    await expect(api.config()).rejects.toMatchObject({
+      name: 'ApiResponseDecodeError',
+      message: expect.stringContaining('config.cityRoot must be a string'),
+    });
+  });
 });

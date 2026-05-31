@@ -1,6 +1,6 @@
 # PRD: Modular gas-city-dashboard architecture
 
-> **Status:** Post-`/diverge → /converge → /premortem` synthesis. Ready to commit as `docs/PRD-modular-dashboard.md`.
+> **Status:** Post-`/diverge → /converge → /premortem` synthesis. Ready to commit as `specs/requirements/modular-dashboard-prd.md`.
 > **Beads in scope:** gascity-dashboard-9yj (P2 modularity), gascity-dashboard-ucc (P2 multi-city, design seams only), gascity-dashboard-dw8 (P3 default view).
 > **Companion file:** `premortem_modular-dashboard.md` — full risk registry + failure narratives.
 
@@ -18,8 +18,8 @@ This PRD has been through 3 refinement passes. Resolutions:
 
 **Premortem (/premortem — 6 failure lenses → 6 PRD changes):**
 - **`needs` is REQUIRED (not optional)** + iterator uses existential `bind<D>()` wrapper, **no `as never`** anywhere. Boot-time validation enforces.
-- **Pre-PR-B Maintainer coupling audit** (new doc `docs/maintainer-coupling.md`) required before PR-B opens; PR-B splits into PR-B1 (relocate + adapt) + PR-B2 (registry wire).
-- **`docs/MODULE-AUTHOR-CHECKLIST.md`** + ESLint overrides on `**/views/modules/**` + new CI grep gates promote module conventions from culture-carried to machine-enforced.
+- **Pre-PR-B Maintainer coupling audit** (new doc `specs/architecture/maintainer-coupling-audit.md`) required before PR-B opens; PR-B splits into PR-B1 (relocate + adapt) + PR-B2 (registry wire).
+- **`specs/architecture/module-author-checklist.md`** + ESLint overrides on `**/views/modules/**` + new CI grep gates promote module conventions from culture-carried to machine-enforced.
 - **Audience-hypothesis revisit becomes a scheduled `bd ready` bead** + CI breaks if target date passes without a tombstone doc.
 - **`ViewDescriptor` + `BackendModule` types exported from `shared/` in Phase 1** (not Phase 2). The internal-vs-public cleavage was foreclosing extension before any benefit was paid.
 - **`resources` discriminator field** (`'perProcess' | 'perCity'`) on `BackendModule` + two-CityContext acceptance test in Phase 1.
@@ -29,10 +29,10 @@ This PRD has been through 3 refinement passes. Resolutions:
 The dashboard ships three contradictions:
 
 1. **The Maintainer/Triage surface is a default route** (`App.tsx:40`, `Header.tsx:19`, `app.ts:113-127`). It is specific to one operator's GitHub workflow on `gastownhall/gascity`. Every other Gas City operator pays the cognitive cost of a nav entry they cannot use; the backend pays the runtime cost of `MaintainerRefresher` (`app.ts:139-150`) regardless.
-2. **There is no extension path that isn't a fork.** `docs/EXTENDING.md` documents adding a view by editing `App.tsx` + `Header.tsx` + `server.ts`. The codebase describes views three times in three files; there is no single descriptor an operator (or first-party author) can register.
+2. **There is no extension path that isn't a fork.** `specs/architecture/extending.md` documents adding a view by editing `App.tsx` + `Header.tsx` + `server.ts`. The codebase describes views three times in three files; there is no single descriptor an operator (or first-party author) can register.
 3. **Multi-city (`ucc`) will land into a single-city-shaped registry.** `app.ts:72-127` instantiates one `GcClient`, one `SnapshotService`, one `MaintainerRefresher` per process. Threading a city dimension through ten routers + three workers + the frontend `/api/config` consumer at the same time as the multi-city UX work is too much surface for one PR.
 
-**Counter-evidence (kept loud per challenger lens):** PRODUCT.md, DESIGN.md, package.json, README.md all describe the dashboard as a "single-operator" tool. Repo stats: 0 stars, 1 self-fork, 0 issues. The "OOTB for any operator" framing exists in bead 9yj and the conversation that triggered this PRD — never externally validated. This PRD builds the audience question into Phase-1 entry (scheduled `bd ready` bead before PR-A merges, CI gate on revisit date) and the Phase-2 trigger (outcome-based) so the public-contract investment only proceeds on real signal.
+**Counter-evidence (kept loud per challenger lens):** specs/requirements/product.md, DESIGN.md, package.json, README.md all describe the dashboard as a "single-operator" tool. Repo stats: 0 stars, 1 self-fork, 0 issues. The "OOTB for any operator" framing exists in bead 9yj and the conversation that triggered this PRD — never externally validated. This PRD builds the audience question into Phase-1 entry (scheduled `bd ready` bead before PR-A merges, CI gate on revisit date) and the Phase-2 trigger (outcome-based) so the public-contract investment only proceeds on real signal.
 
 ## Goals & non-goals
 
@@ -80,8 +80,6 @@ export interface ViewDescriptor {
    *  `homeContribution: { weight: Infinity, concernsFn: () => [...] }`
    *  — the shapes are compatible by construction. */
   defaultRoute?: boolean
-  /** Optional 302 redirects to `path`. Replaces hand-rolled `/kanban -> /workflows`. */
-  legacyPaths?: readonly string[]
 }
 ```
 
@@ -325,11 +323,6 @@ export function App() {
               {views.map((v) => (
                 <Route key={v.id} path={v.path} element={<v.element />} />
               ))}
-              {views.flatMap((v) =>
-                (v.legacyPaths ?? []).map((p) => (
-                  <Route key={p} path={p} element={<Navigate to={v.path} replace />} />
-                )),
-              )}
               <Route path="*" element={<ModuleUnavailableRoute />} />
             </Routes>
           </Suspense>
@@ -368,7 +361,7 @@ Default-install bundle (Maintainer omitted) is smaller than pre-migration by at 
 
 ### Stays core
 
-`/` (ambient home), `/agents` + `/agents/:slug`, `/workflows` + `/workflows/:id`, `/health`, plus `/api/sessions`/`/api/snapshot`/`/api/events`/session peek modal.
+`/` (ambient home), `/agents` + `/agents/:slug`, `/runs` + `/runs/:id`, `/health`, plus `/api/sessions`/`/api/snapshot`/`/api/events`/session peek modal.
 
 ### Becomes a module (Phase 1 ports one)
 
@@ -415,7 +408,7 @@ Each module declares `resources` posture so Phase 2 verifies lifetime statically
 
 ## 7. Migration strategy
 
-### Pre-PR-A: Maintainer coupling audit (`docs/maintainer-coupling.md`)
+### Pre-PR-A: Maintainer coupling audit (`specs/architecture/maintainer-coupling-audit.md`)
 
 **Required before PR-A merges.** Written inventory of every cross-boundary touch Maintainer makes today:
 - SSE client registry held as module-singleton state in `maintainer/sse.ts`.
@@ -429,7 +422,7 @@ Each entry gets a disposition: kept inside module / promoted to `CityContext` / 
 
 ### Audience-hypothesis scheduled bead
 
-**Required before PR-A merges.** Replace the original "write a `bd remember` entry" gate with: `bd create --type=task --priority=p2 --ready-after=<+6mo> --title="Revisit modular-dashboard audience hypothesis"`. The bead appears in `bd ready` on the target date. Description carries the conditional remediation language from the convergence resolution. **CI gate:** a check that fails if today > target_date AND `docs/PLUGIN-API-DEFERRED.md` does not exist AND the bead is still open. Premortem #1 mitigation.
+**Required before PR-A merges.** Replace the original "write a `bd remember` entry" gate with: `bd create --type=task --priority=p2 --ready-after=<+6mo> --title="Revisit modular-dashboard audience hypothesis"`. The bead appears in `bd ready` on the target date. Description carries the conditional remediation language from the convergence resolution. **CI gate:** a check that fails if today > target_date AND `specs/requirements/PLUGIN-API-DEFERRED.md` does not exist AND the bead is still open. Premortem #1 mitigation.
 
 ### PR sequence
 
@@ -438,7 +431,7 @@ Each entry gets a disposition: kept inside module / promoted to `CityContext` / 
 | **PR-A** — Audit doc + scheduled bead + types in `shared/` + registry skeleton + `/health` port. | Adds `shared/src/views.ts`, `views/registry.ts`, `views/modules/health.module.ts`, audit doc, scheduled bead. Modifies App.tsx/Header.tsx/app.ts to read `healthView` from registry. **Adapts `MaintainerRefresher` to `BackgroundWorker` shape** so PR-B has a typed target. | LOW. |
 | **PR-B1** — Relocate Maintainer files + adapt to contract (NO registry wire yet). | Moves files; updates imports to satisfy contract; snap harness + Maintainer integration tests pass against the new file layout while app.ts still explicitly mounts maintainer. **Snap harness extended with SSE-roundtrip for `/maintainer/events`** to catch singleton-split. | MEDIUM. The risky half. |
 | **PR-B2** — Wire Maintainer through registry; delete explicit app.ts mounts. | Mechanical iterator wiring. | LOW once B1 lands. |
-| **PR-C** — `MODULES_ENABLED` env + `/api/config.enabledModules` + `DEFAULT_VIEW` env + ESLint module overrides + `docs/MODULE-AUTHOR-CHECKLIST.md`. | Additive. Default = all modules mount. | LOW. |
+| **PR-C** — `MODULES_ENABLED` env + `/api/config.enabledModules` + `DEFAULT_VIEW` env + ESLint module overrides + `specs/architecture/module-author-checklist.md`. | Additive. Default = all modules mount. | LOW. |
 | **PR-D** — Flip default to exclude maintainer. CHANGELOG migration note. Bundle-size gate verifies. | 1-line config + docs. | LOW. The user-visible default-install change. |
 
 ### CI gates added

@@ -1,12 +1,12 @@
 # Architecture — gas-city-dashboard
 
-> Engineer's-eye summary of decisions that affect implementation. For the visual register, read [`PRODUCT.md`](../PRODUCT.md) and [`DESIGN.md`](../DESIGN.md) at the repo root. The architectural shape (the security model, the wire-shape contract, the systemd separation from `gc-supervisor`) is inherited from the [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) fork and remains intentional here.
+> Engineer's-eye summary of decisions that affect implementation. For the product framing, read the [product spec](../requirements/product.md); for the visual register, read [`DESIGN.md`](../../DESIGN.md), the binding visual contract at the repo root. The architectural shape (the security model, the shared DTO contract, the systemd separation from `gc-supervisor`) is inherited from the [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) fork and remains intentional here.
 
 ## Stack: Node + TypeScript end-to-end
 
-- Backend: Node 20 + Express + TypeScript.
+- Backend: Node 22.13+ + Express + TypeScript.
 - Frontend: React 18 + Vite + TypeScript + Tailwind. Self-hosted Inter Variable.
-- **Shared types**: `shared/` workspace package (`gas-city-dashboard-shared`) exports the wire shapes (Session, Bead, Mail, Events). Imported by **both** backend and frontend. When a `gc` API field-shape changes, a compile error surfaces the breakage instead of an undefined at runtime — the biggest 6-month maintainability investment for a project of this size.
+- **Shared DTOs**: `shared/` workspace package (`gas-city-dashboard-shared`) exports the dashboard-owned `/api/*` DTOs imported by **both** backend and frontend. The GC supervisor wire client/types are generated backend-only from OpenAPI, then translated at the backend edge into these DTOs. When the dashboard contract changes, a compile error surfaces the breakage instead of an undefined at runtime.
 
 Rejected alternatives:
 
@@ -122,9 +122,9 @@ and stop with the process wrapper instead of hidden module startup.
 
 ## Trust boundaries
 
-- **Browser ↔ backend**: same-origin, Host-allowlist, Origin check, CSP, CSRF on writes. See `SECURITY.md`.
-- **Backend ↔ gc supervisor**: loopback HTTP. Trusts the supervisor's responses (typed via shared/types, but no signature verification).
-- **Backend ↔ shell (`gc` CLI)**: whitelisted commands only, `shell: false`, clean env, param schemas. See `SECURITY.md`.
+- **Browser ↔ backend**: same-origin, Host-allowlist, Origin check, CSP, CSRF on writes. See `security.md`.
+- **Backend ↔ gc supervisor**: loopback HTTP through the generated backend-only OpenAPI client. The backend validates/translates supervisor responses at the edge into dashboard DTOs; there is no signature verification.
+- **Backend ↔ shell (`gc` CLI)**: whitelisted commands only, `shell: false`, clean env, param schemas. See `security.md`.
 
 ## Phasing
 

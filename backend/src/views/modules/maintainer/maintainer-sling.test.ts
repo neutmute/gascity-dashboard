@@ -78,7 +78,7 @@ async function buildApp(opts: BuildOpts = {}): Promise<AppHandle> {
 
   const app = express();
   app.use(express.json());
-  // PR-B1 / docs/maintainer-coupling.md C2: slungStatePath is now
+  // PR-B1 / specs/architecture/maintainer-coupling-audit.md C2: slungStatePath is now
   // required by maintainerRouter (defaultSlungStatePath removed). Mirror
   // slungStatePathFor() below so the test still writes to the same file
   // the router reads from.
@@ -321,8 +321,8 @@ describe('POST /api/maintainer/sling', { concurrency: false }, () => {
   });
 
   test('intent=triage falls back to slingTarget when triageTarget option is unset', async () => {
-    // Backward-compat: a caller that doesn't pass triageTarget keeps the
-    // pre-0nn behaviour of single-target dispatch.
+    // Config fallback: a local app assembly that omits triageTarget still
+    // dispatches to the configured default sling target.
     h = await buildApp({ slingTarget: 'mayor' });
     const res = await postJson(`${h.url}/api/maintainer/sling`, {
       kind: 'pr',
@@ -796,15 +796,15 @@ describe('GET /api/maintainer/triage — slung overlay', { concurrency: false },
     assert.equal(slungItem!.slung.target, 'mayor');
     assert.equal(slungItem!.slung.bead_id, 'gc-255139');
     assert.equal(
-      slungItem!.workflow_run_id,
+      slungItem!.run_id,
       'gc-255139',
-      'active-slung item stamps workflow_run_id from the persisted bead_id (gascity-dashboard-djpk)',
+      'active-slung item stamps run_id from the persisted bead_id (gascity-dashboard-djpk)',
     );
     assert.equal(slungItem!.is_marked, false, 'slung item should not carry the mark');
     assert.equal(nextMarked?.is_marked, true, 'mark should move to the next candidate');
   });
 
-  test('workflow_run_id is null on an active-slung item whose sling carried no bead id', async () => {
+  test('run_id is null on an active-slung item whose sling carried no bead id', async () => {
     h = await buildApp();
     await writeEnvelope(h, envelopeWithMarkedCandidates([makePr({ number: 90 })]));
 
@@ -819,13 +819,13 @@ describe('GET /api/maintainer/triage — slung overlay', { concurrency: false },
     const item = env.slung_section?.find((it) => it.number === 90);
     assert.ok(item, 'item 90 present in slung_section');
     assert.equal(
-      item!.workflow_run_id,
+      item!.run_id,
       null,
-      'slung-but-no-bead → workflow_run_id is null (no run to link to yet)',
+      'slung-but-no-bead → run_id is null (no run to link to yet)',
     );
   });
 
-  test('workflow_run_id is absent (undefined) on a never-slung item', async () => {
+  test('run_id is absent (undefined) on a never-slung item', async () => {
     h = await buildApp();
     await writeEnvelope(h, envelopeWithMarkedCandidates([makePr({ number: 91 })]));
 
@@ -833,9 +833,9 @@ describe('GET /api/maintainer/triage — slung overlay', { concurrency: false },
     const item = env.tiers[0]!.unclustered.find((it) => it.number === 91);
     assert.ok(item, 'item 91 present in its tier');
     assert.equal(
-      item!.workflow_run_id,
+      item!.run_id,
       undefined,
-      'never-slung item leaves workflow_run_id undefined (absent on the wire)',
+      'never-slung item leaves run_id undefined (absent on the wire)',
     );
   });
 
@@ -871,9 +871,9 @@ describe('GET /api/maintainer/triage — slung overlay', { concurrency: false },
     // for a vetted-overridden item — so it must NOT carry a linkable run id even though
     // the stale slung-state entry above planted a bead_id ('gc-stale').
     assert.equal(
-      item.workflow_run_id,
+      item.run_id,
       undefined,
-      'vetted-overrides-slung must not stamp workflow_run_id even when the stale entry has a bead_id',
+      'vetted-overrides-slung must not stamp run_id even when the stale entry has a bead_id',
     );
   });
 
@@ -1152,11 +1152,10 @@ describe('POST /api/maintainer/sling — target role resolution (gascity-dashboa
   });
 
   test('persists resolved_session_name=null when listSessions throws (supervisor down)', async () => {
-    // Operational degradation: the sling routed successfully (gc sling
-    // is a separate subprocess that doesn't care about /v0/sessions),
-    // but the dashboard couldn't resolve the role for link-building.
-    // Should NOT 5xx — the sling already worked. The link just renders
-    // as 'no session for role' until the next sling refreshes it.
+    // Operational degradation: the sling routed successfully, but the
+    // dashboard couldn't resolve the role for link-building. Should NOT
+    // 5xx — the sling already worked. The link just renders as
+    // 'no session for role' until the next sling refreshes it.
     h = await buildApp({
       triageTarget: 'chief-of-staff',
       listSessions: async () => {

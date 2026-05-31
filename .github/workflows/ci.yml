@@ -43,18 +43,18 @@ permissions:
 
 jobs:
   test:
-    name: typecheck + tests (node 20)
+    name: typecheck + tests (node 22)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
         with:
-          # '20.x' rolls minor/patch updates within Node 20 — the engines
-          # field requires '>=20.0.0'. Pin to '20.18.0' (or use .nvmrc
+          # '22.x' rolls minor/patch updates within Node 22 — the engines
+          # field requires '>=22.13.0'. Pin to a patch version (or use .nvmrc
           # with node-version-file) if reproducibility matters more than
           # security patches.
-          node-version: '20.x'
+          node-version: '22.x'
           cache: 'npm'
 
       - name: Install
@@ -68,10 +68,10 @@ jobs:
 
       - name: Shared tests
         run: npm --workspace shared test
-      # Run the openapi drift check AFTER build:shared. The check itself uses
-      # only the openapi-typescript CLI + a temp-file diff today, but staging
-      # it post-build keeps future extensions of the generator safe (e.g. if
-      # the generator ever imports shared types to derive endpoint shapes).
+      # Run the OpenAPI drift check AFTER build:shared. The check generates
+      # the hey-api supervisor SDK into a temp dir and compares it with the
+      # committed generated tree; keeping it post-build leaves room for future
+      # generator extensions that import shared types.
       - name: Check generated gc supervisor client
         run: npm run openapi:gc-supervisor:check
 

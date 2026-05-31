@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { GC_EVENT_PREFIX, SCOPE_REF_RE } from 'gas-city-dashboard-shared';
 import type {
@@ -15,6 +15,7 @@ import { BeadDetailModal } from '../components/BeadDetailModal';
 import { FormulaRunDiagram } from '../components/run/FormulaRunDiagram';
 import { FormulaRunTabs } from '../components/run/FormulaRunTabs';
 import { StageLadder } from '../components/run/StageLadder';
+import { useNow } from '../contexts/NowContext';
 import { useGcEventRefresh } from '../hooks/useGcEvents';
 import {
   runEventIdentity,
@@ -22,6 +23,7 @@ import {
 } from '../hooks/runEventIdentity';
 import { useRunNodeSelection } from '../hooks/useRunNodeSelection';
 import { useFormulaRunDetail } from '../hooks/useFormulaRunDetail';
+import { useRunDiff } from '../hooks/useRunDiff';
 import { useEntityLinks } from '../hooks/useEntityLinks';
 import { NEEDS_YOU_VIEW_PARAM } from '../views/modules/maintainer/needsYou';
 
@@ -49,11 +51,19 @@ export function FormulaRunDetailPage() {
     scope?.scopeKind,
     scope?.scopeRef,
   );
+  const runDiff = useRunDiff(
+    routeError ? undefined : runId,
+    scope?.scopeKind,
+    scope?.scopeRef,
+  );
   const readyRun = runDetail.kind === 'ready' ? runDetail : null;
   const detail = readyRun?.detail ?? null;
   const initialLoading = runDetail.kind === 'loading';
-  const refreshing = readyRun !== null && readyRun.refreshState.kind === 'refreshing';
-  const loading = initialLoading || refreshing;
+  const refreshing =
+    (readyRun !== null && readyRun.refreshState.kind === 'refreshing') ||
+    (runDiff.kind === 'ready' && runDiff.refreshState.kind === 'refreshing');
+  const diffInitialLoading = detail !== null && runDiff.kind === 'loading';
+  const loading = initialLoading || refreshing || diffInitialLoading;
   const loadError =
     runDetail.kind === 'failed'
       ? runDetail.error
@@ -62,7 +72,7 @@ export function FormulaRunDetailPage() {
         : null;
   useGcEventRefresh(
     routeError ? NO_EVENT_PREFIXES : RUN_DETAIL_EVENT_PREFIXES,
-    () => void runDetail.refresh(),
+    () => void refreshRunResources(runDetail.refresh, runDiff.refresh),
     {
       matches: (event) =>
         detail === null ||
@@ -84,13 +94,7 @@ export function FormulaRunDetailPage() {
   // PR/issue this run is adopting.
   const links = useEntityLinks(detail?.rootBeadId ?? null);
   const [viewingBeadId, setViewingBeadId] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const tick = setInterval(() => {
-      if (!document.hidden) setNow(Date.now());
-    }, 30_000);
-    return () => clearInterval(tick);
-  }, []);
+  const now = useNow();
 
   const synopsis = detail
     ? `${detail.progress.visibleNodeCount} nodes. ${summarizeNodeStatuses(detail.progress)}. Local changes are shown for the run execution folder.`
@@ -137,7 +141,11 @@ export function FormulaRunDetailPage() {
                 {snapshotLabel(detail)}
               </span>
             )}
-            <Button size="sm" onClick={() => void runDetail.refresh()} disabled={loading || Boolean(routeError)}>
+            <Button
+              size="sm"
+              onClick={() => void refreshRunResources(runDetail.refresh, runDiff.refresh)}
+              disabled={loading || Boolean(routeError)}
+            >
               {refreshing ? 'Refreshing' : 'Refresh'}
             </Button>
           </>
@@ -162,7 +170,7 @@ export function FormulaRunDetailPage() {
               selectedNodeId={selectedNodeId}
               onToggleNode={toggleNode}
             />
-            <FormulaRunTabs diff={readyRun.diff} selectedNode={selectedNode} />
+            <FormulaRunTabs diff={runDiff} selectedNode={selectedNode} />
           </div>
           <RelatedEntities
             view={links.view}
@@ -181,6 +189,13 @@ export function FormulaRunDetailPage() {
       ) : null}
     </section>
   );
+}
+
+async function refreshRunResources(
+  refreshDetail: () => Promise<void>,
+  refreshDiff: () => Promise<void>,
+): Promise<void> {
+  await Promise.all([refreshDetail(), refreshDiff()]);
 }
 
 function RunMetadata({
@@ -247,7 +262,7 @@ function FormulaMeta({ formula }: { formula: FormulaRunDetailData['formula'] }) 
         </div>
       );
     default: {
-      // Exhaustiveness: a new WorkflowFormulaSource variant must declare its
+      // Exhaustiveness: a new RunFormulaSource variant must declare its
       // own render path — falling through to a default warn tone would
       // silently misrepresent its provenance.
       const _exhaustive: never = formula.source;

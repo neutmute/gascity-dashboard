@@ -51,6 +51,17 @@ const secondary = fakeView({
   defaultRoute: true,
 });
 
+const descriptorWithLegacyPaths = {
+  id: 'legacy',
+  kind: 'firstParty',
+  path: '/legacy',
+  nav: null,
+  element: {} as FrontendViewDescriptor['element'],
+  // @ts-expect-error legacyPaths is intentionally not part of FrontendViewDescriptor.
+  legacyPaths: ['/old'],
+} satisfies FrontendViewDescriptor;
+void descriptorWithLegacyPaths;
+
 describe('filterEnabledViews', () => {
   it('returns the full list when enabledModules is null (backwards-compat default)', () => {
     const result = filterEnabledViews([core, maintainer], null);

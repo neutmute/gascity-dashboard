@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeHasInFlightPr } from './triage.js';
+import { computeHasInFlightPr, issueNumbersWithInFlightPr } from './triage.js';
 import { makeIssue, makePr } from './fixtures/triage-item.js';
 
 // gascity-dashboard-omv: TriageItem.has_in_flight_pr is the
@@ -23,6 +23,19 @@ import { makeIssue, makePr } from './fixtures/triage-item.js';
 // so consumers don't have to recompute it.
 
 describe('computeHasInFlightPr — backend-shipped per-item signal', () => {
+  test('issueNumbersWithInFlightPr returns unique issue numbers linked by unmerged PRs only', () => {
+    const issueNumbers = issueNumbersWithInFlightPr([
+      makeIssue({ number: 10 }),
+      makeIssue({ number: 11 }),
+      makePr({ number: 21, status: 'open', linked_numbers: [10, 11, 10] }),
+      makePr({ number: 22, status: 'merged', linked_numbers: [12] }),
+      makePr({ number: 23, status: 'closed', linked_numbers: [13] }),
+      makePr({ number: 24, status: 'draft', linked_numbers: [14] }),
+    ]);
+
+    assert.deepEqual(Array.from(issueNumbers).sort((a, b) => a - b), [10, 11, 14]);
+  });
+
   test('issue with NO linked PRs in envelope: has_in_flight_pr=false', () => {
     const issue = makeIssue({ number: 100 });
     computeHasInFlightPr([issue]);

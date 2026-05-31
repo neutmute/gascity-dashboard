@@ -1,5 +1,7 @@
+import { CollapsibleHeader } from './CollapsibleHeader';
+
 // ProjectGroupHeader: a typeset section divider, clickable to toggle
-// collapse. The chevron is a glyph (▸ collapsed, ▾ expanded), not a
+// collapse. The chevron is a rotated glyph, not a
 // box. The count badge is plain tabular figures in fg-faint, not a
 // pill. Whitespace + type carries the hierarchy (Flat Page Rule).
 //
@@ -37,24 +39,23 @@ export function ProjectGroupHeader({
     );
   }
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={!collapsed}
+    <CollapsibleHeader
+      collapsed={collapsed}
+      onToggle={onToggle}
       className="group flex items-baseline gap-2 w-full text-left focus-mark rounded-sm py-1"
+      glyphClassName="group-hover:text-fg-muted tnum w-3"
     >
-      <span
-        aria-hidden
-        className="text-fg-faint group-hover:text-fg-muted tnum w-3"
-      >
-        {collapsed ? '▸' : '▾'}
-      </span>
-      <span className="text-title font-medium text-fg group-hover:text-fg">
-        {project}
-      </span>
-      <span className="text-label uppercase tracking-wider text-fg-faint tnum">
-        {count}
-      </span>
-    </button>
+      {({ glyph }) => (
+        <>
+          {glyph}
+          <span className="text-title font-medium text-fg group-hover:text-fg">
+            {project}
+          </span>
+          <span className="text-label uppercase tracking-wider text-fg-faint tnum">
+            {count}
+          </span>
+        </>
+      )}
+    </CollapsibleHeader>
   );
 }

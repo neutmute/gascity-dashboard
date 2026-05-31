@@ -3,20 +3,21 @@ import {
   type DashboardSnapshot,
   type SourceStatus,
 } from 'gas-city-dashboard-shared';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
+import { PartialDataNotice } from '../components/PartialDataNotice';
 import { SseIndicator } from '../components/SseIndicator';
 import {
   RunMap,
   RUNS_HISTORICAL_SECTION_ID,
 } from '../components/run/RunMap';
+import { useNow } from '../contexts/NowContext';
 import { formatRelative } from '../hooks/time';
 import { useCachedData } from '../hooks/useCachedData';
 import { useGcEventRefresh } from '../hooks/useGcEvents';
-import { useVisibleInterval } from '../hooks/useVisibleInterval';
 
 // /runs route (gascity-dashboard-0t6, made live in
 // gascity-dashboard-bqn). Reads /api/snapshot via useCachedData for
@@ -38,10 +39,9 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval';
 // the dashboard's own host doesn't get hammered with loadFixture calls
 // every coalesce tick during a gc outage (architect H1).
 //
-// The 5s tick refreshes only relative-time labels in lane cards; SSE
-// is the path for actual data updates.
+// The app-level NowProvider refreshes relative-time labels in lane cards;
+// SSE is the path for actual data updates.
 
-const TICK_MS = 5_000;
 const REFRESH_DEBOUNCE_MS = 10_000;
 const RUN_PHASE_GRAMMAR =
   'Phase grammar: intake, implementation, review, approval, finalization.';
@@ -60,13 +60,11 @@ export function RunsPage() {
   // active + historical arrays, so the toggle does not trigger a fetch
   // and useCachedData's 'snapshot' cache key stays stable across modes.
   const showHistory = searchParams.get(HISTORY_QUERY_PARAM) === HISTORY_QUERY_VALUE;
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow();
   const runsStatusRef = useRef<SourceStatus | null>(null);
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
   const lastRefreshAtRef = useRef(0);
-  useVisibleInterval(() => setNow(Date.now()), TICK_MS);
-
   const runs = data?.sources.runs ?? null;
   runsStatusRef.current = runs?.status ?? null;
   const runsData =
@@ -151,15 +149,11 @@ export function RunsPage() {
                 {freshnessLabel}
               </span>
             )}
-            {lanesPartial && (
-              <span
-                className="normal-case text-body text-warn"
-                role="status"
-                title="one or more rigs' recent runs were unavailable; the lane set may be incomplete"
-              >
-                runs partial
-              </span>
-            )}
+            <PartialDataNotice
+              show={lanesPartial}
+              label="runs partial"
+              title="one or more rigs' recent runs were unavailable; the lane set may be incomplete"
+            />
             <SseIndicator state={sseState} />
             <Button
               size="sm"

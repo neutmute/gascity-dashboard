@@ -592,6 +592,7 @@ describe('routes: upstream timeout -> HTTP 504', () => {
             state: 'asleep',
           },
         ],
+        total: 2,
       }));
     });
     const gc = new GcClient({
@@ -627,6 +628,7 @@ describe('routes: upstream timeout -> HTTP 504', () => {
         items: null,
         partial: true,
         partial_errors: ['agent backend gascity unreachable'],
+        total: 0,
       }));
     });
     const gc = new GcClient({

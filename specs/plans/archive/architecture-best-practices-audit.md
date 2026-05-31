@@ -7,6 +7,12 @@ Base: `csells/formula-detail-followup`
 Scope: entire `backend`, `frontend`, and `shared` codebase, measured against the
 rubric in `AGENTS.md`.
 
+Archived note: current upstream GC supervisor API and shared-presentation gaps
+are consolidated in
+[`../../gc-supervisor-api-gaps.md`](../../gc-supervisor-api-gaps.md). Any
+formula-run target-state gap wording in this audit is historical evidence, not
+the active upstream gap list.
+
 ## Method
 
 - Treat `AGENTS.md`, `PRODUCT.md`, `DESIGN.md`, and `docs/{ARCHITECTURE,SECURITY,EXTENDING}.md` as the contract.

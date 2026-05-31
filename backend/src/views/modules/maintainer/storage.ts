@@ -71,7 +71,7 @@ export async function writeCache(
 // CONTRACT comment above is enforced by the type system rather than memory.
 //
 // Intentionally absent: optional, serve-time-only fields like
-// `workflow_run_id` (stamped by applySlungOverlay after a cache read, never
+// `run_id` (stamped by applySlungOverlay after a cache read, never
 // persisted) must NOT be listed here — a cache missing them is valid, and
 // requiring them would wrongly reject every envelope written before the
 // overlay runs.

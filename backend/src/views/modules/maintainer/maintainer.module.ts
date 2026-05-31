@@ -2,7 +2,7 @@
 // MODULES_ENABLED in PR-C. PR-B2 wires this into ALL_MODULES so the
 // explicit app.ts mount + refresher are deleted.
 //
-// Resources posture (premortem #5 + maintainer-coupling.md):
+// Resources posture (premortem #5 + specs/architecture/maintainer-coupling-audit.md):
 //   - filesystem 'cache' (perCity)       — the triage envelope cache.
 //   - filesystem 'slung-state' (perCity) — the active-sling-state map.
 //   - memory     'sse-clients' (perCity) — the in-process SSE registry

@@ -48,10 +48,10 @@ describe('maintainer triage row signals', () => {
     );
   });
 
-  it('cross-links an item with a known workflow_run_id into run-detail (from=triage)', () => {
+  it('cross-links an item with a known run_id into run-detail (from=triage)', () => {
     const { container } = render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <RunLink item={{ workflow_run_id: 'gc-255139' }} />
+        <RunLink item={{ run_id: 'gc-255139' }} />
       </MemoryRouter>,
     );
 
@@ -61,16 +61,16 @@ describe('maintainer triage row signals', () => {
     expect(container.textContent).toContain('run');
   });
 
-  it('renders nothing when workflow_run_id is null (slung but no run yet)', () => {
+  it('renders nothing when run_id is null (slung but no run yet)', () => {
     const { container } = render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <RunLink item={{ workflow_run_id: null }} />
+        <RunLink item={{ run_id: null }} />
       </MemoryRouter>,
     );
     expect(container.querySelector('a')).toBeNull();
   });
 
-  it('renders nothing when workflow_run_id is absent (never slung)', () => {
+  it('renders nothing when run_id is absent (never slung)', () => {
     const { container } = render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
         <RunLink item={{}} />
