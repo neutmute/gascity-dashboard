@@ -1,0 +1,288 @@
+// Pure view-derivation over the dashboard DTOs. No IO, no React — so it can be
+// reasoned about and (later) unit-tested in isolation. shared/ owns the wire
+// shapes; this module only projects them into what the operator scans.
+
+import {
+  effectiveContextPct,
+  type GcSession,
+  type GcBead,
+  type DashboardSnapshot,
+  type RunLane,
+} from 'gas-city-dashboard-shared';
+
+/**
+ * Context usage as a percent of the model's TRUE window. gc reports
+ * `context_pct` against a hardcoded 200k denominator, so 1M-window models
+ * read a misleading saturated 100; this rescales (and matches the web UI).
+ */
+export function ctxPct(s: GcSession): number | undefined {
+  return effectiveContextPct(s);
+}
+
+export type Category = 'failed' | 'active' | 'idle';
+
+export interface AgentView {
+  readonly session: GcSession;
+  /** Rig basename, e.g. `gascity` from `/home/ds/gascity`. */
+  readonly rig: string;
+  /** Agent basename, e.g. `polecat-4` or `oversight-rig.project-lead`. */
+  readonly agent: string;
+  readonly category: Category;
+}
+
+export function basename(path: string | null | undefined): string {
+  if (!path) return '';
+  const trimmed = path.replace(/\/+$/, '');
+  const seg = trimmed.slice(trimmed.lastIndexOf('/') + 1);
+  return seg || trimmed;
+}
+
+export function categorize(s: GcSession): Category {
+  if (s.state === 'failed') return 'failed';
+  if (s.state === 'active' || s.state === 'creating') return 'active';
+  return 'idle';
+}
+
+/** Label for the city-level (rig-less) agents: mayor, city control-dispatcher. */
+export const ORCHESTRATION = 'orchestration';
+
+/**
+ * Canonical rig label. The supervisor reports a rig inconsistently — sometimes
+ * a filesystem path (`/home/ds/projects/scix_experiments`), sometimes a name
+ * (`scix-experiments`), with varying case — which split one project across two
+ * groups. Normalise (basename · `_`→`-` · lowercase) so a project is one group.
+ */
+export function rigLabel(rig: string | null | undefined): string {
+  const base = basename(rig);
+  if (!base) return ORCHESTRATION;
+  return base.replace(/_/g, '-').toLowerCase();
+}
+
+export function toAgentView(s: GcSession): AgentView {
+  return {
+    session: s,
+    rig: rigLabel(s.rig),
+    agent: basename(s.title ?? s.alias ?? s.id) || s.id,
+    category: categorize(s),
+  };
+}
+
+// ── rig grouping (top-level rigs; within rig: active before idle) ───────────
+
+export interface RigGroup {
+  readonly rig: string;
+  readonly agents: readonly AgentView[];
+  readonly failed: number;
+  readonly active: number;
+  readonly idle: number;
+}
+
+const CATEGORY_RANK: Record<Category, number> = { failed: 0, active: 1, idle: 2 };
+
+/**
+ * Groups agents by rig. Within a rig: failed → active → idle, each by recency.
+ * Rigs ordered by (has-failed, active-count desc, name) so the rigs an operator
+ * should look at sit at the top.
+ */
+export function groupByRig(sessions: readonly GcSession[]): RigGroup[] {
+  const byRig = new Map<string, AgentView[]>();
+  for (const s of sessions) {
+    const view = toAgentView(s);
+    const arr = byRig.get(view.rig) ?? [];
+    arr.push(view);
+    byRig.set(view.rig, arr);
+  }
+
+  const groups: RigGroup[] = [...byRig.entries()].map(([rig, list]) => {
+    const agents = list.slice().sort((a, b) => {
+      const rank = CATEGORY_RANK[a.category] - CATEGORY_RANK[b.category];
+      if (rank !== 0) return rank;
+      return Date.parse(b.session.last_active ?? '') - Date.parse(a.session.last_active ?? '');
+    });
+    return {
+      rig,
+      agents,
+      failed: list.filter((v) => v.category === 'failed').length,
+      active: list.filter((v) => v.category === 'active').length,
+      idle: list.filter((v) => v.category === 'idle').length,
+    };
+  });
+
+  return groups.sort((a, b) => {
+    // Orchestration (mayor + city dispatcher) always leads — it directs the rest.
+    if (a.rig === ORCHESTRATION) return -1;
+    if (b.rig === ORCHESTRATION) return 1;
+    const af = a.failed > 0 ? 1 : 0;
+    const bf = b.failed > 0 ? 1 : 0;
+    if (af !== bf) return bf - af;
+    if (b.active !== a.active) return b.active - a.active;
+    return a.rig.localeCompare(b.rig);
+  });
+}
+
+export function relativeTime(iso: string | undefined, now: number): string {
+  if (!iso) return 'never';
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return '—';
+  const secs = Math.max(0, Math.round((now - then) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.round(hrs / 24)}d`;
+}
+
+/** "claude-opus-4-8" → "opus-4-8"; trims the vendor prefix for column width. */
+export function shortModel(model: string | undefined): string {
+  if (!model) return '';
+  return model.replace(/^claude-/, '');
+}
+
+// ── peek commands (surfaced, not executed — read-only) ──────────────────────
+
+export interface PeekCommands {
+  readonly gcPeek: string;
+  readonly tmuxAttach: string;
+  readonly tmuxCapture: string;
+}
+
+export function peekCommands(s: GcSession): PeekCommands {
+  return {
+    gcPeek: `gc session peek ${s.id}`,
+    tmuxAttach: `tmux attach -t ${s.session_name}`,
+    tmuxCapture: `tmux capture-pane -t ${s.session_name} -p`,
+  };
+}
+
+// ── bead ↔ rig association (best-effort: beads carry no session field) ───────
+
+/** `agent-diagnostics-x0i` → `agent-diagnostics`. */
+export function beadRigPrefix(beadId: string): string {
+  return beadId.replace(/-[^-]+$/, '');
+}
+
+export function beadsForRig(beads: readonly GcBead[], rig: string): GcBead[] {
+  if (!rig || rig === ORCHESTRATION) return [];
+  return beads.filter((b) => {
+    const prefix = beadRigPrefix(b.id);
+    return prefix === rig || prefix.startsWith(rig) || rig.startsWith(prefix);
+  });
+}
+
+// ── run lanes (formulas) ────────────────────────────────────────────────────
+
+/** `scope.rootStoreRef` "rig:gascity" → "gascity". */
+export function laneRig(lane: RunLane): string | null {
+  if (lane.scope.status !== 'available') return null;
+  const ref = lane.scope.rootStoreRef;
+  if (typeof ref !== 'string') return null;
+  return ref.startsWith('rig:') ? ref.slice('rig:'.length) : null;
+}
+
+export function laneNeedsOperator(lane: RunLane): boolean {
+  return lane.health.status === 'available' && lane.health.data.needsOperator;
+}
+
+export function lanesForRig(lanes: readonly RunLane[], rig: string): RunLane[] {
+  if (!rig || rig === ORCHESTRATION) return [];
+  return lanes.filter((l) => {
+    const lr = laneRig(l);
+    return lr !== null && (lr === rig || lr.startsWith(rig) || rig.startsWith(lr));
+  });
+}
+
+// ── snapshot accessors (collapse the Avail/SourceState unions) ───────────────
+
+export interface SystemHealth {
+  readonly activeAgents: number | null;
+  readonly activeSessions: number | null;
+  readonly activeRuns: number | null;
+  readonly maxAgents: number | null;
+  readonly vcpu: number | null;
+  readonly load1: number | null;
+  readonly loadPerVcpu: number | null;
+  readonly memUtil: number | null;
+  readonly lanes: readonly RunLane[];
+}
+
+function metric(m: { status: string; value?: number } | undefined): number | null {
+  return m && m.status === 'available' && typeof m.value === 'number' ? m.value : null;
+}
+
+export function systemHealth(snap: DashboardSnapshot | null): SystemHealth {
+  if (!snap) {
+    return {
+      activeAgents: null,
+      activeSessions: null,
+      activeRuns: null,
+      maxAgents: null,
+      vcpu: null,
+      load1: null,
+      loadPerVcpu: null,
+      memUtil: null,
+      lanes: [],
+    };
+  }
+  const res = snap.sources.resources;
+  const runs = snap.sources.runs;
+  // SourceState is unavailable only when status === 'error'; otherwise it
+  // carries data (fresh/stale/fixture).
+  const resData = res.status !== 'error' ? res.data : null;
+  const lanes = runs.status !== 'error' ? runs.data.lanes : [];
+  return {
+    activeAgents: metric(snap.headline.activeAgents),
+    activeSessions: metric(snap.headline.activeSessions),
+    activeRuns: metric(snap.headline.activeRuns),
+    maxAgents: metric(snap.headline.maxAgents),
+    vcpu: resData?.vcpuCount ?? null,
+    load1: resData?.loadAverage[0] ?? null,
+    loadPerVcpu: resData?.loadPerVcpu ?? null,
+    memUtil: resData?.memory.utilization ?? null,
+    lanes,
+  };
+}
+
+// ── idle / reallocation analysis (the operator's "why are these here?") ──────
+
+export interface IdleRollup {
+  readonly rig: string;
+  readonly neverActive: number;
+  readonly total: number;
+}
+
+/**
+ * Per-rig count of sessions that have NEVER emitted activity (no last_active).
+ * These are the pool/role agents an operator may want to reclaim for busier
+ * rigs. Sorted by never-active count desc.
+ */
+export function neverActiveByRig(sessions: readonly GcSession[]): IdleRollup[] {
+  const byRig = new Map<string, { never: number; total: number }>();
+  for (const s of sessions) {
+    const rig = rigLabel(s.rig);
+    const entry = byRig.get(rig) ?? { never: 0, total: 0 };
+    entry.total += 1;
+    if (!s.last_active) entry.never += 1;
+    byRig.set(rig, entry);
+  }
+  return [...byRig.entries()]
+    .map(([rig, v]) => ({ rig, neverActive: v.never, total: v.total }))
+    .filter((r) => r.neverActive > 0)
+    .sort((a, b) => b.neverActive - a.neverActive);
+}
+
+export interface ContextPressureEntry {
+  readonly session: GcSession;
+  readonly pct: number;
+}
+
+/** Agents under context pressure (>= threshold% of TRUE window), worst first. */
+export function contextPressure(
+  sessions: readonly GcSession[],
+  thresholdPct = 75,
+): ContextPressureEntry[] {
+  return sessions
+    .map((s) => ({ session: s, pct: ctxPct(s) }))
+    .filter((e): e is ContextPressureEntry => e.pct !== undefined && e.pct >= thresholdPct)
+    .sort((a, b) => b.pct - a.pct);
+}
