@@ -4,14 +4,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { GcSession } from 'gas-city-dashboard-shared';
+import type { GcMailItem, GcSession } from 'gas-city-dashboard-shared';
 import {
   AGENT_KINDS,
+  activityPhrase,
   agentKind,
   kindGlyph,
   kindLabel,
+  mailSnippet,
   matchesStatusFilter,
   nextStatusFilter,
+  runningSessions,
+  unreadOperatorMail,
   type StatusFilter,
 } from './derive.ts';
 
@@ -109,4 +113,74 @@ test('nextStatusFilter cycles active+idle -> active -> idle -> active+idle', () 
   assert.equal(nextStatusFilter('active+idle'), 'active');
   assert.equal(nextStatusFilter('active'), 'idle');
   assert.equal(nextStatusFilter('idle'), 'active+idle');
+});
+
+// ── sessions live feed ───────────────────────────────────────────────────────
+
+test('runningSessions keeps only active/creating, newest activity first', () => {
+  const list = [
+    session({ id: 'idle', state: 'asleep', last_active: '2026-06-01T00:05:00Z' }),
+    session({ id: 'old', state: 'active', last_active: '2026-06-01T00:01:00Z' }),
+    session({ id: 'new', state: 'active', last_active: '2026-06-01T00:03:00Z' }),
+    session({ id: 'creating', state: 'creating', last_active: '2026-06-01T00:02:00Z' }),
+    session({ id: 'failed', state: 'failed', last_active: '2026-06-01T00:09:00Z' }),
+  ];
+  const ids = runningSessions(list).map((s) => s.id);
+  assert.deepEqual(ids, ['new', 'creating', 'old']);
+});
+
+test('activityPhrase: active session maps the coarse activity hint to a phrase', () => {
+  assert.equal(activityPhrase(session({ state: 'active', activity: 'tool_use' })), 'running a tool');
+  assert.equal(activityPhrase(session({ state: 'active', activity: 'thinking' })), 'thinking');
+  assert.equal(activityPhrase(session({ state: 'active', activity: 'idle' })), 'active, between steps');
+});
+
+test('activityPhrase: unknown activity falls through verbatim, blank reads "active"', () => {
+  assert.equal(activityPhrase(session({ state: 'active', activity: 'compacting' })), 'compacting');
+  assert.equal(activityPhrase(session({ state: 'active' })), 'active');
+});
+
+test('activityPhrase: dormant session shows its transition reason, not a fake', () => {
+  assert.equal(
+    activityPhrase(session({ state: 'asleep', reason: 'city-stop' })),
+    'city-stop',
+  );
+  assert.equal(activityPhrase(session({ state: 'asleep', attached: true })), 'attached');
+});
+
+// ── operator ledger ──────────────────────────────────────────────────────────
+
+function mail(overrides: Partial<GcMailItem>): GcMailItem {
+  return {
+    id: 'm1',
+    from: 'mayor',
+    to: 'human',
+    subject: 'subject',
+    body: 'body',
+    created_at: '2026-06-01T00:00:00Z',
+    read: false,
+    ...overrides,
+  };
+}
+
+test('unreadOperatorMail drops read mail and sorts by priority then newest', () => {
+  const items = [
+    mail({ id: 'read', read: true, priority: 0 }),
+    mail({ id: 'p2', priority: 2, created_at: '2026-06-01T00:05:00Z' }),
+    mail({ id: 'p1', priority: 1, created_at: '2026-06-01T00:01:00Z' }),
+    // No priority set — the supervisor coalesces its null to undefined; these
+    // sort after any explicitly-prioritised mail, newest first.
+    mail({ id: 'noprio-new', created_at: '2026-06-01T00:09:00Z' }),
+    mail({ id: 'noprio-old', created_at: '2026-06-01T00:02:00Z' }),
+  ];
+  const ids = unreadOperatorMail(items).map((m) => m.id);
+  assert.deepEqual(ids, ['p1', 'p2', 'noprio-new', 'noprio-old']);
+});
+
+test('mailSnippet collapses whitespace and truncates with an ellipsis', () => {
+  assert.equal(mailSnippet('  hello\n\n  world  '), 'hello world');
+  const long = 'x'.repeat(200);
+  const snip = mailSnippet(long, 10);
+  assert.equal(snip.length, 10);
+  assert.ok(snip.endsWith('…'));
 });

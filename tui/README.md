@@ -39,6 +39,17 @@ reused tmux split (see Peek).
 - **Formula runs** (`f`): run lanes grouped by rig, needs-operator first (one red
   mark). `enter` opens the run's bead (`gc bd show`) plus its code diff in the
   split.
+- **Sessions** (`s`): a flat "live now" feed of the active sessions, most-recently
+  active first, each with a mechanical phrase for what it's doing right now (the
+  supervisor's coarse activity hint, e.g. `running a tool` / `thinking`). This is
+  the honest non-LLM signal — no per-session transcript is exposed as data, so a
+  model-written task summary is a deliberately deferred follow-up, not faked here.
+  `enter` peeks the session log; `p` opens its detail like the Agents view.
+- **Ledger** (`l`): an "open ledger" of things waiting on the operator — unread
+  inbox mail (sender · subject · priority + a one-line body snippet, newest /
+  highest-priority first) and run lanes flagged needs-operator. Read-only summary
+  (the TUI does no writes); each section shows a `+ N more` line rather than
+  silently capping a long backlog.
 - **Health** (`h`): host resources, headline counts, runs needing an operator,
   context-pressure agents (≥75%), and a never-active-by-rig reallocation rollup.
   Costs are shown as *not measured* (the supervisor exposes none yet — see
@@ -63,8 +74,8 @@ it. Quitting (`q`) tears the peek pane down. All drill-ins READ (logs/show/diff)
 
 `↑`/`↓` or `j`/`k` move the selection · **mouse wheel** scrolls · `PageUp`/`PageDown`
 · `g`/`G` top/bottom · `enter` drill into split · `x` close split · `a` cycle agent
-status filter · `b` beads · `f` runs · `h` health · `p` agent detail · `c` toggle
-config tab (in detail) · `q` (or `esc`) quit.
+status filter · `b` beads · `f` runs · `s` sessions · `l` ledger · `h` health · `p`
+agent detail · `c` toggle config tab (in detail) · `q` (or `esc`) quit.
 
 ## Run
 

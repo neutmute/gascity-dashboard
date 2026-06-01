@@ -6,6 +6,7 @@ import {
   effectiveContextPct,
   type GcSession,
   type GcBead,
+  type GcMailItem,
   type DashboardSnapshot,
   type RunLane,
 } from 'gas-city-dashboard-shared';
@@ -426,4 +427,63 @@ export function contextPressure(
     .map((s) => ({ session: s, pct: ctxPct(s) }))
     .filter((e): e is ContextPressureEntry => e.pct !== undefined && e.pct >= thresholdPct)
     .sort((a, b) => b.pct - a.pct);
+}
+
+// ── sessions live feed ("what each is doing", mechanical) ────────────────────
+
+/** Currently-running sessions (active/creating), most-recently-active first.
+ *  The flat "live now" feed behind the Sessions view. */
+export function runningSessions(sessions: readonly GcSession[]): GcSession[] {
+  return sessions
+    .filter((s) => categorize(s) === 'active')
+    .slice()
+    .sort((a, b) => Date.parse(b.last_active ?? '') - Date.parse(a.last_active ?? ''));
+}
+
+/**
+ * A readable, mechanical phrase for what a session is doing right now. This is
+ * the honest non-LLM signal: the supervisor's coarse `activity` hint while
+ * active, or the dormant transition reason. A model-written task summary is a
+ * separate future layer — no per-session transcript is exposed as data today,
+ * so we never fabricate one.
+ */
+export function activityPhrase(s: GcSession): string {
+  if (categorize(s) !== 'active') {
+    return s.attached ? 'attached' : (s.reason ?? s.state);
+  }
+  if (!s.activity) return 'active';
+  switch (s.activity) {
+    case 'tool_use':
+      return 'running a tool';
+    case 'thinking':
+      return 'thinking';
+    case 'idle':
+      return 'active, between steps';
+    default:
+      return s.activity;
+  }
+}
+
+// ── operator ledger (things waiting on the user) ─────────────────────────────
+
+/** Unread inbox mail addressed to the operator, highest priority first then
+ *  newest. The supervisor sends `priority: null` for many items; those sort
+ *  after any explicitly-prioritised mail. */
+export function unreadOperatorMail(mail: readonly GcMailItem[]): GcMailItem[] {
+  return mail
+    .filter((m) => !m.read)
+    .slice()
+    .sort((a, b) => {
+      const pa = a.priority ?? 99;
+      const pb = b.priority ?? 99;
+      if (pa !== pb) return pa - pb;
+      return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+    });
+}
+
+/** One-line snippet of a mail body: whitespace collapsed, hard-truncated with
+ *  an ellipsis so a long body can't blow out the ledger row. */
+export function mailSnippet(body: string, max = 120): string {
+  const oneLine = body.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }

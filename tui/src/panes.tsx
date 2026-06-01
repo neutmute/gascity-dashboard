@@ -1,13 +1,16 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { RunLane } from 'gas-city-dashboard-shared';
-import type { GcBead } from './api.ts';
+import type { GcBead, GcMailItem } from './api.ts';
 import {
+  activityPhrase,
+  basename,
   ctxPct,
   kindGlyph,
   kindLabel,
   laneNeedsOperator,
   laneRig,
+  mailSnippet,
   peekCommands,
   relativeTime,
   shortModel,
@@ -78,6 +81,47 @@ export function AgentRow({ view, selected, dim, now }: AgentRowProps): React.JSX
         <Text wrap="truncate-end" dimColor>
           {shortModel(s.model) || s.provider}
         </Text>
+      </Box>
+      <Box width={5} justifyContent="flex-end">
+        <Text dimColor>{relativeTime(s.last_active, now)}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+// ── one session row (sessions live-feed view) ───────────────────────────────
+
+interface SessionRowProps {
+  readonly view: AgentView;
+  readonly selected: boolean;
+  readonly now: number;
+}
+
+/** A live-feed row: agent, rig, and a mechanical phrase for what it's doing
+ *  right now (the activity hint / reason), given more room than the terse
+ *  Agents row so the phrase reads in full. */
+export function SessionRow({ view, selected, now }: SessionRowProps): React.JSX.Element {
+  const s = view.session;
+  const pct = ctxPct(s);
+  const ctx = pct !== undefined ? `${pct}%` : '';
+  return (
+    <Box>
+      <Box width={2}>{selected ? <Text color="cyan">▸</Text> : <Text> </Text>}</Box>
+      <Box width={20} marginRight={1}>
+        <Text wrap="truncate-end" bold={selected} inverse={selected}>
+          {view.agent}
+        </Text>
+      </Box>
+      <Box width={12} marginRight={1}>
+        <Text wrap="truncate-end" dimColor>
+          {view.rig}
+        </Text>
+      </Box>
+      <Box flexGrow={1} marginRight={1}>
+        <Text wrap="truncate-end">{activityPhrase(s)}</Text>
+      </Box>
+      <Box width={4} marginRight={1} justifyContent="flex-end">
+        <Text dimColor>{ctx}</Text>
       </Box>
       <Box width={5} justifyContent="flex-end">
         <Text dimColor>{relativeTime(s.last_active, now)}</Text>
@@ -381,6 +425,84 @@ export function HealthPane({ health, idle, pressure }: HealthPaneProps): React.J
 
       <Box marginTop={1}>
         <Text dimColor>h close · q quit</Text>
+      </Box>
+    </Box>
+  );
+}
+
+// ── operator ledger pane (things waiting on the user) ────────────────────────
+
+interface LedgerPaneProps {
+  /** Unread operator inbox mail, already filtered + ordered. */
+  readonly mail: readonly GcMailItem[];
+  /** Run lanes flagged needs-operator. */
+  readonly runs: readonly RunLane[];
+}
+
+/** How many ledger rows each section shows before collapsing to a count. */
+const LEDGER_LIMIT = 8;
+
+/** Surfaces what a section's row cap hid, so a long backlog never reads as
+ *  "all clear" (no silent truncation). */
+function MoreLine({ total, shown }: { readonly total: number; readonly shown: number }): React.JSX.Element | null {
+  if (total <= shown) return null;
+  return <Text dimColor>  + {total - shown} more</Text>;
+}
+
+export function LedgerPane({ mail, runs }: LedgerPaneProps): React.JSX.Element {
+  return (
+    <Box flexDirection="column">
+      <Text bold>waiting on you</Text>
+
+      <Box marginTop={1}>
+        <Text bold>unread mail </Text>
+        <Text dimColor>({mail.length})</Text>
+      </Box>
+      {mail.length === 0 ? (
+        <Text dimColor>  none</Text>
+      ) : (
+        mail.slice(0, LEDGER_LIMIT).map((m) => (
+          <Box key={m.id} flexDirection="column">
+            <Box>
+              <Text dimColor>  ✉ </Text>
+              <Box width={20} marginRight={1}>
+                <Text wrap="truncate-end">{basename(m.from) || m.from}</Text>
+              </Box>
+              <Text wrap="truncate-end">{m.subject}</Text>
+              {typeof m.priority === 'number' ? <Text dimColor> · P{m.priority}</Text> : null}
+            </Box>
+            <Box>
+              <Text dimColor wrap="truncate-end">
+                {'    '}
+                {mailSnippet(m.body, 100)}
+              </Text>
+            </Box>
+          </Box>
+        ))
+      )}
+      <MoreLine total={mail.length} shown={LEDGER_LIMIT} />
+
+      <Box marginTop={1}>
+        <Text bold>runs needing operator </Text>
+        <Text dimColor>({runs.length})</Text>
+      </Box>
+      {runs.length === 0 ? (
+        <Text dimColor>  none</Text>
+      ) : (
+        runs.slice(0, LEDGER_LIMIT).map((l) => (
+          <Box key={l.id}>
+            <Text color="red">  ● </Text>
+            <Text wrap="truncate-end">{l.title}</Text>
+            <Text dimColor>
+              {' '}({laneRig(l) ?? '—'}) — {l.phaseLabel}
+            </Text>
+          </Box>
+        ))
+      )}
+      <MoreLine total={runs.length} shown={LEDGER_LIMIT} />
+
+      <Box marginTop={1}>
+        <Text dimColor>l close · q quit</Text>
       </Box>
     </Box>
   );
