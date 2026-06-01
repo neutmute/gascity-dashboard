@@ -41,10 +41,60 @@ describe('SourceCache', () => {
     assert.equal(stillFresh.status, 'fresh');
     assert.equal(loadCount, 1);
 
-    // Past TTL boundary — .get() should refresh (and succeed again).
+    // Past TTL boundary — stale-while-revalidate: .get() serves the prior
+    // value immediately with status 'stale' and fires a background refresh
+    // (load() already invoked), rather than blocking the caller.
     nowMs += 600;
+    const stale = await cache.get();
+    assert.equal(stale.status, 'stale');
+    assert.deepEqual(stale.data, { value: 'live' });
+    assert.equal(loadCount, 2, 'background refresh load() fired');
+
+    // Once the background refresh settles the cache is fresh again, with no
+    // additional load.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const refreshed = await cache.get();
     assert.equal(refreshed.status, 'fresh');
+    assert.equal(loadCount, 2);
+  });
+
+  test('stale-while-revalidate: past-TTL .get() serves stale immediately while the refresh is still in flight', async () => {
+    let nowMs = Date.parse('2026-05-22T12:00:00.000Z');
+    let loadCount = 0;
+    let release: (() => void) | undefined;
+    const cache = new SourceCache({
+      source: 'runs',
+      ttlMs: 1_000,
+      now: () => new Date(nowMs),
+      load: async () => {
+        loadCount += 1;
+        if (loadCount >= 2) {
+          // Hold the background refresh open so the assertion below proves
+          // the stale read returned WITHOUT waiting on the upstream fetch.
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return { value: `live-${loadCount}` };
+      },
+    });
+
+    const fresh = await cache.get();
+    assert.equal(fresh.status, 'fresh');
+    assert.equal(loadCount, 1);
+
+    nowMs += 1_500; // past TTL
+    const stale = await cache.get();
+    assert.equal(stale.status, 'stale');
+    assert.deepEqual(stale.data, { value: 'live-1' }, 'serves prior value, not the in-flight refresh');
+    assert.equal(loadCount, 2, 'background refresh started');
+
+    // Release the background refresh; the next read is fresh with no extra load.
+    release?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const refreshed = await cache.get();
+    assert.equal(refreshed.status, 'fresh');
+    assert.deepEqual(refreshed.data, { value: 'live-2' });
     assert.equal(loadCount, 2);
   });
 
@@ -116,9 +166,13 @@ describe('SourceCache', () => {
     assert.equal(fresh.status, 'fresh');
     assert.deepEqual(fresh.data, { value: 'live' });
 
-    // Advance past TTL so the next .get() triggers a refresh.
+    // Advance past TTL and force a blocking refresh so the failing load is
+    // surfaced synchronously. (A plain get() now serves stale immediately and
+    // refreshes in the background — the SWR path — so the error would land a
+    // cycle later; `force` is the deterministic probe of the stale-while-error
+    // contract: data preserved, error surfaced.)
     nowMs += 1_500;
-    const stale = await cache.get();
+    const stale = await cache.get({ force: true });
     assert.equal(stale.status, 'stale');
     assert.deepEqual(stale.error, { kind: 'message', message: 'collector failed' });
     assert.deepEqual(stale.data, { value: 'live' });

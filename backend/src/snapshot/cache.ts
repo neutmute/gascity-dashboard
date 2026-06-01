@@ -111,12 +111,33 @@ export class SourceCache<T> {
   }
 
   async get(options: { force?: boolean } = {}): Promise<SourceState<T>> {
+    if (options.force) {
+      return await this.refresh();
+    }
+
     const current = this.currentState();
 
-    if (!options.force && current && current.status !== 'stale') {
+    // Fresh (within TTL) or fixture fallback — serve as-is, no fetch.
+    if (current && current.status !== 'stale') {
       return current;
     }
 
+    // Stale-while-revalidate (gascity-dashboard-rqv0): we still hold prior
+    // live data whose TTL has lapsed. Serve it immediately and kick off a
+    // single-flighted background refresh instead of blocking the caller on
+    // the upstream supervisor scan (~seconds). The snapshot is polled by the
+    // frontend (visible-poll + SSE), so the refreshed entry lands on the next
+    // cycle; `stale` is already a first-class wire status the UI renders.
+    if (current) {
+      void this.refresh().catch(() => {
+        // refresh() resolves even on load failure (refreshUnshared catches
+        // and records lastError); this guard only prevents an unexpected
+        // throw from surfacing as an unhandled rejection on the bg path.
+      });
+      return current;
+    }
+
+    // Cold cache — nothing to serve, so the caller must wait for the first load.
     return await this.refresh();
   }
 
