@@ -158,6 +158,7 @@ function envelope({
 } = {}): DashboardSnapshot {
   return {
     generatedAt,
+    alerts: [],
     config: {
       cityName: 'racoon-city',
       cityRoot: '/tmp/x',
