@@ -1,10 +1,12 @@
 import type {
+  AlertItem,
   CityStatusSummary,
   DashboardHeadline,
   DashboardMetric,
   DashboardRuntimeConfig,
   DashboardSnapshot,
   DashboardSources,
+  GcSession,
   GcSessionList,
   ResourceSummary,
   RunSummary,
@@ -18,6 +20,12 @@ import type {
 import type { GcClient } from '../gc-client.js';
 import { deriveRunAlerts } from './alerts.js';
 import { SourceCache } from './cache.js';
+import { createSupervisorPendingSubscriber } from './pending-subscriber.js';
+import { PendingStore } from './pending-store.js';
+import {
+  PendingSubscriptionManager,
+  type SessionStreamSubscriber,
+} from './pending-subscriptions.js';
 import { createCityStatusSourceCache } from './collectors/cityStatus.js';
 import { createResourcesSourceCache } from './collectors/resources.js';
 import { createRunsSourceCache } from './collectors/runs.js';
@@ -73,6 +81,24 @@ export interface SnapshotService {
   getSnapshot: () => Promise<DashboardSnapshot>;
   refresh: (sources?: readonly SourceName[]) => Promise<DashboardSnapshot>;
   health: () => SnapshotHealth;
+  /**
+   * Current city-wide pending-decision alerts (gascity-dashboard-mbcy, R3).
+   * Sourced from the per-session pending aggregator, which is fed as a side
+   * effect of each snapshot read reconciling its active-session set. Empty
+   * when no aggregator is wired (fixtures / no gc) or nothing is pending.
+   * Layer 3 (26zl) streams this to the home view.
+   */
+  pendingAlerts: () => readonly AlertItem[];
+  /**
+   * Register a live pending-feed consumer (gascity-dashboard-26zl, Layer 3).
+   * The aggregator activates (starts subscribing to active sessions) while ≥1
+   * consumer is registered and tears down when the last unsubscribes — so no
+   * SSE fan-out runs without a consumer. `listener` fires on every change; read
+   * the current set via pendingAlerts(). Returns an unsubscribe function.
+   */
+  streamPending: (listener: () => void) => () => void;
+  /** Tear down the pending aggregator's subscriptions + consumers (shutdown). */
+  closePending: () => void;
 }
 
 export interface CreateSnapshotServiceOptions {
@@ -89,9 +115,21 @@ export interface CreateSnapshotServiceOptions {
    * spy-tracked cache; otherwise built from `gc`.
    */
   sessions?: SourceCache<GcSessionList> | undefined;
+  /**
+   * Per-session pending subscriber (gascity-dashboard-mbcy). Injected in tests
+   * with a fake; in production defaults to the supervisor SSE subscriber when
+   * `gc` is present and fixtures are off. When neither is available the pending
+   * aggregator stays inert (pendingAlerts() === []).
+   */
+  pendingSubscriber?: SessionStreamSubscriber | undefined;
   config: DashboardRuntimeConfig;
   now?: (() => Date) | undefined;
   uptimeSeconds?: (() => number) | undefined;
+}
+
+/** Sessions worth observing for pending decisions — the live (active) ones. */
+function activeSessionIds(items: readonly GcSession[]): string[] {
+  return items.filter((session) => session.state === 'active').map((session) => session.id);
 }
 
 const sourceNameSet = new Set<string>(SOURCE_NAMES);
@@ -118,6 +156,57 @@ export function createSnapshotService(
   // contains no `await`; do not introduce one inside it.
   let progressMarks = new Map<string, LaneProgressMark>();
   let marksFetchedAt: string | null = null;
+
+  // Per-session pending aggregator (gascity-dashboard-mbcy, R3, Option A). The
+  // store is always present (cheap, in-memory); the manager only runs when a
+  // subscriber is available — injected in tests, else the real supervisor SSE
+  // subscriber when gc is present and fixtures are off. No subscriber => the
+  // aggregator stays inert and pendingAlerts() returns []. The store holds NO
+  // persisted state (R13) and is reconciled to the active-session set on each
+  // read, so a gone session's pending cannot linger.
+  const pendingStore = new PendingStore();
+  const pendingListeners = new Set<() => void>();
+  const notifyPending = (): void => {
+    for (const listener of pendingListeners) listener();
+  };
+  const pendingSubscriber =
+    options.pendingSubscriber ??
+    (options.gc !== undefined && !options.config.useFixtures
+      ? createSupervisorPendingSubscriber({
+          streamUrl: (sessionId, after) => options.gc!.sessionStreamUrl(sessionId, after),
+        })
+      : undefined);
+  const pendingManager =
+    pendingSubscriber !== undefined
+      ? new PendingSubscriptionManager({
+          subscriber: pendingSubscriber,
+          store: pendingStore,
+          now,
+          onChange: notifyPending,
+        })
+      : undefined;
+  // Lazy activation: the aggregator only fans out per-session SSE while at least
+  // one consumer is streaming (Layer 3), so a backend with no home viewer opens
+  // no connections. Snapshot reads reconcile the active set only while active.
+  let pendingConsumers = 0;
+  const pendingActive = (): boolean => pendingConsumers > 0;
+  const activatePending = (): void => {
+    if (pendingManager === undefined) return;
+    // Kick an immediate sessions read + sync so a new consumer needn't wait for
+    // the next snapshot poll. Best-effort; a sessions failure degrades to quiet.
+    void sessionsCache
+      .get()
+      .then((state) => {
+        if (pendingActive() && sourceIsAvailable(state)) {
+          pendingManager.syncActiveSessions(activeSessionIds(state.data.items));
+        }
+      })
+      .catch(() => {});
+  };
+  const deactivatePending = (): void => {
+    pendingManager?.closeAll();
+    pendingStore.retainActive([]); // drop stale pending so re-activation starts clean
+  };
 
   let lastSnapshotAt: string | null = null;
   let lastSnapshotDurationMs: number | null = null;
@@ -181,6 +270,13 @@ export function createSnapshotService(
       readSources(caches, refreshSources),
       readSessions(sessionsCache, refreshSources),
     ]);
+    // Reconcile the pending aggregator to the active-session set (R3). This is
+    // synchronous and runs OUTSIDE enrichRuns, preserving that function's
+    // load-bearing no-`await` invariant. A sessions read failure leaves the
+    // current subscriptions untouched (degrade-to-quiet, not blank).
+    if (pendingManager !== undefined && pendingActive() && sourceIsAvailable(sessionsState)) {
+      pendingManager.syncActiveSessions(activeSessionIds(sessionsState.data.items));
+    }
     const snapshot = buildSnapshot(
       options.config,
       enrichRuns(sources, sessionsState),
@@ -216,6 +312,25 @@ export function createSnapshotService(
       lastRefreshDurationMs,
       sources: sourceStatuses(caches),
     }),
+    // 'fresh' provenance for now: the aggregator keeps last-known pending and
+    // reconciles every read. A liveness-aware provenance (degraded when the
+    // dashboard stream / subscriptions are dark) is Layer 3's job (26zl, R16).
+    pendingAlerts: () => pendingStore.alerts('fresh'),
+    streamPending: (listener) => {
+      pendingListeners.add(listener);
+      pendingConsumers += 1;
+      if (pendingConsumers === 1) activatePending();
+      return () => {
+        if (!pendingListeners.delete(listener)) return;
+        pendingConsumers -= 1;
+        if (pendingConsumers === 0) deactivatePending();
+      };
+    },
+    closePending: () => {
+      pendingListeners.clear();
+      pendingConsumers = 0;
+      pendingManager?.closeAll();
+    },
   };
 }
 
