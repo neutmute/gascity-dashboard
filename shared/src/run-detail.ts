@@ -42,13 +42,9 @@ export interface RunSessionLink {
   assignee: string;
 }
 
-export type RunIteration =
-  | { kind: 'base' }
-  | { kind: 'loop'; value: number };
+export type RunIteration = { kind: 'base' } | { kind: 'loop'; value: number };
 
-export type RunAttempt =
-  | { kind: 'untracked' }
-  | { kind: 'attempt'; value: number };
+export type RunAttempt = { kind: 'untracked' } | { kind: 'attempt'; value: number };
 
 export type RunSessionAttachment =
   | { kind: 'attached'; link: RunSessionLink; streamable: boolean }
@@ -93,9 +89,7 @@ export interface RunDisplayNode {
   controlBadges: RunControlBadge[];
 }
 
-export type RunNodeScope =
-  | { kind: 'run' }
-  | { kind: 'scoped'; ref: string };
+export type RunNodeScope = { kind: 'run' } | { kind: 'scoped'; ref: string };
 
 export type RunIterationSummary =
   | { kind: 'single' }
@@ -173,7 +167,7 @@ export interface FormulaRunDetail {
    * gascity-dashboard-ud6j: the dashboard-derived phase ladder
    * (intake → implementation → review → approval → finalization) — the SAME
    * stages the snapshot lane renders, computed from this run's OWN beads via
-   * the shared fromGcBead → mapRunPhase → stageProgress pipeline (no
+   * the shared fromDashboardBead → mapRunPhase → stageProgress pipeline (no
    * recompute drift). Lets a single-root run with no materialized step DAG
    * still show live phase progression instead of a dead "1 node" line.
    */
@@ -237,12 +231,7 @@ export type RunSnapshotSequence =
 
 export type RunDiffKind = 'ok' | 'not_git' | 'path_unknown' | 'error';
 
-export type RunChangedFileKind =
-  | 'code'
-  | 'test'
-  | 'docs'
-  | 'config'
-  | 'other';
+export type RunChangedFileKind = 'code' | 'test' | 'docs' | 'config' | 'other';
 
 export interface RunChangedFile {
   path: string;

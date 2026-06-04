@@ -5,7 +5,7 @@ import type {
   SessionRespondInputBody,
   SessionResponse,
 } from '../generated/gc-supervisor-client/types.gen';
-import { getActiveCity } from '../api/cityBase';
+import { activeCityOrThrow } from '../api/cityBase';
 import { supervisorApi } from './client';
 
 export interface AgentPendingInteraction {
@@ -29,11 +29,13 @@ export async function listAgentPendingInteractions(
     return [{ agentName: agent.name, sessionId, sessionName }];
   });
 
-  const pending = await Promise.all(candidates.map(async (candidate) => {
-    const response = await supervisorApi().sessionPending(cityName, candidate.sessionId);
-    if (response.pending === undefined) return null;
-    return { ...candidate, pending: response.pending };
-  }));
+  const pending = await Promise.all(
+    candidates.map(async (candidate) => {
+      const response = await supervisorApi().sessionPending(cityName, candidate.sessionId);
+      if (response.pending === undefined) return null;
+      return { ...candidate, pending: response.pending };
+    }),
+  );
   return pending.filter((item): item is AgentPendingInteraction => item !== null);
 }
 
@@ -58,15 +60,6 @@ function sessionIdByName(sessions: readonly SessionResponse[]): Map<string, stri
   }
   return out;
 }
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
-}
-
 function shellToken(value: string): string {
   if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
   return `'${value.replaceAll("'", "'\\''")}'`;

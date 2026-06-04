@@ -16,7 +16,7 @@
 //  - Ranking, eligibility predicates, and inhibition live in R5/R8, not here —
 //    this module is the contract only.
 
-import type { IsoTimestamp } from './gc-client-types.js';
+import type { IsoTimestamp } from './dashboard-sessions.js';
 import type { SourceStatus } from './snapshot/types.js';
 
 /** The closed set of actionable-signal kinds surfaced on the home view. */
@@ -101,12 +101,9 @@ export interface AlertItem {
  * unidentifiable alert is a producer bug, not a silent empty key.
  */
 export function makeAlertDedupKey(kind: AlertKind, ref: AlertRef): string {
-  const id =
-    ref.requestId ?? ref.runId ?? ref.beadId ?? ref.mailId ?? ref.sessionId;
+  const id = ref.requestId ?? ref.runId ?? ref.beadId ?? ref.mailId ?? ref.sessionId;
   if (id === undefined || id.length === 0) {
-    throw new Error(
-      `makeAlertDedupKey: AlertRef for kind "${kind}" has no identifying id`,
-    );
+    throw new Error(`makeAlertDedupKey: AlertRef for kind "${kind}" has no identifying id`);
   }
   return `${kind}:${id}`;
 }

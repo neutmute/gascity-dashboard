@@ -1,25 +1,21 @@
-import type { GcRunBead } from '../run-snapshot.js';
+import type { RunSnapshotBead } from '../run-snapshot.js';
 
-export function meta(bead: GcRunBead | undefined, key: string): string | undefined {
+export function meta(bead: RunSnapshotBead | undefined, key: string): string | undefined {
   const value = bead?.metadata?.[key];
   if (typeof value === 'string') return nonEmpty(value);
   return undefined;
 }
 
 export function nonEmpty(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0
-    ? value.trim()
-    : undefined;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-export function normalizedStepRef(bead: GcRunBead): string | null {
-  const ref =
-    meta(bead, 'gc.step_ref') ??
-    nonEmpty(bead.step_ref);
+export function normalizedStepRef(bead: RunSnapshotBead): string | null {
+  const ref = meta(bead, 'gc.step_ref') ?? nonEmpty(bead.step_ref);
   return ref ?? null;
 }
 
-export function iterationFor(bead: GcRunBead): number | undefined {
+export function iterationFor(bead: RunSnapshotBead): number | undefined {
   return (
     numericMeta(bead, 'gc.iteration') ??
     numericRefSegment(bead, 'iteration') ??
@@ -27,7 +23,7 @@ export function iterationFor(bead: GcRunBead): number | undefined {
   );
 }
 
-export function attemptFor(bead: GcRunBead): number | undefined {
+export function attemptFor(bead: RunSnapshotBead): number | undefined {
   return (
     numericMeta(bead, 'gc.attempt') ??
     numericField(bead.attempt) ??
@@ -35,24 +31,15 @@ export function attemptFor(bead: GcRunBead): number | undefined {
   );
 }
 
-export function positiveIntegerMeta(
-  bead: GcRunBead,
-  key: string,
-): number | undefined {
+export function positiveIntegerMeta(bead: RunSnapshotBead, key: string): number | undefined {
   return numericMeta(bead, key);
 }
 
 export function externalizeId(id: string): string {
-  return id.replace(
-    /(^|[^A-Za-z0-9])ralph(?=$|[^A-Za-z0-9])/gi,
-    '$1check-loop',
-  );
+  return id.replace(/(^|[^A-Za-z0-9])ralph(?=$|[^A-Za-z0-9])/gi, '$1check-loop');
 }
 
-function numericRefSegment(
-  bead: GcRunBead,
-  marker: string,
-): number | undefined {
+function numericRefSegment(bead: RunSnapshotBead, marker: string): number | undefined {
   const ref = normalizedStepRef(bead);
   if (!ref) return undefined;
   const parts = ref.split('.');
@@ -64,7 +51,7 @@ function numericRefSegment(
   return undefined;
 }
 
-function numericMeta(bead: GcRunBead, key: string): number | undefined {
+function numericMeta(bead: RunSnapshotBead, key: string): number | undefined {
   return numericField(meta(bead, key));
 }
 

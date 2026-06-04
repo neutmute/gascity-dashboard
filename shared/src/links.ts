@@ -10,7 +10,7 @@
 // Browser code can build it directly from supervisor API reads; backend tests
 // still exercise the same shared builder through compatibility re-exports.
 
-import type { IsoTimestamp } from './gc-client-types.js';
+import type { IsoTimestamp } from './dashboard-sessions.js';
 
 /**
  * Entity kinds a relation node can point at. Bead-native kinds resolve
@@ -144,10 +144,6 @@ export interface EntityLinkView {
  * a city-scoped and a rig-scoped bead can share a `scope_ref` value and
  * would otherwise collide.
  */
-export function makeNodeKey(
-  type: LinkNodeType,
-  ref: string,
-  scope: string,
-): string {
+export function makeNodeKey(type: LinkNodeType, ref: string, scope: string): string {
   return `${type}:${scope}:${ref}`;
 }

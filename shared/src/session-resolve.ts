@@ -1,13 +1,12 @@
-import type { GcSession } from './gc-client-types.js';
+import type { DashboardSession } from './dashboard-sessions.js';
 
 // The lossy role/assignee → session resolution (gascity-dashboard-3ax).
 //
-// This is the SINGLE implementation of the 4-step resolution the codebase
-// flags in two places: SlungState.resolved_session_name (shared/src/maintainer-triage.ts)
-// and the maintainer sling resolver (backend/src/views/modules/maintainer/resolve-target.ts,
-// which now delegates here). PRD risk R2 calls this join out as load-bearing
-// for the run-health engine — role-pool dispatch routinely fails it —
-// so it must not drift between consumers.
+// This is the SINGLE implementation of the 4-step resolution used by
+// frontend Maintainer sling recording, SlungState.resolved_session_name
+// (shared/src/maintainer-triage.ts), and run/bead session joins. PRD risk R2
+// calls this join out as load-bearing for the run-health engine — role-pool
+// dispatch routinely fails it — so it must not drift between consumers.
 //
 // A bead's `assignee`, a sling `target`, and a role label are the same kind
 // of value: a role / pool / alias the supervisor resolves to a concrete
@@ -15,7 +14,7 @@ import type { GcSession } from './gc-client-types.js';
 // session list because gc does not expose the resolved id.
 
 /**
- * Resolves a role / assignee / target label to the concrete GcSession that
+ * Resolves a role / assignee / target label to the concrete DashboardSession that
  * carries it, or null when none match. `active` sessions outrank non-active
  * (the caller wants the live agent); within a tier, first match wins
  * (deterministic given gc's recency-sorted iteration order).
@@ -24,14 +23,17 @@ import type { GcSession } from './gc-client-types.js';
  */
 export function resolveSessionForTarget(
   target: string,
-  sessions: readonly GcSession[],
-): GcSession | null {
+  sessions: readonly DashboardSession[],
+): DashboardSession | null {
   if (target.length === 0 || sessions.length === 0) return null;
   const active = sessions.filter((s) => s.state === 'active');
   return matchFirst(target, active) ?? matchFirst(target, sessions);
 }
 
-function matchFirst(target: string, sessions: readonly GcSession[]): GcSession | null {
+function matchFirst(
+  target: string,
+  sessions: readonly DashboardSession[],
+): DashboardSession | null {
   for (const s of sessions) {
     if (matchesSessionTarget(s, target)) return s;
   }
@@ -43,7 +45,7 @@ function matchFirst(target: string, sessions: readonly GcSession[]): GcSession |
  * positions: exact alias, pool, last-segment of alias (split on '/' '.'),
  * or last-segment of session_name (split on '__' '--').
  */
-export function matchesSessionTarget(session: GcSession, target: string): boolean {
+export function matchesSessionTarget(session: DashboardSession, target: string): boolean {
   if (session.alias === target) return true;
   if (session.pool === target) return true;
   if (session.alias !== undefined && lastSegment(session.alias, ['/', '.']) === target) {

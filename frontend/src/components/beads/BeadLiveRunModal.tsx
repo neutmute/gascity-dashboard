@@ -1,4 +1,4 @@
-import type { GcSession } from 'gas-city-dashboard-shared';
+import type { DashboardSession } from 'gas-city-dashboard-shared';
 import { LiveSessionPeek, isSessionStreamable } from '../LiveSessionPeek';
 import { Modal } from '../Modal';
 
@@ -12,17 +12,12 @@ interface BeadLiveRunModalProps {
   open: boolean;
   onClose: () => void;
   /** The session resolved from the bead's assignee, or null. */
-  session: GcSession | null;
+  session: DashboardSession | null;
   /** Bead title, for the modal heading. */
   beadTitle: string;
 }
 
-export function BeadLiveRunModal({
-  open,
-  onClose,
-  session,
-  beadTitle,
-}: BeadLiveRunModalProps) {
+export function BeadLiveRunModal({ open, onClose, session, beadTitle }: BeadLiveRunModalProps) {
   const streamable = isSessionStreamable(session);
   return (
     <Modal
@@ -38,12 +33,7 @@ export function BeadLiveRunModal({
       }
       widthClass="max-w-5xl"
     >
-      <LiveSessionPeek
-        sessionId={session?.id ?? null}
-        stream={streamable}
-        showBadge
-        showCaption
-      />
+      <LiveSessionPeek sessionId={session?.id ?? null} stream={streamable} showBadge showCaption />
     </Modal>
   );
 }

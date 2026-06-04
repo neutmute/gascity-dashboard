@@ -9,6 +9,7 @@ import { loadSupervisorFormulaRunDetail } from './runDetail';
 
 vi.mock('../api/cityBase', () => ({
   getActiveCity: () => 'test-city',
+  activeCityOrThrow: () => 'test-city',
 }));
 
 const baseApi: SupervisorApi = {
@@ -90,14 +91,16 @@ describe('loadSupervisorFormulaRunDetail', () => {
   });
 
   it('reports missing formula metadata without calling the formula endpoint', async () => {
-    workflowRun.mockResolvedValue(workflowSnapshot({
-      status: 'closed',
-      metadata: {
-        'gc.kind': 'workflow',
-        'gc.formula_contract': 'graph.v2',
-        'gc.run_target': 'test-city/codex',
-      },
-    }));
+    workflowRun.mockResolvedValue(
+      workflowSnapshot({
+        status: 'closed',
+        metadata: {
+          'gc.kind': 'workflow',
+          'gc.formula_contract': 'graph.v2',
+          'gc.run_target': 'test-city/codex',
+        },
+      }),
+    );
 
     const detail = await loadSupervisorFormulaRunDetail('wf-1');
 
@@ -117,14 +120,16 @@ describe('loadSupervisorFormulaRunDetail', () => {
   });
 
   it('does not title-fallback into formula detail for completed supervisor runs', async () => {
-    workflowRun.mockResolvedValue(workflowSnapshot({
-      status: 'completed',
-      metadata: {
-        'gc.kind': 'workflow',
-        'gc.formula_contract': 'graph.v2',
-        'gc.run_target': 'test-city/codex',
-      },
-    }));
+    workflowRun.mockResolvedValue(
+      workflowSnapshot({
+        status: 'completed',
+        metadata: {
+          'gc.kind': 'workflow',
+          'gc.formula_contract': 'graph.v2',
+          'gc.run_target': 'test-city/codex',
+        },
+      }),
+    );
 
     const detail = await loadSupervisorFormulaRunDetail('wf-1');
 
@@ -144,13 +149,15 @@ describe('loadSupervisorFormulaRunDetail', () => {
   });
 
   it('reports missing run target without calling the formula endpoint', async () => {
-    workflowRun.mockResolvedValue(workflowSnapshot({
-      metadata: {
-        'gc.kind': 'workflow',
-        'gc.formula_contract': 'graph.v2',
-        'gc.formula': 'mol-test',
-      },
-    }));
+    workflowRun.mockResolvedValue(
+      workflowSnapshot({
+        metadata: {
+          'gc.kind': 'workflow',
+          'gc.formula_contract': 'graph.v2',
+          'gc.formula': 'mol-test',
+        },
+      }),
+    );
 
     const detail = await loadSupervisorFormulaRunDetail('wf-1');
 
@@ -190,10 +197,12 @@ describe('loadSupervisorFormulaRunDetail', () => {
   });
 });
 
-function workflowSnapshot(overrides: {
-  status?: string;
-  metadata?: Record<string, string>;
-} = {}) {
+function workflowSnapshot(
+  overrides: {
+    status?: string;
+    metadata?: Record<string, string>;
+  } = {},
+) {
   return {
     workflow_id: 'wf-1',
     root_bead_id: 'wf-1',

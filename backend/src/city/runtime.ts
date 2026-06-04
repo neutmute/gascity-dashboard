@@ -1,15 +1,11 @@
 import express, { type Router } from 'express';
 import os from 'node:os';
 import path from 'node:path';
-import type {
-  BackgroundWorker,
-  DashboardRuntimeConfig,
-} from 'gas-city-dashboard-shared';
+import type { BackgroundWorker, DashboardRuntimeConfig } from 'gas-city-dashboard-shared';
 
 import type { AdminConfig } from '../config.js';
 import { GcClient } from '../gc-client.js';
 import { csrfValidate } from '../middleware/csrf.js';
-import { agentsRouter } from '../routes/agents.js';
 import { runsRouter } from '../routes/runs.js';
 import { createDoltNomsSampler, doltRouter, type DoltNomsSampler } from '../routes/dolt.js';
 import { ALL_MODULES } from '../views/registry.js';
@@ -51,15 +47,10 @@ export interface CreateCityRuntimeOptions {
 
 export function createCityRuntime(opts: CreateCityRuntimeOptions): CityRuntime {
   const { cityName, cityPath, config } = opts;
-  const gc =
-    opts.gc ??
-    new GcClient({ baseUrl: config.gcSupervisorUrl, cityName });
+  const gc = opts.gc ?? new GcClient({ baseUrl: config.gcSupervisorUrl, cityName });
 
   // Resolve mounted modules once so /config and the mount loop cannot drift.
-  const enabledFirstPartyIds = resolveEnabledFirstPartyIds(
-    ALL_MODULES,
-    config.enabledModules,
-  );
+  const enabledFirstPartyIds = resolveEnabledFirstPartyIds(ALL_MODULES, config.enabledModules);
   const mountedModules = ALL_MODULES.filter(
     (m) => m.kind === 'core' || enabledFirstPartyIds.has(m.id),
   );
@@ -73,17 +64,20 @@ export function createCityRuntime(opts: CreateCityRuntimeOptions): CityRuntime {
     // what an unset env meant. Core-only default surfaces as `[]`.
     enabledModules: [...enabledFirstPartyIds],
     defaultView: config.defaultView,
+    ...(enabledFirstPartyIds.has('maintainer')
+      ? {
+          maintainer: {
+            slingTarget: config.modules.maintainer.slingTarget,
+            triageTarget: config.modules.maintainer.triageTarget,
+          },
+        }
+      : {}),
   };
 
   // cityDataDir derives from the VALIDATED cityName segment (never from the
   // untrusted supervisor host path). The cityName has already passed
   // CITY_NAME_RE in the dispatch middleware before this runs.
-  const cityDataDir = path.join(
-    os.homedir(),
-    '.gascity-dashboard',
-    'cities',
-    cityName,
-  );
+  const cityDataDir = path.join(os.homedir(), '.gascity-dashboard', 'cities', cityName);
   const cityContext: CityContext = {
     cityName,
     cityPath,
@@ -107,7 +101,6 @@ export function createCityRuntime(opts: CreateCityRuntimeOptions): CityRuntime {
   // prior shape-only validation. cityPath is deliberately NOT a member of this
   // allowlist (a9yi: it's the city config dir, not a run worktree).
   router.use('/runs', runsRouter({ runCwdAllowedRoots: config.runCwdAllowedRoots }));
-  router.use('/agents', agentsRouter({ cityPath }));
 
   const moduleWorkers: BackgroundWorker[] = [];
   for (const mod of mountedModules) {

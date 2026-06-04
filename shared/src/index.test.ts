@@ -37,10 +37,10 @@ import { SCOPE_REF_RE as leafScopeRefRe } from './run-detail.js';
 import type {
   Avail,
   ClientErrorReport,
-  GcCountedList,
-  GcList,
-  GcRequiredPartialList,
-  GcSession,
+  CountedList,
+  PartialAwareList,
+  RequiredPartialList,
+  DashboardSession,
   SlingIntent,
   SlingKind,
   TriageItem,
@@ -59,20 +59,20 @@ import type {
 } from './index.js';
 import type {
   Avail as LeafAvail,
-  GcCountedList as LeafGcCountedList,
-  GcList as LeafGcList,
-  GcRequiredPartialList as LeafGcRequiredPartialList,
+  CountedList as LeafCountedList,
+  PartialAwareList as LeafPartialAwareList,
+  RequiredPartialList as LeafRequiredPartialList,
 } from './lists.js';
 import './lists.js';
 import './viewing-as.js';
-import './gc-beads.js';
+import './dashboard-beads.js';
 import './activity.js';
-import './gc-health.js';
+import './dashboard-health.js';
 import './transcript.js';
 import './api-error.js';
 import './maintainer-triage.js';
 
-function sess(partial: Partial<GcSession>): GcSession {
+function sess(partial: Partial<DashboardSession>): DashboardSession {
   return {
     id: 'gc-test',
     template: 'mayor',
@@ -80,7 +80,7 @@ function sess(partial: Partial<GcSession>): GcSession {
     created_at: '2026-05-19T00:00:00-04:00',
     attached: true,
     // 6bv7 F10: session_name/title/running/provider tightened to required
-    // in the shared GcSession contract, matching OpenAPI SessionResponse.
+    // in the shared DashboardSession projection contract.
     session_name: 'gc-test',
     title: 'gc-test',
     running: true,
@@ -225,7 +225,7 @@ test('leaf-owned runtime exports stay available through the barrel', () => {
 
 test('shared barrel does not expose dashboard mirror DTOs for direct supervisor surfaces', () => {
   const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-  const healthSource = readFileSync(new URL('./gc-health.ts', import.meta.url), 'utf8');
+  const healthSource = readFileSync(new URL('./dashboard-health.ts', import.meta.url), 'utf8');
 
   assert.doesNotMatch(source, /gc-agents/);
   assert.doesNotMatch(source, /gc-rigs/);
@@ -247,7 +247,7 @@ test('errorMessage normalizes unknown error values for shared client/server repo
   assert.equal(errorMessage({ status: 500 }), 'unknown error');
 });
 
-test('shared client-error and sling types compile as the cross-workspace contracts', () => {
+test('shared client-error and maintainer intent types compile as cross-workspace contracts', () => {
   const report: ClientErrorReport = {
     component: 'AgentDetail',
     operation: 'refreshBeads',
@@ -267,19 +267,19 @@ test('shared list envelope generics compile from leaves and barrel', () => {
     status: 'unavailable',
     error: 'missing supervisor data',
   };
-  const list: GcList<{ id: string }> = { items: [{ id: 'a' }] };
-  const counted: GcCountedList<{ id: string }> = {
+  const list: PartialAwareList<{ id: string }> = { items: [{ id: 'a' }] };
+  const counted: CountedList<{ id: string }> = {
     items: [{ id: 'a' }],
     total: 1,
   };
-  const requiredPartial: GcRequiredPartialList<{ id: string }> = {
+  const requiredPartial: RequiredPartialList<{ id: string }> = {
     items: [],
     partial: false,
   };
 
-  const leafList: LeafGcList<{ id: string }> = list;
-  const leafCounted: LeafGcCountedList<{ id: string }> = counted;
-  const leafRequiredPartial: LeafGcRequiredPartialList<{ id: string }> = requiredPartial;
+  const leafList: LeafPartialAwareList<{ id: string }> = list;
+  const leafCounted: LeafCountedList<{ id: string }> = counted;
+  const leafRequiredPartial: LeafRequiredPartialList<{ id: string }> = requiredPartial;
 
   assert.equal(available.data, 'ok');
   assert.equal(unavailable.error, 'missing supervisor data');
@@ -292,7 +292,10 @@ test('snapshot availability states use the shared Avail<T> generic', () => {
   const source = readFileSync(new URL('./snapshot/types.ts', import.meta.url), 'utf8');
   const aliases: Array<[string, RegExp]> = [
     ['RunCensusState', /export type RunCensusState = Avail<\{\s*data: RunCensus;\s*\}>;/],
-    ['RunLaneHealthState', /export type RunLaneHealthState = Avail<\{\s*data: RunLaneHealth;\s*\}>;/],
+    [
+      'RunLaneHealthState',
+      /export type RunLaneHealthState = Avail<\{\s*data: RunLaneHealth;\s*\}>;/,
+    ],
     ['RunLaneUpdatedAt', /export type RunLaneUpdatedAt = Avail<\{\s*at: string;\s*\}>;/],
     [
       'RunLaneStagePosition',
@@ -300,9 +303,18 @@ test('snapshot availability states use the shared Avail<T> generic', () => {
     ],
     ['RunLaneStepAttempt', /export type RunLaneStepAttempt = Avail<\{\s*value: number;\s*\}>;/],
     ['RunLaneStuckNode', /export type RunLaneStuckNode = Avail<\{\s*id: string;\s*\}>;/],
-    ['RunLaneSessionLastActive', /export type RunLaneSessionLastActive = Avail<\{\s*at: string;\s*\}>;/],
-    ['RunLaneSessionRunning', /export type RunLaneSessionRunning = Avail<\{\s*value: boolean;\s*\}>;/],
-    ['RunLaneSessionActivity', /export type RunLaneSessionActivity = Avail<\{\s*value: string;\s*\}>;/],
+    [
+      'RunLaneSessionLastActive',
+      /export type RunLaneSessionLastActive = Avail<\{\s*at: string;\s*\}>;/,
+    ],
+    [
+      'RunLaneSessionRunning',
+      /export type RunLaneSessionRunning = Avail<\{\s*value: boolean;\s*\}>;/,
+    ],
+    [
+      'RunLaneSessionActivity',
+      /export type RunLaneSessionActivity = Avail<\{\s*value: string;\s*\}>;/,
+    ],
     [
       'RunLaneScope',
       /export type RunLaneScope = Avail<\{\s*kind: 'city' \| 'rig';\s*ref: string;\s*rootStoreRef: string;\s*\}>;/,

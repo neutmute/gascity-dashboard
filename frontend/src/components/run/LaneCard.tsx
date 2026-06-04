@@ -19,11 +19,10 @@ interface LaneCardProps {
 }
 
 /**
- * gascity-dashboard-f4ps: historical (closed) lanes ship from the backend
- * with `health: { status: 'unavailable' }` because the workflow-health engine
- * runs only over the active subset (backend/src/snapshot/service.ts derives
- * over wf.data.lanes, never wf.data.historicalLanes). The health concepts
- * (thrashing, stalled-session) are meaningless for completed runs.
+ * gascity-dashboard-f4ps: historical (closed) lanes carry
+ * `health: { status: 'unavailable' }` because run health is derived only for
+ * the active subset. The health concepts (thrashing, stalled-session) are
+ * meaningless for completed runs.
  *
  * Single source for the historical predicate so any future UI that wants to
  * surface health-derived signal can gate on it without re-stating the rule.
@@ -32,19 +31,13 @@ export function isHistoricalLane(lane: RunLane): boolean {
   return lane.phase === 'complete';
 }
 
-function phaseLabelTone(
-  phase: RunLane['phase'],
-): 'text-accent' | 'text-fg-muted' | 'text-fg' {
+function phaseLabelTone(phase: RunLane['phase']): 'text-accent' | 'text-fg-muted' | 'text-fg' {
   if (phase === 'blocked') return 'text-accent';
   if (phase === 'complete') return 'text-fg-muted';
   return 'text-fg';
 }
 
-export function LaneCard({
-  lane,
-  now,
-  attentionSeverity = null,
-}: LaneCardProps) {
+export function LaneCard({ lane, now, attentionSeverity = null }: LaneCardProps) {
   const statusEntries = Object.entries(lane.statusCounts).sort((a, b) =>
     statusSortKey(a[0]).localeCompare(statusSortKey(b[0])),
   );
@@ -57,22 +50,14 @@ export function LaneCard({
       className={`py-4 transition-colors duration-150 ease-out-quart ${attentionClassName}`}
     >
       <div className="flex items-baseline justify-between gap-4">
-        <span
-          className={`text-label uppercase tracking-wider ${phaseLabelTone(lane.phase)}`}
-        >
+        <span className={`text-label uppercase tracking-wider ${phaseLabelTone(lane.phase)}`}>
           {lane.phaseLabel}
         </span>
         <span
           className="text-label uppercase tracking-wider text-fg-faint tnum tabular-nums"
-          title={
-            lane.updatedAt.status === 'available'
-              ? lane.updatedAt.at
-              : lane.updatedAt.error
-          }
+          title={lane.updatedAt.status === 'available' ? lane.updatedAt.at : lane.updatedAt.error}
         >
-          {lane.updatedAt.status === 'available'
-            ? formatRelative(lane.updatedAt.at, now)
-            : '·'}
+          {lane.updatedAt.status === 'available' ? formatRelative(lane.updatedAt.at, now) : '·'}
         </span>
       </div>
 
@@ -85,8 +70,8 @@ export function LaneCard({
 
       {(lane.external.status !== 'unavailable' || lane.formula.status === 'known') && (
         <div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap text-label">
-          {lane.external.status !== 'unavailable' && (
-            lane.external.status === 'available' ? (
+          {lane.external.status !== 'unavailable' &&
+            (lane.external.status === 'available' ? (
               <a
                 href={lane.external.url}
                 target="_blank"
@@ -96,11 +81,8 @@ export function LaneCard({
                 {lane.external.label}
               </a>
             ) : (
-              <span className="text-fg-muted uppercase tracking-wider">
-                {lane.external.label}
-              </span>
-            )
-          )}
+              <span className="text-fg-muted uppercase tracking-wider">{lane.external.label}</span>
+            ))}
           {lane.formula.status === 'known' && (
             <span className="text-fg-faint tnum">{lane.formula.name}</span>
           )}

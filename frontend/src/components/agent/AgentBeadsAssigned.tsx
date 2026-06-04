@@ -2,24 +2,28 @@ import type { SupervisorBead } from '../../supervisor/beadReads';
 
 export function AgentBeadsAssigned({
   beads,
+  error,
   loading,
   onSelect,
 }: {
   beads: ReadonlyArray<SupervisorBead>;
+  error: string | null;
   loading: boolean;
   onSelect: (bead: SupervisorBead) => void;
 }) {
   return (
     <section className="mb-12">
       <header className="flex items-baseline justify-between mb-4">
-        <h2 className="text-label uppercase tracking-wider text-fg-faint">
-          Beads assigned
-        </h2>
+        <h2 className="text-label uppercase tracking-wider text-fg-faint">Beads assigned</h2>
         <span className="text-label uppercase tracking-wider text-fg-faint tnum">
           {loading ? '·' : beads.length}
         </span>
       </header>
-      {loading ? (
+      {error !== null ? (
+        <p className="text-body text-accent" role="alert">
+          {error}
+        </p>
+      ) : loading ? (
         <p className="text-body text-fg-muted italic">Loading beads.</p>
       ) : beads.length === 0 ? (
         <p className="text-body text-fg-muted italic">No beads assigned to this agent.</p>

@@ -7,12 +7,9 @@ import type {
   ListBodySessionResponse,
   MonitorFeedItemResponse,
 } from '../generated/gc-supervisor-client/types.gen';
+import { resetSupervisorApiForTests, setSupervisorApiForTests, type SupervisorApi } from './client';
 import {
-  resetSupervisorApiForTests,
-  setSupervisorApiForTests,
-  type SupervisorApi,
-} from './client';
-import {
+  loadSupervisorRunSummaryPreviewSource,
   loadSupervisorRunSummarySource,
   resetSupervisorRunSummaryStateForTests,
 } from './runSummary';
@@ -51,6 +48,61 @@ const baseApi: SupervisorApi = {
   formulaDetail: vi.fn(),
   mutationHeaders: () => ({ 'X-GC-Request': 'dashboard' }),
 };
+
+describe('loadSupervisorRunSummaryPreviewSource', () => {
+  beforeEach(() => {
+    setActiveCity('test-city');
+    resetSupervisorRunSummaryStateForTests();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    resetSupervisorApiForTests();
+    resetSupervisorRunSummaryStateForTests();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('builds a first-paint summary from bounded active and recent run reads', async () => {
+    const listBeads = vi.fn(async () => beadList([runRoot()]));
+    const formulaFeed = vi.fn(async () => feed([feedRun()]));
+    const listSessions = vi.fn(async () => sessionList());
+    setSupervisorApiForTests({
+      ...baseApi,
+      listBeads,
+      formulaFeed,
+      listSessions,
+    });
+
+    const source = await loadSupervisorRunSummaryPreviewSource();
+
+    expect(source.status).toBe('fresh');
+    if (source.status === 'error') throw new Error(source.error);
+    expect(source.data.totalActive).toBe(1);
+    expect(source.data.lanes[0]?.id).toBe('run-1');
+    expect(source.data.lanes[0]?.health.status).toBe('unavailable');
+    expect(listBeads).toHaveBeenCalledTimes(3);
+    expect(listBeads).toHaveBeenCalledWith('test-city', { limit: 1_000 });
+    expect(listBeads).toHaveBeenCalledWith('test-city', {
+      limit: 80,
+      type: 'molecule',
+      all: true,
+    });
+    expect(listBeads).toHaveBeenCalledWith('test-city', {
+      limit: 80,
+      type: 'task',
+      rig: 'rig-a',
+      all: true,
+    });
+    expect(formulaFeed).toHaveBeenCalledWith('test-city', {
+      scope_kind: 'city',
+      scope_ref: 'test-city',
+    });
+    expect(listSessions).not.toHaveBeenCalled();
+  });
+});
 
 describe('loadSupervisorRunSummarySource', () => {
   beforeEach(() => {
@@ -153,6 +205,30 @@ describe('loadSupervisorRunSummarySource', () => {
     });
 
     const source = await loadSupervisorRunSummarySource();
+
+    expect(source.status).toBe('fresh');
+    if (source.status === 'error') throw new Error(source.error);
+    expect(source.data.totalActive).toBe(1);
+    expect(source.data.lanesPartial).toBe(true);
+  });
+
+  it('does not let optional enrichment reads hold the summary refresh indefinitely', async () => {
+    const listBeads = vi.fn(async (_cityName: string, query?: Record<string, unknown>) => {
+      if (query?.type === 'molecule') return new Promise<ListBodyBead>(() => {});
+      if (query?.rig === 'rig-a') return beadList([]);
+      return beadList([runRoot()]);
+    });
+    const formulaFeed = vi.fn(async () => new Promise<FormulaFeedBody>(() => {}));
+    setSupervisorApiForTests({
+      ...baseApi,
+      listBeads,
+      formulaFeed,
+      listSessions: vi.fn(async () => sessionList()),
+    });
+
+    const pending = loadSupervisorRunSummarySource();
+    await vi.advanceTimersByTimeAsync(2_500);
+    const source = await pending;
 
     expect(source.status).toBe('fresh');
     if (source.status === 'error') throw new Error(source.error);

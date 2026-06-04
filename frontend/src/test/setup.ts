@@ -42,9 +42,7 @@ afterAll(() => {
 });
 
 function formatConsoleArgs(args: unknown[]): string {
-  return args
-    .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))
-    .join(' ');
+  return args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ');
 }
 
 function trackProcessWarning(warning: Error): void {
@@ -52,6 +50,8 @@ function trackProcessWarning(warning: Error): void {
 }
 
 function installDeterministicStorage(): void {
+  if (typeof window === 'undefined') return;
+
   try {
     if (typeof window.localStorage?.clear === 'function') {
       return;

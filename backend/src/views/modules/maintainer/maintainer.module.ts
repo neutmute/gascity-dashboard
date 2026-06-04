@@ -32,12 +32,9 @@ import { isValidCityName } from '../../../lib/cityName.js';
 import { maintainerRouter } from './router.js';
 import { createMaintainerRefresher } from './worker.js';
 import { migrateLegacyMaintainerPaths } from './migrate-legacy-paths.js';
-import { raceWithTimeout } from '../../../lib/race-with-timeout.js';
 
 export interface MaintainerDeps {
   repo: string;
-  slingTarget: string;
-  triageTarget: string;
   refreshIntervalMs: number;
   /** Operator-pinned cache path. Undefined = use cityDataDir default. */
   cachePath?: string;
@@ -56,7 +53,10 @@ export interface MaintainerDeps {
  * resolve to DISTINCT paths and cannot clobber each other. The cityName is
  * re-validated against CITY_NAME_RE here before it enters path.join.
  */
-export function maintainerPaths(ctx: CityContext, deps: MaintainerDeps): {
+export function maintainerPaths(
+  ctx: CityContext,
+  deps: MaintainerDeps,
+): {
   cachePath: string;
   slungStatePath: string;
 } {
@@ -99,10 +99,7 @@ function pinnedBaseDir(pin: string): string {
  * and only when the operator has NOT pinned a cache path. Any other city
  * mounting first must NOT claim the legacy data (mis-attribution).
  */
-export function shouldMigrateLegacyPaths(
-  ctx: CityContext,
-  deps: MaintainerDeps,
-): boolean {
+export function shouldMigrateLegacyPaths(ctx: CityContext, deps: MaintainerDeps): boolean {
   return deps.cachePath === undefined && ctx.cityName === ctx.config.cityName;
 }
 
@@ -119,16 +116,12 @@ export const maintainerBackend: BackendModule<MaintainerDeps> = {
       { name: 'cache', scope: 'perCity' },
       { name: 'slung-state', scope: 'perCity' },
     ],
-    memory: [
-      { name: 'sse-clients', scope: 'perCity' },
-    ],
+    memory: [{ name: 'sse-clients', scope: 'perCity' }],
   },
   needs: (config) => {
     const slice = config.modules.maintainer;
     const deps: MaintainerDeps = {
       repo: slice.githubRepo,
-      slingTarget: slice.slingTarget,
-      triageTarget: slice.triageTarget,
       refreshIntervalMs: slice.refreshIntervalMs,
     };
     if (slice.cachePath !== undefined) {
@@ -158,13 +151,6 @@ export const maintainerBackend: BackendModule<MaintainerDeps> = {
       repo: deps.repo,
       cachePath,
       slungStatePath,
-      slingTarget: deps.slingTarget,
-      triageTarget: deps.triageTarget,
-      sling: (input) => ctx.gc.sling(input),
-      listSessions: async () => {
-        const { items } = await raceWithTimeout(ctx.gc.listSessions(), 3_000);
-        return items;
-      },
     });
   },
   workers: (ctx, deps) => {

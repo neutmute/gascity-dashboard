@@ -72,9 +72,7 @@ describe('supervisor mail reads', () => {
 
   it('passes an explicit supervisor mail history depth through the generated query', async () => {
     const listMail = vi.fn(async () => ({
-      items: [
-        mail({ id: 'a', from: 'mayor', to: 'human', subject: 'operator inbox' }),
-      ],
+      items: [mail({ id: 'a', from: 'mayor', to: 'human', subject: 'operator inbox' })],
       total: 1,
     }));
     setSupervisorApiForTests({ ...baseApi, listMail });
@@ -82,6 +80,46 @@ describe('supervisor mail reads', () => {
     await listSupervisorMail('inbox', 'stephanie', 1000);
 
     expect(listMail).toHaveBeenCalledWith('test-city', { limit: 1000 });
+  });
+
+  it('filters fetched supervisor mail by a typed clock window after mailbox projection', async () => {
+    const listMail = vi.fn(async () => ({
+      items: [
+        mail({
+          id: 'recent-inbox',
+          from: 'mayor',
+          to: 'human',
+          created_at: '2026-06-01T10:00:00.000Z',
+        }),
+        mail({
+          id: 'old-inbox',
+          from: 'mayor',
+          to: 'human',
+          created_at: '2026-05-30T10:00:00.000Z',
+        }),
+        mail({
+          id: 'recent-other',
+          from: 'mechanic',
+          to: 'mayor',
+          created_at: '2026-06-01T10:00:00.000Z',
+        }),
+      ],
+      total: 3,
+    }));
+    setSupervisorApiForTests({ ...baseApi, listMail });
+
+    const result = await listSupervisorMail(
+      'inbox',
+      'stephanie',
+      1000,
+      '24h',
+      Date.parse('2026-06-01T12:00:00.000Z'),
+    );
+
+    expect(result.items.map((m) => m.id)).toEqual(['recent-inbox']);
+    expect(result.upstream_total).toBe(3);
+    expect(result.upstream_fetched).toBe(3);
+    expect(result.total).toBe(1);
   });
 
   it('loads a thread through the supervisor thread endpoint and sorts messages oldest first', async () => {

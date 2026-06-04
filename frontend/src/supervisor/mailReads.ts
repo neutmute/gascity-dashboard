@@ -1,20 +1,19 @@
-import {
-  OPERATOR_DISPLAY_ALIAS,
-  OPERATOR_WIRE_ALIAS,
-} from 'gas-city-dashboard-shared';
-import type {
-  MailListBody,
-  Message,
-} from '../generated/gc-supervisor-client/types.gen';
-import { getActiveCity } from '../api/cityBase';
-import {
-  SupervisorApiError,
-  supervisorApi,
-} from './client';
+import { OPERATOR_DISPLAY_ALIAS, OPERATOR_WIRE_ALIAS } from 'gas-city-dashboard-shared';
+import type { MailListBody, Message } from '../generated/gc-supervisor-client/types.gen';
+import { activeCityOrThrow } from '../api/cityBase';
+import { SupervisorApiError, supervisorApi } from './client';
 
 export const MAIL_HISTORY_LIMITS = [100, 500, 1000] as const;
 export type MailHistoryLimit = (typeof MAIL_HISTORY_LIMITS)[number];
 export const DEFAULT_MAIL_HISTORY_LIMIT: MailHistoryLimit = 100;
+export const MAIL_HISTORY_WINDOWS = ['24h', '7d', 'all'] as const;
+export type MailHistoryWindow = (typeof MAIL_HISTORY_WINDOWS)[number];
+export const DEFAULT_MAIL_HISTORY_WINDOW: MailHistoryWindow = 'all';
+
+const MAIL_WINDOW_MS: Record<Exclude<MailHistoryWindow, 'all'>, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+};
 
 export type SupervisorMailItem = Message;
 export type SupervisorMailBox = 'inbox' | 'sent' | 'all';
@@ -30,11 +29,13 @@ export async function listSupervisorMail(
   box: SupervisorMailBox,
   alias: string,
   limit: MailHistoryLimit = DEFAULT_MAIL_HISTORY_LIMIT,
+  window: MailHistoryWindow = DEFAULT_MAIL_HISTORY_WINDOW,
+  nowMs: number = Date.now(),
 ): Promise<SupervisorMailList> {
   const cityName = activeCityOrThrow('list supervisor mail');
   const mailList = await supervisorApi().listMail(cityName, { limit });
   const rawItems = mailList.items ?? [];
-  const filtered = filterByBox(rawItems, box, alias);
+  const filtered = filterByClockWindow(filterByBox(rawItems, box, alias), window, nowMs);
   filtered.sort(sortNewestFirst);
   return {
     ...mailList,
@@ -89,6 +90,19 @@ function filterByBox(
   return items.filter((mail) => mail.from.toLowerCase() === resolvedAlias);
 }
 
+function filterByClockWindow(
+  items: ReadonlyArray<SupervisorMailItem>,
+  window: MailHistoryWindow,
+  nowMs: number,
+): SupervisorMailItem[] {
+  if (window === 'all') return [...items];
+  const cutoffMs = nowMs - MAIL_WINDOW_MS[window];
+  return items.filter((mail) => {
+    const createdMs = Date.parse(mail.created_at);
+    return Number.isFinite(createdMs) && createdMs >= cutoffMs;
+  });
+}
+
 function supervisorMailAlias(alias: string): string {
   const lower = alias.toLowerCase();
   return lower === OPERATOR_DISPLAY_ALIAS ? OPERATOR_WIRE_ALIAS : lower;
@@ -111,12 +125,4 @@ function sortNewestFirst(a: SupervisorMailItem, b: SupervisorMailItem): number {
 
 function sortOldestFirst(a: SupervisorMailItem, b: SupervisorMailItem): number {
   return a.created_at.localeCompare(b.created_at);
-}
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
 }

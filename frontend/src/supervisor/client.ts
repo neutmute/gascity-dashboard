@@ -1,7 +1,4 @@
-import {
-  createClient,
-  type Client as GeneratedSupervisorClient,
-} from '@hey-api/client-fetch';
+import { createClient, type Client as GeneratedSupervisorClient } from '@hey-api/client-fetch';
 import {
   createBead as postSupervisorBead,
   getHealth,
@@ -73,11 +70,20 @@ import type {
   SupervisorCitiesOutputBody,
   WorkflowSnapshotResponse,
 } from '../generated/gc-supervisor-client/types.gen';
+import { SupervisorApiError, unwrapSupervisorResult, type SupervisorResult } from './errors';
+import {
+  SUPERVISOR_PROXY_BASE_URL,
+  resolveClientBaseUrl,
+  resolveSupervisorBaseUrl,
+  supervisorUrl,
+} from './url';
 
-export const SUPERVISOR_PROXY_BASE_URL = '/gc-supervisor';
+export const SUPERVISOR_REQUEST_TIMEOUT_MS = 60_000;
 export const GC_MUTATION_HEADERS = {
   'X-GC-Request': 'dashboard',
 } as const;
+
+export { SupervisorApiError, SUPERVISOR_PROXY_BASE_URL };
 
 export interface SupervisorApi {
   readonly baseUrl: string;
@@ -141,10 +147,7 @@ export interface SupervisorApi {
     sessionId: string,
     body: SessionRespondInputBody,
   ): Promise<RespondSessionResponse>;
-  sessionTranscript(
-    cityName: string,
-    sessionId: string,
-  ): Promise<SessionTranscriptGetResponse>;
+  sessionTranscript(cityName: string, sessionId: string): Promise<SessionTranscriptGetResponse>;
   workflowRun(
     cityName: string,
     workflowId: string,
@@ -162,34 +165,14 @@ export interface CreateSupervisorApiOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
   client?: GeneratedSupervisorClient;
+  timeoutMs?: number;
 }
-
-type SupervisorResult<T> = {
-  data?: T;
-  error?: unknown;
-  response?: Response;
-};
-
-const SUPERVISOR_SCHEMA_VALIDATION_MESSAGE = 'gc supervisor response failed validation';
 
 let testSupervisorApi: SupervisorApi | null = null;
 let defaultSupervisorApi: SupervisorApi | null = null;
+const requestBudgetSupervisorApis = new Map<number, SupervisorApi>();
 
-export class SupervisorApiError extends Error {
-  override readonly name = 'SupervisorApiError';
-
-  constructor(
-    public readonly status: number | undefined,
-    message: string,
-    public readonly requestId: string | undefined,
-  ) {
-    super(message);
-  }
-}
-
-export function createSupervisorApi(
-  options: CreateSupervisorApiOptions = {},
-): SupervisorApi {
+export function createSupervisorApi(options: CreateSupervisorApiOptions = {}): SupervisorApi {
   const baseUrl = options.baseUrl ?? resolveSupervisorBaseUrl();
   const clientBaseUrl = resolveClientBaseUrl(baseUrl);
   const clientOptions = {
@@ -198,11 +181,15 @@ export function createSupervisorApi(
     responseStyle: 'fields' as const,
     throwOnError: false,
   };
-  const client = options.client ?? createClient(
-    options.fetch === undefined
-      ? clientOptions
-      : { ...clientOptions, fetch: options.fetch },
-  );
+  const client =
+    options.client ??
+    createClient({
+      ...clientOptions,
+      fetch: withSupervisorTimeout(
+        options.fetch ?? globalThis.fetch,
+        supervisorTimeoutMs(options.timeoutMs),
+      ),
+    });
 
   return {
     baseUrl,
@@ -528,6 +515,16 @@ export function supervisorApi(): SupervisorApi {
   return defaultSupervisorApi;
 }
 
+export function supervisorApiForRequestBudget(timeoutMs: number): SupervisorApi {
+  if (testSupervisorApi !== null) return testSupervisorApi;
+  const normalizedTimeoutMs = supervisorTimeoutMs(timeoutMs);
+  const cached = requestBudgetSupervisorApis.get(normalizedTimeoutMs);
+  if (cached !== undefined) return cached;
+  const api = createSupervisorApi({ timeoutMs: normalizedTimeoutMs });
+  requestBudgetSupervisorApis.set(normalizedTimeoutMs, api);
+  return api;
+}
+
 export function setSupervisorApiForTests(api: SupervisorApi): void {
   testSupervisorApi = api;
 }
@@ -535,35 +532,7 @@ export function setSupervisorApiForTests(api: SupervisorApi): void {
 export function resetSupervisorApiForTests(): void {
   testSupervisorApi = null;
   defaultSupervisorApi = null;
-}
-
-function resolveSupervisorBaseUrl(): string {
-  const configured = import.meta.env.VITE_GC_SUPERVISOR_URL;
-  if (typeof configured === 'string' && configured.trim().length > 0) {
-    return configured.trim();
-  }
-  return SUPERVISOR_PROXY_BASE_URL;
-}
-
-function resolveClientBaseUrl(baseUrl: string): string {
-  if (!baseUrl.startsWith('/')) return baseUrl;
-  const origin = globalThis.location?.origin;
-  if (typeof origin !== 'string' || origin.length === 0 || origin === 'null') {
-    return baseUrl;
-  }
-  return new URL(baseUrl, origin).toString().replace(/\/$/, '');
-}
-
-function supervisorUrl(
-  baseUrl: string,
-  path: string,
-  query?: Record<string, string>,
-): string {
-  const normalizedBase = baseUrl.replace(/\/$/, '');
-  const search = new URLSearchParams(query).toString();
-  const suffix = search.length > 0 ? `${path}?${search}` : path;
-  if (normalizedBase.startsWith('/')) return `${normalizedBase}${suffix}`;
-  return new URL(suffix, `${normalizedBase}/`).toString();
+  requestBudgetSupervisorApis.clear();
 }
 
 function splitAgentAlias(agentAlias: string): { base: string } | { dir: string; base: string } {
@@ -582,100 +551,50 @@ function splitAgentAlias(agentAlias: string): { base: string } | { dir: string; 
   throw new Error(`invalid agent alias: ${agentAlias}`);
 }
 
-async function unwrapSupervisorResult<T>(
-  promise: Promise<SupervisorResult<T>>,
-  emptyMessage: string,
-): Promise<T> {
-  let result: SupervisorResult<T>;
-  try {
-    result = await promise;
-  } catch (err) {
-    throw normalizeThrownSupervisorError(err);
-  }
-
-  const { response } = result;
-  if (response === undefined) {
-    throw new SupervisorApiError(undefined, messageFromUnknown(result.error), undefined);
-  }
-  if (!response.ok || result.error !== undefined) {
-    throw new SupervisorApiError(
-      response.status,
-      messageFromUnknown(result.error, response.statusText),
-      response.headers.get('x-gc-request-id') ?? undefined,
-    );
-  }
-  const data = result.data;
-  if (data === undefined) {
-    throw new SupervisorApiError(
-      response.status,
-      emptyMessage,
-      response.headers.get('x-gc-request-id') ?? undefined,
-    );
-  }
-  return data;
-}
-
-function normalizeThrownSupervisorError(err: unknown): SupervisorApiError {
-  if (err instanceof SupervisorApiError) return err;
-  return new SupervisorApiError(undefined, messageFromUnknown(err), undefined);
-}
-
-function messageFromUnknown(value: unknown, fallback = 'gc supervisor request failed'): string {
-  if (isGeneratedSchemaValidationError(value)) return SUPERVISOR_SCHEMA_VALIDATION_MESSAGE;
-  if (typeof value === 'string' && value.trim().length > 0) {
-    return sanitizeSupervisorMessage(value);
-  }
-  if (value instanceof Error && value.message.trim().length > 0) {
-    return sanitizeSupervisorMessage(value.message);
-  }
-  if (isRecord(value)) {
-    for (const key of ['error', 'message', 'detail']) {
-      const field = value[key];
-      if (typeof field === 'string' && field.trim().length > 0) {
-        return sanitizeSupervisorMessage(field);
-      }
-    }
-  }
-  return fallback;
-}
-
-function sanitizeSupervisorMessage(message: string): string {
-  const trimmed = message.trim();
-  return isGeneratedSchemaValidationMessage(trimmed)
-    ? SUPERVISOR_SCHEMA_VALIDATION_MESSAGE
-    : trimmed;
-}
-
-function isGeneratedSchemaValidationError(value: unknown): boolean {
-  if (value instanceof Error) {
-    return value.name === 'ZodError' || isGeneratedSchemaValidationMessage(value.message);
-  }
-  return isZodIssueList(value);
-}
-
-function isGeneratedSchemaValidationMessage(message: string): boolean {
-  if (!message.startsWith('[') && !message.startsWith('{')) return false;
-  try {
-    return isZodIssueList(JSON.parse(message));
-  } catch {
-    return false;
-  }
-}
-
-function isZodIssueList(value: unknown): boolean {
-  const issues = Array.isArray(value)
+function supervisorTimeoutMs(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? value
-    : isRecord(value) && Array.isArray(value.issues)
-      ? value.issues
-      : null;
-  return issues !== null &&
-    issues.length > 0 &&
-    issues.every((issue) =>
-      isRecord(issue) &&
-      typeof issue.code === 'string' &&
-      Array.isArray(issue.path));
+    : SUPERVISOR_REQUEST_TIMEOUT_MS;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function withSupervisorTimeout(fetchImpl: typeof fetch, timeoutMs: number): typeof fetch {
+  return async (input, init) => {
+    const controller = new AbortController();
+    const timeoutError = new SupervisorApiError(
+      undefined,
+      `gc supervisor request timed out after ${timeoutMs}ms`,
+      undefined,
+    );
+    const parentSignal = requestSignal(input, init);
+    if (parentSignal?.aborted) {
+      controller.abort(parentSignal.reason);
+    }
+    const abortFromParent = (): void => controller.abort(parentSignal?.reason);
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<Response>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort(timeoutError);
+        reject(timeoutError);
+      }, timeoutMs);
+    });
+
+    const request = new Request(input, { ...init, signal: controller.signal });
+    const fetchPromise = fetchImpl(request);
+    try {
+      return await Promise.race([fetchPromise, timeoutPromise]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      parentSignal?.removeEventListener('abort', abortFromParent);
+    }
+  };
+}
+
+function requestSignal(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): AbortSignal | null {
+  if (init?.signal !== undefined) return init.signal;
+  return input instanceof Request ? input.signal : null;
 }

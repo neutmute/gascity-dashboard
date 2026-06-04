@@ -1,11 +1,4 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BeadsPage } from './Beads';
@@ -36,9 +29,7 @@ beforeEach(() => {
       const method = requestMethod(input, init);
       if (url.pathname === '/gc-supervisor/v0/city/test-city/beads' && method === 'GET') {
         beadQueries.push(url.searchParams);
-        return jsonResponse(beadListPayload(
-          url.searchParams.get('type') === 'task' ? [sampleBead()] : [],
-        ));
+        return jsonResponse(beadListPayload(url.searchParams.has('type') ? [] : [sampleBead()]));
       }
       if (url.pathname === '/gc-supervisor/v0/city/test-city/beads' && method === 'POST') {
         supervisorWrites.push({
@@ -46,15 +37,18 @@ beforeEach(() => {
           path: url.pathname,
           body: await requestJson(input, init),
         });
-        return jsonResponse({
-          id: `${PROJECT}-0002`,
-          title: 'Route failing work',
-          status: 'open',
-          priority: 0,
-          issue_type: 'task',
-          labels: [],
-          created_at: '2026-01-01T01:00:00Z',
-        }, { status: 201 });
+        return jsonResponse(
+          {
+            id: `${PROJECT}-0002`,
+            title: 'Route failing work',
+            status: 'open',
+            priority: 0,
+            issue_type: 'task',
+            labels: [],
+            created_at: '2026-01-01T01:00:00Z',
+          },
+          { status: 201 },
+        );
       }
       if (url.pathname === '/gc-supervisor/v0/city/test-city/sling' && method === 'POST') {
         supervisorWrites.push({
@@ -64,7 +58,10 @@ beforeEach(() => {
         });
         return jsonResponse({ status: 'ok', bead: `${PROJECT}-0002`, target: 'mayor' });
       }
-      if (url.pathname === '/gc-supervisor/v0/city/test-city/bead/gascity-0001' && method === 'PATCH') {
+      if (
+        url.pathname === '/gc-supervisor/v0/city/test-city/bead/gascity-0001' &&
+        method === 'PATCH'
+      ) {
         supervisorWrites.push({
           method,
           path: url.pathname,
@@ -72,7 +69,10 @@ beforeEach(() => {
         });
         return jsonResponse({ status: 'ok' });
       }
-      if (url.pathname === '/gc-supervisor/v0/city/test-city/bead/gascity-0001/close' && method === 'POST') {
+      if (
+        url.pathname === '/gc-supervisor/v0/city/test-city/bead/gascity-0001/close' &&
+        method === 'POST'
+      ) {
         supervisorWrites.push({
           method,
           path: url.pathname,
@@ -80,7 +80,10 @@ beforeEach(() => {
         });
         return jsonResponse({ status: 'closed' });
       }
-      if (url.pathname === '/gc-supervisor/v0/city/test-city/agent/mayor/nudge' && method === 'POST') {
+      if (
+        url.pathname === '/gc-supervisor/v0/city/test-city/agent/mayor/nudge' &&
+        method === 'POST'
+      ) {
         supervisorWrites.push({ method, path: url.pathname });
         return jsonResponse({ status: 'ok' });
       }
@@ -89,18 +92,9 @@ beforeEach(() => {
       }
       if (url.pathname === '/gc-supervisor/v0/city/test-city/agents') {
         return jsonResponse({
-          items: [
-            agent('mayor', 'east'),
-            agent('west/mechanic', 'west'),
-          ],
+          items: [agent('mayor', 'east'), agent('west/mechanic', 'west')],
           total: 2,
         });
-      }
-      if (url.pathname.startsWith('/api/city/test-city/links/')) {
-        throw new Error('old dashboard links mirror should not be called');
-      }
-      if (url.pathname.startsWith('/api/city/test-city/beads')) {
-        throw new Error('old dashboard bead read mirror should not be called');
       }
       throw new Error(`unexpected fetch: ${url.pathname}${url.search}`);
     }),
@@ -125,30 +119,24 @@ describe('BeadsPage', () => {
     expect(screen.getByRole('button', { name: /new bead/i })).toBeTruthy();
   });
 
-  it('requests direct supervisor engineering beads, open-only by default (no all=true)', async () => {
+  it('requests direct supervisor current engineering beads without type fan-out or closed history', async () => {
     renderPage();
 
     await screen.findByText('Sample bead');
 
-    expect(beadQueries.length).toBe(3);
-    expect(new Set(beadQueries.map((query) => query.get('type')))).toEqual(
-      new Set(['feature', 'bug', 'task']),
-    );
-    // Default board scope is non-closed work: the supervisor returns
-    // open/in_progress/blocked when `all` is absent. Closed beads (~199.7K
-    // on this city) are fetched lazily, only when the operator opts in.
-    for (const query of beadQueries) {
-      expect(query.get('limit')).toBe('2000');
-      expect(query.has('all')).toBe(false);
-      expect(query.has('showAll')).toBe(false);
-    }
+    expect(beadQueries.length).toBe(1);
+    const [query] = beadQueries;
+    expect(query?.get('limit')).toBe('2000');
+    expect(query?.has('all')).toBe(false);
+    expect(query?.has('type')).toBe(false);
+    expect(query?.has('showAll')).toBe(false);
   });
 
   it('refetches with all=true when the operator activates the closed status control', async () => {
     renderPage();
 
     await screen.findByText('Sample bead');
-    expect(beadQueries.length).toBe(3);
+    expect(beadQueries.length).toBe(1);
     for (const query of beadQueries) {
       expect(query.has('all')).toBe(false);
     }
@@ -156,24 +144,20 @@ describe('BeadsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^closed$/i }));
 
     // Activating `closed` flips the data scope, forcing exactly one fresh
-    // fan-out that now carries all=true (closed beads included).
-    await waitFor(() => expect(beadQueries.length).toBe(6));
-    const closedQueries = beadQueries.slice(-3);
-    expect(new Set(closedQueries.map((query) => query.get('type')))).toEqual(
-      new Set(['feature', 'bug', 'task']),
-    );
-    for (const query of closedQueries) {
-      expect(query.get('all')).toBe('true');
-    }
+    // read that now carries all=true (closed beads included).
+    await waitFor(() => expect(beadQueries.length).toBe(2));
+    const closedQuery = beadQueries.at(-1);
+    expect(closedQuery?.get('all')).toBe('true');
+    expect(closedQuery?.has('type')).toBe(false);
 
     // Deactivating `closed` must revert to an open-only fetch — otherwise the
     // chip would read inactive while the board silently keeps scanning closed
     // history (the showClosed/chip desync this dual-state wiring must avoid).
     fireEvent.click(screen.getByRole('button', { name: /^closed$/i }));
-    await waitFor(() => expect(beadQueries.length).toBe(9));
-    for (const query of beadQueries.slice(-3)) {
-      expect(query.has('all')).toBe(false);
-    }
+    await waitFor(() => expect(beadQueries.length).toBe(3));
+    const reopenedQuery = beadQueries.at(-1);
+    expect(reopenedQuery?.has('all')).toBe(false);
+    expect(reopenedQuery?.has('type')).toBe(false);
   });
 
   it('passes the selected rig to the generated supervisor bead query', async () => {
@@ -184,17 +168,11 @@ describe('BeadsPage', () => {
       target: { value: 'east' },
     });
 
-    await waitFor(() => expect(beadQueries.length).toBe(6));
-    const latestQueries = beadQueries.slice(-3);
-    expect(new Set(latestQueries.map((query) => query.get('type')))).toEqual(
-      new Set(['feature', 'bug', 'task']),
-    );
-    for (const query of latestQueries) {
-      expect(query.get('rig')).toBe('east');
-      // Rig filtering inherits the default open-only scope: no all=true
-      // unless the operator separately opts into closed beads.
-      expect(query.has('all')).toBe(false);
-    }
+    await waitFor(() => expect(beadQueries.length).toBe(2));
+    const latestQuery = beadQueries.at(-1);
+    expect(latestQuery?.get('rig')).toBe('east');
+    expect(latestQuery?.has('all')).toBe(false);
+    expect(latestQuery?.has('type')).toBe(false);
   });
 
   it('deep-links to and selects a bead from the bead query param', async () => {
@@ -347,11 +325,8 @@ function agent(name: string, rig: string): unknown {
 }
 
 function parsedUrl(input: RequestInfo | URL): URL {
-  const value = input instanceof Request
-    ? input.url
-    : input instanceof URL
-      ? input.toString()
-      : String(input);
+  const value =
+    input instanceof Request ? input.url : input instanceof URL ? input.toString() : String(input);
   return new URL(value, window.location.origin);
 }
 
@@ -360,10 +335,7 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
   return init?.method ?? 'GET';
 }
 
-async function requestJson(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<unknown> {
+async function requestJson(input: RequestInfo | URL, init?: RequestInit): Promise<unknown> {
   if (input instanceof Request) {
     return input.clone().json() as Promise<unknown>;
   }

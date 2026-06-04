@@ -1,31 +1,23 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { HealthPage } from './Health';
 import { invalidate } from '../api/cache';
 import { AttentionProvider } from '../attention/context';
-import {
-  createAttentionContributors,
-  type HealthAttentionFacts,
-} from '../attention/registry';
-import type {
-  HealthOutputBody,
-  StatusBody,
-} from '../generated/gc-supervisor-client/types.gen';
-import type {
-  DoltNomsTrend,
-  LocalToolVersions,
-  SystemHealth,
-} from 'gas-city-dashboard-shared';
+import { createAttentionContributors, type HealthAttentionFacts } from '../attention/registry';
+import type { HealthOutputBody, StatusBody } from '../generated/gc-supervisor-client/types.gen';
+import type { DoltNomsTrend, LocalToolVersions, SystemHealth } from 'gas-city-dashboard-shared';
+import { supervisorApiForRequestBudget } from '../supervisor/client';
 
 const mockCityHealth = vi.fn<(cityName: string) => Promise<HealthOutputBody>>();
 const mockCityStatus = vi.fn<(cityName: string) => Promise<StatusBody>>();
+const mockSupervisorApiForRequestBudget = supervisorApiForRequestBudget as unknown as Mock;
 
 vi.mock('../supervisor/client', () => ({
-  supervisorApi: () => ({
+  supervisorApiForRequestBudget: vi.fn(() => ({
     cityHealth: mockCityHealth,
     cityStatus: mockCityStatus,
-  }),
+  })),
 }));
 
 // gascity-dashboard-e0hh: coverage for the absent supervisor.city /
@@ -38,9 +30,12 @@ vi.mock('../supervisor/client', () => ({
 let currentHealth: SystemHealth = baseHealth();
 let currentLocalTools: LocalToolVersions = baseLocalTools();
 let currentTrend: DoltNomsTrend = baseTrend();
+let systemHealthMode: 'ok' | 'fail' = 'ok';
+let trendMode: 'ok' | 'fail' = 'ok';
 
 beforeEach(() => {
   invalidate('health');
+  mockSupervisorApiForRequestBudget.mockClear();
   mockCityHealth.mockReset();
   mockCityStatus.mockReset();
   mockCityHealth.mockResolvedValue(presentLocator());
@@ -48,19 +43,30 @@ beforeEach(() => {
   currentHealth = baseHealth();
   currentLocalTools = baseLocalTools();
   currentTrend = baseTrend();
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === '/api/health/system') {
-      return jsonResponse(currentHealth);
-    }
-    if (url === '/api/health/local-tools') {
-      return jsonResponse(currentLocalTools);
-    }
-    if (url === '/api/city/test-city/dolt-noms/trend') {
-      return jsonResponse(currentTrend);
-    }
-    throw new Error(`unexpected fetch: ${url}`);
-  }));
+  systemHealthMode = 'ok';
+  trendMode = 'ok';
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/health/system') {
+        if (systemHealthMode === 'fail') {
+          return errorResponse('system health offline');
+        }
+        return jsonResponse(currentHealth);
+      }
+      if (url === '/api/health/local-tools') {
+        return jsonResponse(currentLocalTools);
+      }
+      if (url === '/api/city/test-city/dolt-noms/trend') {
+        if (trendMode === 'fail') {
+          return errorResponse('dolt trend offline');
+        }
+        return jsonResponse(currentTrend);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }),
+  );
 });
 
 afterEach(() => {
@@ -143,10 +149,28 @@ describe('HealthPage', () => {
 
     expect(mockCityHealth).toHaveBeenCalledWith('test-city');
     expect(mockCityStatus).toHaveBeenCalledWith('test-city');
+    expect(mockSupervisorApiForRequestBudget).toHaveBeenCalledWith(2500);
     expect(fetch).toHaveBeenCalledWith('/api/health/system', expect.any(Object));
     expect(fetch).toHaveBeenCalledWith('/api/health/local-tools', expect.any(Object));
     expect(fetch).not.toHaveBeenCalledWith('/api/city/test-city/health/system', expect.any(Object));
     expect(fetch).not.toHaveBeenCalledWith('/api/city/test-city/status', expect.any(Object));
+  });
+
+  it('renders fast sections while supervisor status is still pending', async () => {
+    const pendingStatus = deferred<StatusBody>();
+    mockCityStatus.mockReturnValue(pendingStatus.promise);
+
+    renderPage();
+
+    await screen.findByRole('heading', { name: /supervisor/i });
+    await screen.findByRole('heading', { name: /host/i });
+    await screen.findByRole('heading', { name: /diagnostics/i });
+
+    expect(screen.getByText('demo-city')).toBeTruthy();
+    expect(screen.getByText('8')).toBeTruthy();
+    expect(
+      screen.getAllByText(/Unavailable: supervisor status still loading\./i).length,
+    ).toBeGreaterThan(0);
   });
 
   it('keeps dashboard-local host health visible when direct supervisor health fails', async () => {
@@ -155,8 +179,32 @@ describe('HealthPage', () => {
     renderPage();
 
     await screen.findByRole('heading', { name: /host/i });
-    expect(screen.getByText('Supervisor not reachable. The dashboard shell stays up; live data is stale.')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Supervisor not reachable. The dashboard shell stays up; live data is stale.',
+      ),
+    ).toBeTruthy();
     expect(screen.getByText('8')).toBeTruthy();
+  });
+
+  it('keeps host and supervisor sections visible when dolt-noms trend fails', async () => {
+    trendMode = 'fail';
+
+    renderPage();
+
+    await screen.findByRole('heading', { name: /host/i });
+    expect(screen.getByRole('heading', { name: /supervisor/i })).toBeTruthy();
+    expect(screen.getByText(/dolt-noms metric unavailable/i)).toBeTruthy();
+  });
+
+  it('keeps supervisor diagnostics visible when dashboard host health fails', async () => {
+    systemHealthMode = 'fail';
+
+    renderPage();
+
+    await screen.findByRole('heading', { name: /supervisor/i });
+    expect(screen.getByText(/dashboard host health unavailable/i)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /diagnostics/i })).toBeTruthy();
   });
 
   it('restores diagnostics from local probes plus direct supervisor status', async () => {
@@ -228,6 +276,13 @@ function jsonResponse(payload: unknown): Response {
   });
 }
 
+function errorResponse(message: string): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status: 503,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 function valueFor(container: HTMLElement, label: string): HTMLElement | null {
   const terms = Array.from(container.querySelectorAll('dt')).filter(
     (dt) => dt.textContent?.trim() === label,
@@ -266,6 +321,16 @@ function absentLocator(): HealthOutputBody {
     status: 'ok',
     uptime_sec: 4200,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function baseHealth(): SystemHealth {

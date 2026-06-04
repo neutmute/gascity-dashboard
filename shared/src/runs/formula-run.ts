@@ -1,9 +1,5 @@
-import type {
-  GcFormulaDetail,
-  GcRunBead,
-  GcRunSnapshot,
-} from '../run-snapshot.js';
-import type { GcSession } from '../gc-client-types.js';
+import type { FormulaDetail, RunSnapshotBead, RunSnapshot } from '../run-snapshot.js';
+import type { DashboardSession } from '../dashboard-sessions.js';
 import type {
   RunControlBadge,
   RunDisplayEdge,
@@ -18,11 +14,7 @@ import type {
   RunSnapshotSequence,
 } from '../run-detail.js';
 import type { RunPhase, RunStage } from '../snapshot/types.js';
-import {
-  mapRunPhase,
-  stageProgress,
-  type RunIssue,
-} from './phaseMapping.js';
+import { mapRunPhase, stageProgress, type RunIssue } from './phaseMapping.js';
 import { meta } from './bead-fields.js';
 import { resolveRunFormulaIdentity } from './formula-name.js';
 import { applyDisplayNodeStates } from './display-state.js';
@@ -43,18 +35,18 @@ import {
 } from './session-link.js';
 
 export interface RunningFormulaRunInput {
-  raw: GcRunSnapshot;
+  raw: RunSnapshot;
   runId: string;
   rootBeadId: string;
   rootStoreRef: string;
   resolvedRootStore: string;
   scopeKind: RunScopeKind;
   scopeRef: string;
-  root?: GcRunBead;
-  beads: GcRunBead[];
+  root?: RunSnapshotBead;
+  beads: RunSnapshotBead[];
   rigRoot?: string;
-  sessions?: readonly GcSession[];
-  formulaDetail?: GcFormulaDetail;
+  sessions?: readonly DashboardSession[];
+  formulaDetail?: FormulaDetail;
   formulaDetailState?: RunFormulaDetailState;
 }
 
@@ -67,7 +59,7 @@ export interface RunningFormulaRunInput {
  * session summaries, loop instances, and display graph state.
  */
 export interface RunningFormulaRun {
-  raw: GcRunSnapshot;
+  raw: RunSnapshot;
   runId: string;
   rootBeadId: string;
   rootStoreRef: string;
@@ -78,8 +70,8 @@ export interface RunningFormulaRun {
   formula: RunFormula;
   formulaDetail: RunFormulaDetailState;
   executionPath: RunExecutionPath;
-  root?: GcRunBead;
-  beads: GcRunBead[];
+  root?: RunSnapshotBead;
+  beads: RunSnapshotBead[];
   nodeGroups: RunNodeGroup[];
   physicalToSemantic: Map<string, string>;
   badgesByTarget: Map<string, RunControlBadge[]>;
@@ -94,18 +86,13 @@ export interface RunningFormulaRun {
   stages: RunStage[];
 }
 
-export function buildRunningFormulaRun(
-  input: RunningFormulaRunInput,
-): RunningFormulaRun {
-  const { groups: unorderedGroups, physicalToSemantic, badgesByTarget } = groupRunBeads(
-    input.beads,
-    input.rootBeadId,
-  );
-  const groups = orderRunNodeGroups(
-    unorderedGroups,
-    input.formulaDetail,
-    input.rootBeadId,
-  );
+export function buildRunningFormulaRun(input: RunningFormulaRunInput): RunningFormulaRun {
+  const {
+    groups: unorderedGroups,
+    physicalToSemantic,
+    badgesByTarget,
+  } = groupRunBeads(input.beads, input.rootBeadId);
+  const groups = orderRunNodeGroups(unorderedGroups, input.formulaDetail, input.rootBeadId);
   // Prefer supervisor-owned compiled formula order when available. If a run
   // does not expose a formula name yet, preserve snapshot order rather than
   // reading formula files locally.
@@ -126,27 +113,18 @@ export function buildRunningFormulaRun(
   const edges = buildRunDisplayEdges(input.raw, physicalToSemantic, rawNodes);
   const nodes = applyDisplayNodeStates(rawNodes, edges);
   const progress = buildFormulaRunProgress(input.raw, nodes, edges);
-  const formula = runFormulaState(
-    input.root,
-    input.formulaDetail,
-  );
-  const formulaDetail = input.formulaDetailState ?? runFormulaDetailState(
-    input.root,
-    input.formulaDetail,
-  );
-  const executionPath = resolveRunExecutionPath(
-    input.root,
-    input.beads,
-    input.rigRoot,
-  );
+  const formula = runFormulaState(input.root, input.formulaDetail);
+  const formulaDetail =
+    input.formulaDetailState ?? runFormulaDetailState(input.root, input.formulaDetail);
+  const executionPath = resolveRunExecutionPath(input.root, input.beads, input.rigRoot);
 
   // gascity-dashboard-ud6j: compute the dashboard phase ladder from this
-  // run's OWN beads through the SAME fromGcBead → mapRunPhase → stageProgress
+  // run's OWN beads through the SAME fromDashboardBead → mapRunPhase → stageProgress
   // pipeline the snapshot lane uses, so the run-detail ladder cannot drift
   // from the lane's. mapRunPhase keys off bead status + title, which run
   // beads carry. The resolved formula name (when known) selects the
   // formula-specific stage set; otherwise the generic 5-stage ladder applies.
-  const issues = input.beads.map(fromGcRunBead);
+  const issues = input.beads.map(fromRunSnapshotBead);
   const phaseMapping = mapRunPhase(issues);
   const formulaName = formula.kind === 'known' ? formula.name : null;
   const stages = stageProgress(phaseMapping, formulaName, issues);
@@ -182,16 +160,16 @@ export function buildRunningFormulaRun(
 }
 
 /**
- * Adapt a supervisor run-snapshot bead (GcRunBead) to the phase classifier's
- * RunIssue input. The phase pipeline's own fromGcBead adapter consumes the
- * city-wide GcBead shape (issue_type, created_at); the run-snapshot wire row
+ * Adapt a supervisor run-snapshot bead to the phase classifier's
+ * RunIssue input. The phase pipeline's own fromDashboardBead adapter consumes the
+ * city-wide DashboardBead shape (issue_type, created_at); the run-snapshot wire row
  * is a different shape (kind, no created_at). mapRunPhase only reads
  * status / title / metadata / issue_type / parent, so this maps the run-bead
  * `kind` onto `issue_type` and leaves updated_at empty (the snapshot carries
  * no per-bead timestamp — latestStepId's ordering degrades gracefully to
  * input order, which the phase classifier does not depend on).
  */
-function fromGcRunBead(bead: GcRunBead): RunIssue {
+function fromRunSnapshotBead(bead: RunSnapshotBead): RunIssue {
   const parent = meta(bead, 'gc.parent_bead_id');
   const issue: RunIssue = {
     id: bead.id,
@@ -207,8 +185,8 @@ function fromGcRunBead(bead: GcRunBead): RunIssue {
 }
 
 function runFormulaState(
-  root: GcRunBead | undefined,
-  formulaDetail: GcFormulaDetail | undefined,
+  root: RunSnapshotBead | undefined,
+  formulaDetail: FormulaDetail | undefined,
 ): RunFormula {
   // Provenance precedence (gascity-dashboard-e7hj + sadp). The supervisor's
   // canonical signals win over the graph.v2 bead-title heuristic; the title
@@ -222,8 +200,7 @@ function runFormulaState(
   // graph.v2 roots get a title-derived name. See gascity-dashboard-sadp.
   const resolved = resolveRunFormulaIdentity('state', { root, formulaDetail });
   if (resolved.name !== null) {
-    const source =
-      resolved.source === 'title_fallback' ? 'title_fallback' : 'metadata';
+    const source = resolved.source === 'title_fallback' ? 'title_fallback' : 'metadata';
     return {
       kind: 'known',
       name: resolved.name,
@@ -237,8 +214,8 @@ function runFormulaState(
 }
 
 function runFormulaDetailState(
-  root: GcRunBead | undefined,
-  formulaDetail: GcFormulaDetail | undefined,
+  root: RunSnapshotBead | undefined,
+  formulaDetail: FormulaDetail | undefined,
 ): RunFormulaDetailState {
   const resolved = resolveRunFormulaIdentity('detail', { root, formulaDetail });
   const name = resolved.name;
@@ -256,7 +233,7 @@ function runFormulaDetailState(
 }
 
 function buildFormulaRunProgress(
-  raw: GcRunSnapshot,
+  raw: RunSnapshot,
   nodes: readonly RunDisplayNode[],
   edges: readonly RunDisplayEdge[],
 ): FormulaRunProgress {

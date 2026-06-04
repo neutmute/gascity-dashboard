@@ -24,7 +24,7 @@ export interface GitRouterOptions {
    * Injected `git log` runner. Defaults to the real exec wrapper; tests
    * pass a stub that throws so the catch-arm redaction contract
    * (gascity-dashboard-big) is unit-testable without spawning git.
-   * Mirrors the DI pattern used by agentsRouter and maintainerRouter.
+   * Mirrors the DI pattern used by other dashboard-local routers.
    */
   execGitLog?: (view: string) => Promise<ExecResult>;
 }
@@ -52,11 +52,14 @@ export function gitRouter(opts: GitRouterOptions = {}): Router {
         writeExecError(res, err, LOG_COMPONENT.git, '/api/git/commits');
         return;
       }
-      writeRouteError(res, routeInternalError(err, {
-        component: LOG_COMPONENT.git,
-        operation: '/api/git/commits failed',
-        responseError: 'internal error',
-      }));
+      writeRouteError(
+        res,
+        routeInternalError(err, {
+          component: LOG_COMPONENT.git,
+          operation: '/api/git/commits failed',
+          responseError: 'internal error',
+        }),
+      );
     }
   });
 

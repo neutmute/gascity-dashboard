@@ -1,10 +1,5 @@
-import type {
-  GcBead,
-} from '../gc-beads.js';
-import type {
-  GcRunBead,
-  GcRunSnapshot,
-} from '../run-snapshot.js';
+import type { DashboardBead } from '../dashboard-beads.js';
+import type { RunSnapshotBead, RunSnapshot } from '../run-snapshot.js';
 import { nonEmpty } from './bead-fields.js';
 
 const PRESENTATION_METADATA_KEYS = [
@@ -31,14 +26,14 @@ const PRESENTATION_METADATA_KEYS = [
  * /run while run status comes from exact live supervisor bead reads.
  */
 export function mergeRunRuntimeState(
-  raw: GcRunSnapshot,
-  runtimeBeads: readonly GcBead[],
-): GcRunSnapshot {
+  raw: RunSnapshot,
+  runtimeBeads: readonly DashboardBead[],
+): RunSnapshot {
   if (!Array.isArray(raw.beads) || runtimeBeads.length === 0) return raw;
   const runtimeById = new Map(
     runtimeBeads
       .map((bead) => [nonEmpty(bead.id), bead] as const)
-      .filter((entry): entry is readonly [string, GcBead] => entry[0] !== undefined),
+      .filter((entry): entry is readonly [string, DashboardBead] => entry[0] !== undefined),
   );
 
   return {
@@ -47,14 +42,11 @@ export function mergeRunRuntimeState(
   };
 }
 
-function mergeRunBead(
-  bead: GcRunBead,
-  runtime: GcBead | undefined,
-): GcRunBead {
+function mergeRunBead(bead: RunSnapshotBead, runtime: DashboardBead | undefined): RunSnapshotBead {
   if (!runtime) return bead;
   const status = nonEmpty(runtime.status) ?? bead.status;
   const assignee = nonEmpty(runtime.assignee) ?? bead.assignee;
-  const merged: GcRunBead = {
+  const merged: RunSnapshotBead = {
     ...bead,
     status,
     metadata: {
@@ -66,7 +58,7 @@ function mergeRunBead(
   return merged;
 }
 
-function presentationMetadata(metadata: GcBead['metadata']): Record<string, string> {
+function presentationMetadata(metadata: DashboardBead['metadata']): Record<string, string> {
   if (!metadata) return {};
   const out: Record<string, string> = {};
   for (const key of PRESENTATION_METADATA_KEYS) {

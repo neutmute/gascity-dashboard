@@ -1,4 +1,4 @@
-import { getActiveCity } from '../api/cityBase';
+import { activeCityOrThrow } from '../api/cityBase';
 import type {
   GetV0CityByCityNameEventsData,
   ListBodyWireEvent,
@@ -7,7 +7,7 @@ import type {
 import { supervisorApi } from './client';
 
 const EVENT_FETCH_LIMIT = 100;
-const DEFAULT_EVENT_WINDOW = '24h';
+export const DEFAULT_EVENT_WINDOW = '24h';
 
 export type SupervisorEventItem = TypedEventStreamEnvelope;
 export type SupervisorEventQuery = NonNullable<GetV0CityByCityNameEventsData['query']>;
@@ -33,12 +33,4 @@ export async function listSupervisorEvents(
     items,
     total: Number(list.total),
   };
-}
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
 }

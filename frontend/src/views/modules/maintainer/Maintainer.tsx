@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { MaintainerTriage } from 'gas-city-dashboard-shared';
+import {
+  errorMessage,
+  prepareMaintainerSlingRequest,
+  resolveSessionForTarget,
+  type DashboardMaintainerRuntimeConfig,
+  type MaintainerTriage,
+} from 'gas-city-dashboard-shared';
 import { filterTierByNeedsYou, NEEDS_YOU_VIEW_PARAM } from './needsYou';
 import {
   countTierByVetted,
@@ -9,7 +15,7 @@ import {
 } from './triageFilters';
 import { useNow } from '../../../contexts/NowContext';
 import { api } from '../../../api/client';
-import { cityPath } from '../../../api/cityBase';
+import { cityPath, getActiveCity } from '../../../api/cityBase';
 import { setCached } from '../../../api/cache';
 import { Button } from '../../../components/Button';
 import { PageHeader } from '../../../components/PageHeader';
@@ -28,7 +34,11 @@ import {
   toggleSelectionItem,
   useSlingSuccess,
   type MaintainerSlingIntent,
+  type SlingRequest,
+  type SlingSummary,
 } from './maintainerSelection';
+import { supervisorApi } from '../../../supervisor/client';
+import { reportClientError } from '../../../lib/clientErrorReporting';
 
 export { SlungLink, TriageScore } from './TriageSignals';
 export { IssueRow, SlungSection, TierSection } from './TriageSections';
@@ -60,9 +70,8 @@ const NEEDS_PR_KEY = 'maintainer:needsPrOnly';
 const AWAITING_KEY = 'maintainer:awaitingOnly';
 
 export function MaintainerPage() {
-  const { data, loading, error, refresh } = useCachedData<MaintainerTriage>(
-    CACHE_KEY,
-    () => api.maintainerTriage(),
+  const { data, loading, error, refresh } = useCachedData<MaintainerTriage>(CACHE_KEY, () =>
+    api.maintainerTriage(),
   );
   const { viewingAs } = useViewingAs();
   // dw8 — `?view=needs-you` activates the Needs-You composite filter
@@ -89,8 +98,11 @@ export function MaintainerPage() {
   // Post-sling success acknowledgement (gascity-dashboard-5ly). Hook
   // owns the auto-clear timer + unmount cleanup so this component just
   // calls setSuccess on the happy path.
-  const { success: slingSuccess, setSuccess: setSlingSuccess, clearSuccess: clearSlingSuccess } =
-    useSlingSuccess();
+  const {
+    success: slingSuccess,
+    setSuccess: setSlingSuccess,
+    clearSuccess: clearSlingSuccess,
+  } = useSlingSuccess();
   const [slingSkippedCount, setSlingSkippedCount] = useState(0);
   const [focusBreaking, setFocusBreaking] = useState<boolean>(() => {
     return readStorageFlag(FOCUS_KEY);
@@ -186,56 +198,64 @@ export function MaintainerPage() {
   const allItems = useMemo(() => (data ? flattenTriageItems(data) : []), [data]);
 
   // Single dispatch path, parameterised on intent (gascity-dashboard-5xw).
-  // intent='triage' → backend resolves to MAINTAINER_TRIAGE_TARGET
+  // intent='triage' → frontend resolves to MAINTAINER_TRIAGE_TARGET
   // (default 'chief-of-staff'); intent='draft' → MAINTAINER_SLING_TARGET
-  // (default 'mayor'). Target omitted from each request so the backend
-  // owns the routing decision.
-  const handleSend = useCallback(async (intent: MaintainerSlingIntent) => {
-    const successLabel =
-      intent === 'triage' ? TRIAGE_TARGET_LABEL : DRAFT_TARGET_LABEL;
-    setSlinging(intent);
-    setSlingError(null);
-    setSlingSkippedCount(0);
-    // New dispatch supersedes any prior success line. The TTL would also
-    // clear it eventually, but clearing now avoids a stale 'Slung 3 to X'
-    // lingering next to 'Sending' on the next batch.
-    clearSlingSuccess();
-    try {
-      const batch = buildSlingRequests(selection, allItems, intent);
-      const summary = await dispatchSlings(batch.requests, (req) => api.maintainerSling(req));
-      setSlingSkippedCount(batch.skippedKeys.length);
-      if (summary.failed === 0) {
-        setSelection(new Set());
-        if (summary.succeeded > 0) {
-          // Abstract label, not the resolved alias: the actual server-side
-          // target is invisible to the frontend and the label matches its
-          // button copy so the success line reads in one voice.
-          setSlingSuccess({ count: summary.succeeded, target: successLabel });
+  // (default 'mayor'). The browser then calls the generated supervisor sling
+  // endpoint directly; the dashboard service records only local slung state.
+  const handleSend = useCallback(
+    async (intent: MaintainerSlingIntent) => {
+      const successLabel = intent === 'triage' ? TRIAGE_TARGET_LABEL : DRAFT_TARGET_LABEL;
+      setSlinging(intent);
+      setSlingError(null);
+      setSlingSkippedCount(0);
+      // New dispatch supersedes any prior success line. The TTL would also
+      // clear it eventually, but clearing now avoids a stale 'Slung 3 to X'
+      // lingering next to 'Sending' on the next batch.
+      clearSlingSuccess();
+      try {
+        const batch = buildSlingRequests(selection, allItems, intent);
+        let summary: SlingSummary = { outcomes: [], succeeded: 0, failed: 0 };
+        if (batch.requests.length > 0) {
+          const defaults = await loadMaintainerSlingDefaults();
+          summary = await dispatchSlings(batch.requests, (req) =>
+            dispatchMaintainerSupervisorSling(req, defaults),
+          );
         }
-      } else {
-        // Keep the failed subset selected so the operator can retry. The
-        // succeeded ones get dropped so the next click doesn't redispatch them.
-        const remaining = new Set<string>();
-        for (const o of summary.outcomes) {
-          if (!o.ok) remaining.add(selectionKey(o.request));
+        setSlingSkippedCount(batch.skippedKeys.length);
+        if (summary.failed === 0) {
+          setSelection(new Set());
+          if (summary.succeeded > 0) {
+            // Abstract label, not the resolved alias: the actual server-side
+            // target is invisible to the frontend and the label matches its
+            // button copy so the success line reads in one voice.
+            setSlingSuccess({ count: summary.succeeded, target: successLabel });
+          }
+        } else {
+          // Keep the failed subset selected so the operator can retry. The
+          // succeeded ones get dropped so the next click doesn't redispatch them.
+          const remaining = new Set<string>();
+          for (const o of summary.outcomes) {
+            if (!o.ok) remaining.add(selectionKey(o.request));
+          }
+          setSelection(remaining);
+          setSlingError(
+            `${summary.failed} of ${summary.outcomes.length} failed: ${summary.outcomes.find((o) => !o.ok)?.error ?? 'unknown error'}`,
+          );
+          // Partial success: surface what landed even though the line
+          // shares space with the error. The operator's next action will
+          // clear both via clearSlingSuccess + setSlingError(null).
+          if (summary.succeeded > 0) {
+            setSlingSuccess({ count: summary.succeeded, target: successLabel });
+          }
         }
-        setSelection(remaining);
-        setSlingError(
-          `${summary.failed} of ${summary.outcomes.length} failed: ${summary.outcomes.find((o) => !o.ok)?.error ?? 'unknown error'}`,
-        );
-        // Partial success: surface what landed even though the line
-        // shares space with the error. The operator's next action will
-        // clear both via clearSlingSuccess + setSlingError(null).
-        if (summary.succeeded > 0) {
-          setSlingSuccess({ count: summary.succeeded, target: successLabel });
-        }
+      } catch (err) {
+        setSlingError(err instanceof Error ? err.message : 'send failed');
+      } finally {
+        setSlinging(null);
       }
-    } catch (err) {
-      setSlingError(err instanceof Error ? err.message : 'send failed');
-    } finally {
-      setSlinging(null);
-    }
-  }, [selection, allItems, setSlingSuccess, clearSlingSuccess]);
+    },
+    [selection, allItems, setSlingSuccess, clearSlingSuccess],
+  );
 
   return (
     <section>
@@ -356,17 +376,17 @@ export function MaintainerPage() {
           <MaintainerFooter computedAt={data.computed_at} now={nowMs} />
           {viewingAs.isOperator &&
             (selection.size > 0 || slingSuccess !== null || slingSkippedCount > 0) && (
-            <SelectionActionBar
-              count={selection.size}
-              skippedCount={slingSkippedCount}
-              onSend={() => void handleSend('triage')}
-              onSendDraft={() => void handleSend('draft')}
-              onClear={clearSelection}
-              sending={slinging}
-              error={slingError}
-              success={slingSuccess}
-            />
-          )}
+              <SelectionActionBar
+                count={selection.size}
+                skippedCount={slingSkippedCount}
+                onSend={() => void handleSend('triage')}
+                onSendDraft={() => void handleSend('draft')}
+                onClear={clearSelection}
+                sending={slinging}
+                error={slingError}
+                success={slingSuccess}
+              />
+            )}
         </>
       ) : loading ? (
         <p className="text-body text-fg-muted italic">Loading.</p>
@@ -379,11 +399,63 @@ export function MaintainerPage() {
   );
 }
 
+async function loadMaintainerSlingDefaults(): Promise<DashboardMaintainerRuntimeConfig> {
+  const config = await api.config();
+  if (config.maintainer === undefined) {
+    throw new Error('maintainer sling config unavailable');
+  }
+  return config.maintainer;
+}
+
+async function dispatchMaintainerSupervisorSling(
+  req: SlingRequest,
+  defaults: DashboardMaintainerRuntimeConfig,
+): Promise<void> {
+  const prepared = prepareMaintainerSlingRequest(req, defaults);
+  if (prepared.status === 'error') {
+    throw new Error(prepared.message);
+  }
+  const cityName = getActiveCity();
+  if (cityName === null) {
+    throw new Error('maintainer sling called before an active city was resolved');
+  }
+  const request = prepared.request;
+  const result = await supervisorApi().sling(cityName, {
+    target: request.target,
+    bead: request.beadText,
+  });
+  const resolvedSessionName = await resolveMaintainerSlingTarget(cityName, request.target);
+  await api.maintainerSlingRecord({
+    kind: request.kind,
+    number: request.number,
+    intent: request.intent,
+    target: request.target,
+    bead_id: result.root_bead_id ?? null,
+    resolved_session_name: resolvedSessionName,
+  });
+}
+
+async function resolveMaintainerSlingTarget(
+  cityName: string,
+  target: string,
+): Promise<string | null> {
+  try {
+    const sessions = await supervisorApi().listSessions(cityName);
+    return resolveSessionForTarget(target, sessions.items ?? [])?.session_name ?? null;
+  } catch (err) {
+    void reportClientError({
+      component: 'maintainer',
+      operation: 'resolve maintainer sling target',
+      message: errorMessage(err),
+    });
+    return null;
+  }
+}
+
 function buildSynopsis(data: MaintainerTriage): string {
   const breaking = data.tiers.find((t) => t.tier === 'regression_breaking');
   const breakingCount = breaking
-    ? breaking.clusters.reduce((n, c) => n + c.items.length, 0) +
-      breaking.unclustered.length
+    ? breaking.clusters.reduce((n, c) => n + c.items.length, 0) + breaking.unclustered.length
     : 0;
   if (breakingCount > 0) {
     return `${breakingCount} item${breakingCount === 1 ? '' : 's'} in regression+breaking. ${data.totals.issues_open} issues, ${data.totals.prs_open} PRs open across ${data.repo}.`;

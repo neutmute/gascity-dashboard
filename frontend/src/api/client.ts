@@ -6,6 +6,7 @@ import type {
   LocalToolVersions,
   DoltNomsTrend,
   MaintainerTriage,
+  MaintainerSlingRecordRequest,
   ContributorStat,
   ApiError,
   DashboardRuntimeConfig,
@@ -218,7 +219,10 @@ function objectDecoder<T>(
   };
 }
 
-function itemsDecoder<T>(label: string, validate?: (record: JsonRecord, url: string) => void): ResponseDecoder<T> {
+function itemsDecoder<T>(
+  label: string,
+  validate?: (record: JsonRecord, url: string) => void,
+): ResponseDecoder<T> {
   return objectDecoder<T>(label, (record, url) => {
     requireArrayField(record, url, label, 'items');
     validate?.(record, url);
@@ -243,15 +247,23 @@ const decodeRuntimeConfig = objectDecoder<DashboardRuntimeConfig>('config', (rec
   requireBooleanField(record, url, 'config', 'useFixtures');
   requireStringArrayOrNullField(record, url, 'config', 'enabledModules');
   requireNullableStringField(record, url, 'config', 'defaultView');
+  if (record.maintainer !== undefined) {
+    const maintainer = requireRecord(record.maintainer, url, 'config.maintainer');
+    requireStringField(maintainer, url, 'config.maintainer', 'slingTarget');
+    requireStringField(maintainer, url, 'config.maintainer', 'triageTarget');
+  }
 });
 const decodeSystemHealth = objectDecoder<SystemHealth>('system health', (record, url) => {
   requireObjectField(record, url, 'system health', 'admin');
   requireObjectField(record, url, 'system health', 'host');
 });
-const decodeLocalToolVersions = objectDecoder<LocalToolVersions>('local tool versions', (record, url) => {
-  requireObjectField(record, url, 'local tool versions', 'dolt');
-  requireObjectField(record, url, 'local tool versions', 'beads');
-});
+const decodeLocalToolVersions = objectDecoder<LocalToolVersions>(
+  'local tool versions',
+  (record, url) => {
+    requireObjectField(record, url, 'local tool versions', 'dolt');
+    requireObjectField(record, url, 'local tool versions', 'beads');
+  },
+);
 const decodeDoltTrend = objectDecoder<DoltNomsTrend>('dolt trend', (record, url) => {
   requireBooleanField(record, url, 'dolt trend', 'available');
   requireArrayField(record, url, 'dolt trend', 'samples');
@@ -265,19 +277,25 @@ const decodeRunDiff = objectDecoder<RunDiffResponse>('run diff', (record, url) =
   requireStringField(record, url, 'run diff', 'patch');
   requireBooleanField(record, url, 'run diff', 'truncated');
 });
-const decodeMaintainerTriage = objectDecoder<MaintainerTriage>('maintainer triage', (record, url) => {
-  requireNullableStringField(record, url, 'maintainer triage', 'computed_at');
-  requireStringField(record, url, 'maintainer triage', 'repo');
-  requireArrayField(record, url, 'maintainer triage', 'tiers');
-  requireObjectField(record, url, 'maintainer triage', 'totals');
-});
+const decodeMaintainerTriage = objectDecoder<MaintainerTriage>(
+  'maintainer triage',
+  (record, url) => {
+    requireNullableStringField(record, url, 'maintainer triage', 'computed_at');
+    requireStringField(record, url, 'maintainer triage', 'repo');
+    requireArrayField(record, url, 'maintainer triage', 'tiers');
+    requireObjectField(record, url, 'maintainer triage', 'totals');
+  },
+);
 const decodeContributor = objectDecoder<ContributorStat>('contributor', (record, url) => {
   requireStringField(record, url, 'contributor', 'login');
 });
-const decodeMaintainerSling = objectDecoder<{ ok: true; bead_id?: string }>('maintainer sling', (record, url) => {
-  requireTrueField(record, url, 'maintainer sling', 'ok');
-  requireOptionalStringField(record, url, 'maintainer sling', 'bead_id');
-});
+const decodeMaintainerSlingRecord = objectDecoder<{ ok: true; bead_id?: string }>(
+  'maintainer sling record',
+  (record, url) => {
+    requireTrueField(record, url, 'maintainer sling record', 'ok');
+    requireOptionalStringField(record, url, 'maintainer sling record', 'bead_id');
+  },
+);
 
 export interface ApiErrorParts {
   message: string;
@@ -331,7 +349,12 @@ export const api = {
     params?: { scopeKind?: RunScopeKind; scopeRef?: string },
   ): Promise<RunDiffResponse> {
     const qs = runQuery(params);
-    return request('POST', cityPath(`/runs/${encodeURIComponent(runId)}/diff${qs}`), decodeRunDiff, body);
+    return request(
+      'POST',
+      cityPath(`/runs/${encodeURIComponent(runId)}/diff${qs}`),
+      decodeRunDiff,
+      body,
+    );
   },
   maintainerTriage(): Promise<MaintainerTriage> {
     return request('GET', cityPath('/maintainer/triage'), decodeMaintainerTriage);
@@ -340,19 +363,21 @@ export const api = {
     return request('POST', cityPath('/maintainer/refresh'), decodeMaintainerTriage, {});
   },
   maintainerContributor(login: string): Promise<ContributorStat> {
-    return request('GET', cityPath(`/maintainer/contributor/${encodeURIComponent(login)}`), decodeContributor);
+    return request(
+      'GET',
+      cityPath(`/maintainer/contributor/${encodeURIComponent(login)}`),
+      decodeContributor,
+    );
   },
-  // gascity-dashboard-0nn: per-item sling dispatch. The bulk-sling
-  // action bar fans out one call per selected item via Promise.allSettled
-  // so a single 4xx/5xx doesn't block the rest of the batch.
-  maintainerSling(payload: {
-    kind: 'pr' | 'issue';
-    number: number;
-    html_url: string;
-    intent: 'review' | 'draft' | 'triage';
-    target?: string;
-  }): Promise<{ ok: true; bead_id?: string }> {
-    return request('POST', cityPath('/maintainer/sling'), decodeMaintainerSling, payload);
+  maintainerSlingRecord(
+    payload: MaintainerSlingRecordRequest,
+  ): Promise<{ ok: true; bead_id?: string }> {
+    return request(
+      'POST',
+      cityPath('/maintainer/sling-record'),
+      decodeMaintainerSlingRecord,
+      payload,
+    );
   },
 };
 

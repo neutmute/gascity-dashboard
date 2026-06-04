@@ -3,7 +3,7 @@
 Historical exit artifact for the awaiting-decision feasibility spike in
 `prd_incorporate-tmai-amux-components.md`. Verified against committed repo
 artifacts on 2026-06-01 and superseded by the Agents pending-interaction
-implementation tracked in `specs/plans/feature-gap-remediation-plan.md`.
+implementation described in `specs/architecture/attention-and-domain-surfaces.md`.
 
 ## Verdict
 
@@ -33,7 +33,7 @@ implementation tracked in `specs/plans/feature-gap-remediation-plan.md`.
 - `frontend/src/hooks/useSessionStream.ts` remains transcript-focused and does
   not consume `pending` SSE frames; Agents uses the generated REST pending path
   instead.
-- The `blocked` values in `shared/src/gc-beads.ts` (BeadStatus) and `shared/src/run-detail.ts` (RunNodeStatus) are **work-graph** blocked (dependency), unrelated to awaiting-human-input.
+- The `blocked` values in `shared/src/dashboard-beads.ts` (BeadStatus) and `shared/src/run-detail.ts` (RunNodeStatus) are **work-graph** blocked (dependency), unrelated to awaiting-human-input.
 
 ## Path to surface it
 
@@ -42,7 +42,7 @@ implementation tracked in `specs/plans/feature-gap-remediation-plan.md`.
    `POST .../respond` writes. A future transcript-panel enhancement could also
    consume the session SSE `pending` variant, but it is not required for the
    Agents response workflow.
-2. **Optional upstream `gc` ask (city-wide case only):** to flag *which* agents across the city are blocked on a human without opening one SSE per session, the supervisor would need to emit a city-stream event (e.g. `session.pending` carrying `{session_id, request_id, kind}`) in `TypedEventStreamEnvelope`. That — and only that — is a legitimate `gastownhall/gascity` request.
+2. **Optional upstream `gc` ask (city-wide case only):** to flag _which_ agents across the city are blocked on a human without opening one SSE per session, the supervisor would need to emit a city-stream event (e.g. `session.pending` carrying `{session_id, request_id, kind}`) in `TypedEventStreamEnvelope`. That — and only that — is a legitimate `gastownhall/gascity` request.
 
 ## RFC-target adjudication (corrects the premortem)
 

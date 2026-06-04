@@ -1,5 +1,5 @@
 import { OPERATOR_WIRE_ALIAS } from 'gas-city-dashboard-shared';
-import { getActiveCity } from '../api/cityBase';
+import { activeCityOrThrow } from '../api/cityBase';
 import { supervisorApi } from './client';
 
 export interface MailComposeDraft {
@@ -64,15 +64,5 @@ export async function replySupervisorMail(
 }
 
 function mailActionQuery(message: MailActionTarget): { rig: string } | undefined {
-  return message.rig === undefined || message.rig.length === 0
-    ? undefined
-    : { rig: message.rig };
-}
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
+  return message.rig === undefined || message.rig.length === 0 ? undefined : { rig: message.rig };
 }

@@ -1,6 +1,6 @@
 # gas-city-dashboard
 
-An editorial-typographic ambient dashboard for a single [Gas City](https://github.com/gastownhall/gascity) (`gc`) operator. Five views — Agents, Beads, Runs, Mail, Health — laid out as a thoughtfully-set page rather than a wall of cards. The room is calm by default; the only thing that earns the eye is something going wrong.
+An editorial-typographic ambient dashboard for a single [Gas City](https://github.com/gastownhall/gascity) (`gc`) operator. Home summarizes abnormal city state through the same attention model used by the nav and focused routes; Agents, Beads, Runs, Mail, Activity, and Health remain complete domain workspaces laid out as thoughtfully-set pages rather than a wall of cards. The room is calm by default; the only thing that earns the eye is something going wrong.
 
 The shape is forked from [Wldc4rd/citadel](https://github.com/Wldc4rd/citadel) (MIT, Charlie Coutts) which solved the orchestrator-tab problem first. The visual register is a full redesign, driven through [impeccable](https://impeccable.style/) with the design context captured in [`specs/requirements/product.md`](specs/requirements/product.md) and [`DESIGN.md`](DESIGN.md).
 
@@ -12,11 +12,14 @@ Until then, this repo exists so the dashboard can move quickly as a standalone N
 
 ## What it shows
 
-- **Agents** — every session's state at a glance, with supervisor transcript peeks and composed agent directives.
-- **Beads** — engineering work in `gc bd` (system noise filtered by default), with supervisor-backed claim / close / nudge and click-to-filter label chips.
+- **Home** — city-wide attention, grouped by domain, derived from the same live facts that highlight focused routes.
+- **Agents** — every session's state at a glance, pending-interaction response controls, supervisor transcript peeks, and composed agent directives.
+- **Beads** — engineering work in `gc bd` (system noise filtered by default), with supervisor-backed claim / close / nudge, targeted create-and-sling, and click-to-filter label chips.
 - **Runs** — active formula runs, with graph.v2 run details, node session transcripts, and current execution-folder git diffs.
-- **Mail** — read any agent's inbox via a persistent "Reading as" strip. Sends always go from the operator; impersonation is read-only.
-- **Health** — supervisor state, host memory + load, admin process stats, plus a 24-hour dolt-noms trend sparkline.
+- **Mail** — read any agent's inbox via a persistent "Reading as" strip, with generated-supervisor send/reply/archive/read-state writes. Sends always go from the operator; impersonation is read-only.
+- **Activity** — supervisor events, deploy history, and recent project commits in one operator-facing timeline with route-level filters.
+- **Health** — supervisor state, host memory + load, admin process stats, local tool diagnostics, plus a 24-hour dolt-noms trend sparkline.
+- **Maintainer / Triage** — optional first-party GitHub triage workspace, enabled with `MODULES_ENABLED=maintainer`; supervisor sling dispatch stays in the browser and the dashboard service records only local slung-state/audit facts.
 
 ## Quick start (dev)
 
@@ -52,8 +55,18 @@ For systemd-managed install: [`deploy/README.md`](deploy/README.md).
 ```bash
 npm run lint       # ESLint, zero warnings allowed
 npm run typecheck  # source + test TypeScript checks
+npm --workspace shared test
 npm --workspace frontend test
 npm --workspace backend test
+npm --workspace frontend run build
+npm run openapi:gc-supervisor:check
+```
+
+When backend and frontend dev servers are running against a reachable
+supervisor, run the browser smoke harness too:
+
+```bash
+npm run browser:test
 ```
 
 ## Configuration
@@ -67,6 +80,8 @@ All knobs are environment variables. See [`backend/src/config.ts`](backend/src/c
 | `ADMIN_EXTRA_ALLOWED_HOSTS` | (empty)                  | CSV of extra hostnames allowed in the `Host:` header (e.g. `my-vm,192.168.1.58`). The floor `127.0.0.1` / `localhost` is always allowed. |
 | `GC_SUPERVISOR_URL`         | `http://127.0.0.1:8372`  | gc supervisor API base URL.                                                                                                              |
 | `GC_CITY_NAME`              | `racoon-city`            | Name of the city this dashboard manages. One dashboard per city.                                                                         |
+| `MODULES_ENABLED`           | (empty)                  | CSV of optional first-party modules to mount, e.g. `maintainer`. Core views always mount.                                                |
+| `DEFAULT_VIEW`              | (empty)                  | Optional module/view id to use as the city default route.                                                                                |
 | `ADMIN_AUDIT_LOG_PATH`      | `$HOME/.gc/events.jsonl` | Where state-changing actions append audit entries.                                                                                       |
 | `ADMIN_FRONTEND_DIST`       | `../frontend/dist`       | Path to built frontend assets.                                                                                                           |
 | `ADMIN_DASHBOARD_DISABLED`  | `0`                      | Kill switch. Set to `1` to refuse to start.                                                                                              |
@@ -98,6 +113,11 @@ Full threat model: [`specs/architecture/security.md`](specs/architecture/securit
 - **Supervisor client** — generated OpenAPI client artifacts in backend and frontend. GC-owned resources should use these generated supervisor types directly.
 - **Shared types** — `gas-city-dashboard-shared` workspace package for dashboard-owned `/api/*` DTOs and UI contracts, not supervisor DTO mirrors.
 - **Deploy** — systemd user unit. Deliberately _not_ managed by `gc [[services]]`; see [`specs/architecture/overview.md`](specs/architecture/overview.md) for why the dashboard must outlive supervisor outages.
+
+The durable direct-supervisor boundary is captured in
+[`specs/architecture/direct-supervisor-boundary.md`](specs/architecture/direct-supervisor-boundary.md);
+attention/domain surface rules are captured in
+[`specs/architecture/attention-and-domain-surfaces.md`](specs/architecture/attention-and-domain-surfaces.md).
 
 ## Layout
 

@@ -1,9 +1,9 @@
 import type {
   FormulaRunDetail,
   FormulaRunPartialReason,
-  GcFormulaDetail,
-  GcRunSnapshot,
-  GcSession,
+  FormulaDetail,
+  RunSnapshot,
+  DashboardSession,
   RunFormulaDetailFetchFailure,
   RunFormulaDetailState,
   RunScopeKind,
@@ -13,12 +13,13 @@ import {
   formulaRunCompleteness,
   resolveRunFormulaIdentity,
 } from 'gas-city-dashboard-shared';
-import { getActiveCity } from '../api/cityBase';
+import { activeCityOrThrow } from '../api/cityBase';
 import type {
   FormulaDetailResponse,
   WorkflowSnapshotResponse,
 } from '../generated/gc-supervisor-client/types.gen';
 import { SupervisorApiError, supervisorApi, type SupervisorApi } from './client';
+import { normalizeSessions } from './sessionReads';
 
 export async function loadSupervisorFormulaRunDetail(
   runId: string,
@@ -32,7 +33,7 @@ export async function loadSupervisorFormulaRunDetail(
     api.workflowRun(cityName, runId, query),
     loadRunSessions(cityName),
   ]);
-  const snapshot = toGcRunSnapshot(raw);
+  const snapshot = toRunSnapshot(raw);
   const formulaDetailLookup = await loadRunFormulaDetail(api, cityName, snapshot, query);
   const detail = enrichFormulaRun(snapshot, {
     sessions: sessionsLookup.sessions,
@@ -55,11 +56,11 @@ export async function loadSupervisorFormulaRunDetail(
 }
 
 type RunSessionsLookup =
-  | { kind: 'available'; sessions: readonly GcSession[] }
-  | { kind: 'unavailable'; sessions: readonly GcSession[] };
+  | { kind: 'available'; sessions: readonly DashboardSession[] }
+  | { kind: 'unavailable'; sessions: readonly DashboardSession[] };
 
 type RunFormulaDetailLookup =
-  | { kind: 'available'; detail: GcFormulaDetail; state: RunFormulaDetailState }
+  | { kind: 'available'; detail: FormulaDetail; state: RunFormulaDetailState }
   | {
       kind: 'unavailable';
       state: Extract<RunFormulaDetailState, { kind: 'unavailable' }>;
@@ -70,7 +71,7 @@ async function loadRunSessions(cityName: string): Promise<RunSessionsLookup> {
     const list = await supervisorApi().listSessions(cityName);
     return {
       kind: 'available',
-      sessions: (list.items ?? []) as GcSession[],
+      sessions: normalizeSessions(list),
     };
   } catch {
     return { kind: 'unavailable', sessions: [] };
@@ -80,7 +81,7 @@ async function loadRunSessions(cityName: string): Promise<RunSessionsLookup> {
 async function loadRunFormulaDetail(
   api: SupervisorApi,
   cityName: string,
-  snapshot: GcRunSnapshot,
+  snapshot: RunSnapshot,
   scopeQuery: { scope_kind?: string; scope_ref?: string } | undefined,
 ): Promise<RunFormulaDetailLookup> {
   const root = snapshot.beads?.find((bead) => bead.id === snapshot.root_bead_id);
@@ -100,10 +101,12 @@ async function loadRunFormulaDetail(
     };
   }
   try {
-    const detail = toGcFormulaDetail(await api.formulaDetail(cityName, name, {
-      target,
-      ...(scopeQuery ?? {}),
-    }));
+    const detail = toFormulaDetail(
+      await api.formulaDetail(cityName, name, {
+        target,
+        ...(scopeQuery ?? {}),
+      }),
+    );
     return {
       kind: 'available',
       detail,
@@ -123,8 +126,8 @@ async function loadRunFormulaDetail(
   }
 }
 
-function toGcRunSnapshot(raw: WorkflowSnapshotResponse): GcRunSnapshot {
-  const snapshot: GcRunSnapshot = {
+function toRunSnapshot(raw: WorkflowSnapshotResponse): RunSnapshot {
+  const snapshot: RunSnapshot = {
     run_id: raw.workflow_id,
     root_bead_id: raw.root_bead_id,
     root_store_ref: raw.root_store_ref,
@@ -136,9 +139,9 @@ function toGcRunSnapshot(raw: WorkflowSnapshotResponse): GcRunSnapshot {
     stores_scanned: raw.stores_scanned,
     beads: raw.beads,
     deps: raw.deps,
-    logical_nodes: raw.logical_nodes as GcRunSnapshot['logical_nodes'],
+    logical_nodes: raw.logical_nodes as RunSnapshot['logical_nodes'],
     logical_edges: raw.logical_edges,
-    scope_groups: raw.scope_groups as GcRunSnapshot['scope_groups'],
+    scope_groups: raw.scope_groups as RunSnapshot['scope_groups'],
   };
   if (raw.snapshot_event_seq !== undefined) {
     snapshot.snapshot_event_seq = raw.snapshot_event_seq;
@@ -146,9 +149,9 @@ function toGcRunSnapshot(raw: WorkflowSnapshotResponse): GcRunSnapshot {
   return snapshot;
 }
 
-function toGcFormulaDetail(raw: FormulaDetailResponse): GcFormulaDetail {
-  const detail: GcFormulaDetail = { name: raw.name };
-  const preview: NonNullable<GcFormulaDetail['preview']> = {};
+function toFormulaDetail(raw: FormulaDetailResponse): FormulaDetail {
+  const detail: FormulaDetail = { name: raw.name };
+  const preview: NonNullable<FormulaDetail['preview']> = {};
   if (Array.isArray(raw.preview.nodes)) {
     preview.nodes = raw.preview.nodes;
   }
@@ -194,12 +197,4 @@ function runScopeQuery(
   if (scopeKind !== undefined) query.scope_kind = scopeKind;
   if (scopeRef !== undefined) query.scope_ref = scopeRef;
   return query;
-}
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
 }

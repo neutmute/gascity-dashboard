@@ -37,9 +37,11 @@ credentials.*
 !.env.example
 !.github/
 !.github/**
+!.prettierignore
 !.claude/
 !.claude/**
 !.agents/
 !.agents/**
 .scorecard/
 tmp/arch-best-practices-*.txt
+tmp/claude-feedback-*.txt

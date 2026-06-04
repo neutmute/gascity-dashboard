@@ -1,4 +1,4 @@
-import type { GcBead, GcSession, LinkNode } from 'gas-city-dashboard-shared';
+import type { DashboardBead, DashboardSession, LinkNode } from 'gas-city-dashboard-shared';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { buildLinkView } from '../src/links/build-link-view.js';
@@ -6,7 +6,7 @@ import { ResolutionRollup } from '../src/links/instrumentation.js';
 import { parseRef } from '../src/links/node-ref.js';
 import { buildRelationIndex } from '../src/links/relation-index.js';
 
-function bead(id: string, metadata: Record<string, string> = {}): GcBead {
+function bead(id: string, metadata: Record<string, string> = {}): DashboardBead {
   return {
     id,
     title: `bead ${id}`,
@@ -18,7 +18,7 @@ function bead(id: string, metadata: Record<string, string> = {}): GcBead {
   };
 }
 
-function session(id: string, over: Partial<GcSession> = {}): GcSession {
+function session(id: string, over: Partial<DashboardSession> = {}): DashboardSession {
   return {
     id,
     template: 'tpl',
@@ -129,9 +129,7 @@ describe('buildLinkView (R2/R3/R4/R6/R7/R11)', () => {
   });
 
   test('R7: section asOf is the older of two contributing sources', () => {
-    const beads = [
-      bead('focus', { session_id: 'sess-1' }),
-    ];
+    const beads = [bead('focus', { session_id: 'sess-1' })];
     const fresh = '2026-05-26T12:00:00Z';
     const old = '2026-05-25T12:00:00Z';
     const index = buildRelationIndex(beads, [session('sess-1')], 'c');

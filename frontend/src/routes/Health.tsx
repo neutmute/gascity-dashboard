@@ -1,17 +1,14 @@
-import type { ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import type {
   DoltNomsTrend,
   LocalToolVersion,
   LocalToolVersions,
   SystemHealth,
 } from 'gas-city-dashboard-shared';
-import { api } from '../api/client';
+import { api, formatApiError } from '../api/client';
 import { getActiveCity } from '../api/cityBase';
 import { useAttentionModel } from '../attention/context';
-import {
-  attentionSectionProps,
-  prefixedAttentionSeverity,
-} from '../attention/routeHighlight';
+import { attentionSectionProps, prefixedAttentionSeverity } from '../attention/routeHighlight';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
@@ -25,41 +22,80 @@ import { useCachedData } from '../hooks/useCachedData';
 import { useVisibleRefresh } from '../hooks/useVisibleRefresh';
 import { formatHumanSize } from '../lib/format';
 import { formatShortDate } from '../hooks/time';
-import { supervisorApi } from '../supervisor/client';
+import { supervisorApiForRequestBudget } from '../supervisor/client';
 
-// Health page fetches the two slow paths in parallel through the
-// stale-while-revalidate cache so re-entering this view (or polling
-// every 30s) doesn't blank the page first.
-async function fetchHealthBundle(): Promise<{
-  health: SystemHealth;
-  supervisor: SupervisorHealthState;
-  status: SupervisorStatusState;
-  localTools: LocalToolVersionsState;
-  trend: DoltNomsTrend;
-}> {
-  const [health, supervisor, status, localTools, trend] = await Promise.all([
-    api.systemHealth(),
-    fetchSupervisorHealth(),
-    fetchSupervisorStatus(),
-    fetchLocalToolVersions(),
-    api.doltTrend(),
-  ]);
-  return { health, supervisor, status, localTools, trend };
-}
+const HEALTH_SUPERVISOR_REQUEST_TIMEOUT_MS = 2_500;
 
 export function HealthPage() {
   const attention = useAttentionModel();
-  const { data, loading, error, refresh } = useCachedData(
-    'health',
-    fetchHealthBundle,
+  const cityName = getActiveCity();
+  const systemHealth = useCachedData('health:system', fetchSystemHealth);
+  const supervisorHealth = useCachedData(
+    `health:supervisor:${cityName ?? 'no-city'}`,
+    fetchSupervisorHealth,
   );
-  const health = data?.health ?? null;
-  const supervisor = data?.supervisor ?? null;
-  const status = data?.status ?? null;
-  const localTools = data?.localTools ?? null;
-  const trend = data?.trend ?? null;
+  const supervisorStatusCache = useCachedData(
+    `health:status:${cityName ?? 'no-city'}`,
+    fetchSupervisorStatus,
+  );
+  const localToolVersions = useCachedData('health:local-tools', fetchLocalToolVersions);
+  const doltNomsTrend = useCachedData(
+    `health:dolt-noms-trend:${cityName ?? 'no-city'}`,
+    fetchDoltNomsTrend,
+  );
+  const refreshSystemHealth = systemHealth.refresh;
+  const refreshSupervisorHealth = supervisorHealth.refresh;
+  const refreshSupervisorStatus = supervisorStatusCache.refresh;
+  const refreshLocalToolVersions = localToolVersions.refresh;
+  const refreshDoltNomsTrend = doltNomsTrend.refresh;
+  const sourceLoading =
+    systemHealth.loading ||
+    supervisorHealth.loading ||
+    supervisorStatusCache.loading ||
+    localToolVersions.loading ||
+    doltNomsTrend.loading;
+  const error =
+    [
+      systemHealth.error,
+      supervisorHealth.error,
+      supervisorStatusCache.error,
+      localToolVersions.error,
+      doltNomsTrend.error,
+    ]
+      .filter((value): value is string => value !== null)
+      .join('; ') || null;
+  const refresh = useCallback(async () => {
+    await Promise.all([
+      refreshSystemHealth(),
+      refreshSupervisorHealth(),
+      refreshSupervisorStatus(),
+      refreshLocalToolVersions(),
+      refreshDoltNomsTrend(),
+    ]);
+  }, [
+    refreshDoltNomsTrend,
+    refreshLocalToolVersions,
+    refreshSupervisorHealth,
+    refreshSupervisorStatus,
+    refreshSystemHealth,
+  ]);
+  const healthState = systemHealth.data ?? null;
+  const health = healthState?.status === 'available' ? healthState.data : null;
+  const healthError = healthState?.status === 'unavailable' ? healthState.error : null;
+  const supervisor = supervisorHealth.data ?? null;
+  const status = supervisorStatusCache.data ?? null;
+  const localTools = localToolVersions.data ?? null;
+  const trend = doltNomsTrend.data ?? null;
+  const hasAnyData =
+    healthState !== null ||
+    supervisor !== null ||
+    status !== null ||
+    localTools !== null ||
+    trend !== null;
   const hostHealthStatus = health ? hostStatus(health) : undefined;
-  const supervisorAttention = prefixedAttentionSeverity(attention, 'health', ['health:supervisor-']);
+  const supervisorAttention = prefixedAttentionSeverity(attention, 'health', [
+    'health:supervisor-',
+  ]);
   const hostAttention = prefixedAttentionSeverity(attention, 'health', [
     'health:load-',
     'health:memory-',
@@ -73,7 +109,9 @@ export function HealthPage() {
     <section>
       <PageHeader
         title="Health"
-        synopsis={health && supervisor ? buildSynopsis(health, supervisor) : 'Reading state from the supervisor.'}
+        synopsis={
+          hasAnyData ? buildSynopsis(health, supervisor) : 'Reading state from the supervisor.'
+        }
         meta={
           <>
             {error && (
@@ -81,21 +119,23 @@ export function HealthPage() {
                 {error}
               </span>
             )}
-            <Button size="sm" onClick={() => void refresh()} disabled={loading}>
-              {loading ? 'Refreshing' : 'Refresh'}
+            <Button size="sm" onClick={() => void refresh()}>
+              {sourceLoading && !hasAnyData ? 'Loading' : 'Refresh'}
             </Button>
           </>
         }
       />
 
-      {health ? (
+      {hasAnyData ? (
         <div className="space-y-12">
           <Section
             title="Supervisor"
             attention={supervisorAttention}
             {...(supervisor ? { status: supervisorStatus(supervisor) } : {})}
           >
-            {supervisor?.status === 'available' ? (
+            {supervisor === null ? (
+              <p className="text-body text-fg-muted italic">Loading supervisor state.</p>
+            ) : supervisor.status === 'available' ? (
               <KvList>
                 {/* izgc F7/F8: city + version are optional per supervisor's
                     OpenAPI. Absence is itself a wire-drift signal — render
@@ -126,34 +166,50 @@ export function HealthPage() {
             attention={hostAttention}
             {...(hostHealthStatus ? { status: hostHealthStatus } : {})}
           >
-            <KvList>
-              <Kv label="CPUs" value={health.host.cpu_count.toString()} />
-              <Kv
-                label="Load (1m, 5m, 15m)"
-                value={`${health.host.load_avg_1.toFixed(2)}, ${health.host.load_avg_5.toFixed(2)}, ${health.host.load_avg_15.toFixed(2)}`}
-                {...(health.host.load_avg_1 > health.host.cpu_count
-                  ? { tone: 'warn' as const }
-                  : {})}
-              />
-              <Kv
-                label="Memory free"
-                value={`${formatHumanSize(health.host.free_mem_bytes)} of ${formatHumanSize(health.host.total_mem_bytes)}`}
-                {...(health.host.free_mem_bytes / health.host.total_mem_bytes < 0.1
-                  ? { tone: 'warn' as const }
-                  : {})}
-              />
-              <Kv label="Host uptime" value={formatDuration(health.host.uptime_sec)} />
-            </KvList>
+            {healthState === null ? (
+              <p className="text-body text-fg-muted italic">Loading dashboard host health.</p>
+            ) : health === null ? (
+              <p className="text-body text-accent">
+                Dashboard host health unavailable{healthError ? `: ${healthError}` : ''}.
+              </p>
+            ) : (
+              <KvList>
+                <Kv label="CPUs" value={health.host.cpu_count.toString()} />
+                <Kv
+                  label="Load (1m, 5m, 15m)"
+                  value={`${health.host.load_avg_1.toFixed(2)}, ${health.host.load_avg_5.toFixed(2)}, ${health.host.load_avg_15.toFixed(2)}`}
+                  {...(health.host.load_avg_1 > health.host.cpu_count
+                    ? { tone: 'warn' as const }
+                    : {})}
+                />
+                <Kv
+                  label="Memory free"
+                  value={`${formatHumanSize(health.host.free_mem_bytes)} of ${formatHumanSize(health.host.total_mem_bytes)}`}
+                  {...(health.host.free_mem_bytes / health.host.total_mem_bytes < 0.1
+                    ? { tone: 'warn' as const }
+                    : {})}
+                />
+                <Kv label="Host uptime" value={formatDuration(health.host.uptime_sec)} />
+              </KvList>
+            )}
           </Section>
 
           <Section title="Admin process" attention={adminAttention}>
-            <KvList>
-              <Kv label="PID" value={health.admin.pid.toString()} />
-              <Kv label="Uptime" value={formatDuration(health.admin.uptime_sec)} />
-              <Kv label="RSS" value={formatHumanSize(health.admin.rss_bytes)} />
-              <Kv label="Heap used" value={formatHumanSize(health.admin.heap_used_bytes)} />
-              <Kv label="Node" value={health.admin.node_version} />
-            </KvList>
+            {healthState === null ? (
+              <p className="text-body text-fg-muted italic">Loading dashboard process health.</p>
+            ) : health === null ? (
+              <p className="text-body text-accent">
+                Dashboard process health unavailable{healthError ? `: ${healthError}` : ''}.
+              </p>
+            ) : (
+              <KvList>
+                <Kv label="PID" value={health.admin.pid.toString()} />
+                <Kv label="Uptime" value={formatDuration(health.admin.uptime_sec)} />
+                <Kv label="RSS" value={formatHumanSize(health.admin.rss_bytes)} />
+                <Kv label="Heap used" value={formatHumanSize(health.admin.heap_used_bytes)} />
+                <Kv label="Node" value={health.admin.node_version} />
+              </KvList>
+            )}
           </Section>
 
           <Section title="Diagnostics">
@@ -247,23 +303,12 @@ function KvList({ children }: { children: ReactNode }) {
   // Two-column typeset list. Label left, value right, hairlines
   // between rows. Tabular numerals for value alignment.
   return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-3 max-w-prose">
-      {children}
-    </dl>
+    <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-3 max-w-prose">{children}</dl>
   );
 }
 
-function Kv({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'warn' | 'stuck';
-}) {
-  const valueColor =
-    tone === 'warn' ? 'text-warn' : tone === 'stuck' ? 'text-accent' : 'text-fg';
+function Kv({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'stuck' }) {
+  const valueColor = tone === 'warn' ? 'text-warn' : tone === 'stuck' ? 'text-accent' : 'text-fg';
   return (
     <>
       <dt className="text-body text-fg-muted">{label}</dt>
@@ -302,11 +347,7 @@ function LocalToolKv({
   );
 }
 
-function DoltUsageBlock({
-  usage,
-}: {
-  usage: DiagnosticDatum<StatusStoreHealth>;
-}) {
+function DoltUsageBlock({ usage }: { usage: DiagnosticDatum<StatusStoreHealth> }) {
   if (usage.status === 'unavailable') {
     return <UnavailableNote heading="Dolt usage" reason={usage.reason} />;
   }
@@ -334,11 +375,7 @@ function DoltUsageBlock({
   );
 }
 
-function BeadsUsageBlock({
-  usage,
-}: {
-  usage: DiagnosticDatum<StatusWorkCounts>;
-}) {
+function BeadsUsageBlock({ usage }: { usage: DiagnosticDatum<StatusWorkCounts> }) {
   if (usage.status === 'unavailable') {
     return <UnavailableNote heading="Beads usage" reason={usage.reason} />;
   }
@@ -355,22 +392,18 @@ function BeadsUsageBlock({
   );
 }
 
-function ConfigComparison({
-  comparison,
-}: {
-  comparison: DiagnosticDatum<ConfigComparisonRow[]>;
-}) {
+function ConfigComparison({ comparison }: { comparison: DiagnosticDatum<ConfigComparisonRow[]> }) {
   if (comparison.status === 'unavailable') {
     return (
-      <p className="text-body text-fg-muted italic">
-        Comparison unavailable: {comparison.reason}.
-      </p>
+      <p className="text-body text-fg-muted italic">Comparison unavailable: {comparison.reason}.</p>
     );
   }
   return (
     <div className="grid grid-cols-[1fr_max-content_max-content] gap-x-8 gap-y-3 max-w-prose">
       <div className="text-label uppercase tracking-wider text-fg-muted">Setting</div>
-      <div className="text-label uppercase tracking-wider text-fg-muted text-right">Recommended</div>
+      <div className="text-label uppercase tracking-wider text-fg-muted text-right">
+        Recommended
+      </div>
       <div className="text-label uppercase tracking-wider text-fg-muted text-right">Loaded</div>
       {comparison.value.map((row) => (
         <ComparisonRow key={row.label} row={row} />
@@ -458,6 +491,10 @@ type SupervisorHealthState =
   | { status: 'available'; data: HealthOutputBody }
   | { status: 'unavailable'; error: string };
 
+type SystemHealthState =
+  | { status: 'available'; data: SystemHealth }
+  | { status: 'unavailable'; error: string };
+
 type SupervisorStatusState =
   | { status: 'available'; data: StatusBody }
   | { status: 'unavailable'; error: string };
@@ -465,6 +502,20 @@ type SupervisorStatusState =
 type LocalToolVersionsState =
   | { status: 'available'; data: LocalToolVersions }
   | { status: 'unavailable'; error: string };
+
+async function fetchSystemHealth(): Promise<SystemHealthState> {
+  try {
+    return {
+      status: 'available',
+      data: await api.systemHealth(),
+    };
+  } catch (err) {
+    return {
+      status: 'unavailable',
+      error: formatApiError(err, 'dashboard host health unavailable'),
+    };
+  }
+}
 
 async function fetchSupervisorHealth(): Promise<SupervisorHealthState> {
   const cityName = getActiveCity();
@@ -474,7 +525,9 @@ async function fetchSupervisorHealth(): Promise<SupervisorHealthState> {
   try {
     return {
       status: 'available',
-      data: await supervisorApi().cityHealth(cityName),
+      data: await supervisorApiForRequestBudget(HEALTH_SUPERVISOR_REQUEST_TIMEOUT_MS).cityHealth(
+        cityName,
+      ),
     };
   } catch {
     return {
@@ -492,7 +545,9 @@ async function fetchSupervisorStatus(): Promise<SupervisorStatusState> {
   try {
     return {
       status: 'available',
-      data: await supervisorApi().cityStatus(cityName),
+      data: await supervisorApiForRequestBudget(HEALTH_SUPERVISOR_REQUEST_TIMEOUT_MS).cityStatus(
+        cityName,
+      ),
     };
   } catch {
     return {
@@ -516,32 +571,56 @@ async function fetchLocalToolVersions(): Promise<LocalToolVersionsState> {
   }
 }
 
-function buildSynopsis(h: SystemHealth, supervisorState: SupervisorHealthState): string {
+async function fetchDoltNomsTrend(): Promise<DoltNomsTrend> {
+  try {
+    return await api.doltTrend();
+  } catch {
+    return {
+      available: false,
+      reason: 'sample_failed',
+      samples: [],
+    };
+  }
+}
+
+function buildSynopsis(
+  h: SystemHealth | null,
+  supervisorState: SupervisorHealthState | null,
+): string {
   const parts: string[] = [];
-  if (supervisorState.status === 'available') {
+  if (supervisorState === null) {
+    parts.push('Supervisor state still loading.');
+  } else if (supervisorState.status === 'available') {
     const supervisor = supervisorState.data;
     const verb = supervisor.status === 'ok' ? 'healthy' : supervisor.status;
     // izgc F7/F8: city is optional per OpenAPI. Skip the locator clause if
     // absent rather than rendering "Supervisor healthy on undefined" — the
     // adjacent Kv block surfaces the absence with a warn tone.
     if (supervisor.city !== undefined) {
-      parts.push(`Supervisor ${verb} on ${supervisor.city}, uptime ${formatDuration(supervisor.uptime_sec)}.`);
+      parts.push(
+        `Supervisor ${verb} on ${supervisor.city}, uptime ${formatDuration(supervisor.uptime_sec)}.`,
+      );
     } else {
       parts.push(`Supervisor ${verb}, uptime ${formatDuration(supervisor.uptime_sec)}.`);
     }
   } else {
     parts.push('Supervisor unreachable.');
   }
-  const usedPct = Math.round(
-    100 * (1 - h.host.free_mem_bytes / h.host.total_mem_bytes),
-  );
+  if (h === null) {
+    parts.push('Host health unavailable.');
+    return parts.join(' ');
+  }
+  const usedPct = Math.round(100 * (1 - h.host.free_mem_bytes / h.host.total_mem_bytes));
   parts.push(
     `Memory at ${usedPct}%; ${h.host.cpu_count} CPUs averaging ${h.host.load_avg_1.toFixed(2)} load.`,
   );
   return parts.join(' ');
 }
 
-function supervisorStatus(supervisorState: SupervisorHealthState): { tone: StatusTone; label: string } {
+function supervisorStatus(supervisorState: SupervisorHealthState): {
+  tone: StatusTone;
+  label: string;
+} {
   if (supervisorState.status === 'unavailable') return { tone: 'stuck', label: 'offline' };
   if (supervisorState.data.status === 'ok') return { tone: 'ok', label: 'healthy' };
   return { tone: 'warn', label: supervisorState.data.status };
@@ -550,7 +629,7 @@ function supervisorStatus(supervisorState: SupervisorHealthState): { tone: Statu
 function hostStatus(h: SystemHealth): { tone: StatusTone; label: string } | undefined {
   const memPct = h.host.free_mem_bytes / h.host.total_mem_bytes;
   if (memPct < 0.05) return { tone: 'stuck', label: 'memory critical' };
-  if (memPct < 0.10) return { tone: 'warn', label: 'memory low' };
+  if (memPct < 0.1) return { tone: 'warn', label: 'memory low' };
   if (h.host.load_avg_1 > h.host.cpu_count * 1.5) return { tone: 'warn', label: 'load high' };
   return undefined;
 }
@@ -605,12 +684,14 @@ function configComparisonOf(
   return {
     status: 'available',
     source: 'supervisor status.store_health (threshold vs actual)',
-    value: [{
-      label: 'Dolt MB-per-row ratio',
-      recommended: `<= ${storeHealth.threshold_mb_per_row}`,
-      loaded: String(storeHealth.ratio_mb_per_row),
-      withinRecommendation: !storeHealth.warning,
-    }],
+    value: [
+      {
+        label: 'Dolt MB-per-row ratio',
+        recommended: `<= ${storeHealth.threshold_mb_per_row}`,
+        loaded: String(storeHealth.ratio_mb_per_row),
+        withinRecommendation: !storeHealth.warning,
+      },
+    ],
   };
 }
 

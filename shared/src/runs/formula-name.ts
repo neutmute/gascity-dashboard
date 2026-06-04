@@ -1,10 +1,5 @@
-import type {
-  GcFormulaDetail,
-  GcRunBead,
-} from '../run-snapshot.js';
-import type {
-  RunFormulaSource,
-} from '../run-detail.js';
+import type { FormulaDetail, RunSnapshotBead } from '../run-snapshot.js';
+import type { RunFormulaSource } from '../run-detail.js';
 import { meta, nonEmpty } from './bead-fields.js';
 
 export type RunFormulaIdentityMode = 'detail' | 'lane' | 'route' | 'state';
@@ -25,7 +20,7 @@ export interface ResolvedRunFormulaIdentity {
 
 export interface ResolveRunFormulaIdentityInput {
   root?: RunFormulaRootLike | undefined;
-  formulaDetail?: Pick<GcFormulaDetail, 'name'> | undefined;
+  formulaDetail?: Pick<FormulaDetail, 'name'> | undefined;
   issues?: readonly RunFormulaRootLike[];
 }
 
@@ -85,7 +80,7 @@ export interface ResolvedRunFormulaName {
  * resolution path with the source label of another.
  */
 export function resolveRunFormulaName(
-  root: GcRunBead | undefined,
+  root: RunSnapshotBead | undefined,
 ): ResolvedRunFormulaName | null {
   if (!root) return null;
   const explicit = meta(root, 'gc.formula');
@@ -180,10 +175,7 @@ function rootMeta(root: RunFormulaRootLike | undefined, key: string): string | u
   return nonEmpty(root?.metadata?.[key]);
 }
 
-function metadataString(
-  issues: readonly RunFormulaRootLike[],
-  key: string,
-): string | undefined {
+function metadataString(issues: readonly RunFormulaRootLike[], key: string): string | undefined {
   for (const issue of issues) {
     const value = rootMeta(issue, key);
     if (value !== undefined) return value;

@@ -1,12 +1,13 @@
 # GC Supervisor API Gap Analysis For Future Dashboard Work
 
-Date: 2026-06-01
+Date: 2026-06-04
 Status: Consolidated from current architecture and remediation specs; extended
 with `gc` CLI-elimination gaps (GC-10..GC-12), a mail history-window gap
-(GC-13), and the direct-supervisor dashboard replacement direction. GC-10 and
-GC-11 are implemented in the paired Gas City working tree and consumed by this
-dashboard; GC-12 is also implemented in the paired Gas City working tree and
-consumed by this dashboard.
+(GC-13), a rig/service health and context gap (GC-14), and the
+direct-supervisor dashboard replacement direction. GC-10 and GC-11 are
+implemented in the paired Gas City working tree and consumed by this dashboard;
+GC-12 is also implemented in the paired Gas City working tree and consumed by
+this dashboard.
 
 ## Purpose
 
@@ -43,8 +44,10 @@ Sources consolidated:
 - archived run-detail planning notes under `specs/plans/archive/`
 - current dashboard implementation constraints implied by generated supervisor
   client usage, direct browser use, and Formula Run Detail projection
-- former backend `gc` CLI subprocess wrappers in `backend/src/exec.ts` and
-  their routes (`backend/src/routes/beads.ts`, `backend/src/routes/agents.ts`)
+- former backend supervisor mirror routes and archived route plans
+- archived direct-supervisor and feature-gap remediation plans
+- `specs/architecture/direct-supervisor-boundary.md`
+- `specs/architecture/attention-and-domain-surfaces.md`
 
 Validation rules:
 
@@ -96,24 +99,28 @@ Highest-impact upstream work:
    this dashboard.
 8. Add a clock-based mail history query only if operators need calendar/window
    review beyond the dashboard's current generated-query `limit` expansion.
+9. Expose typed rig/service health and cross-domain rig context if the
+   replacement dashboard needs richer operational context than current city
+   health and per-domain rig filters provide.
 
 ## Gap Matrix
 
-| ID | Gap | Needed upstream capability | Impact | Why the dashboard needs it |
-|----|-----|----------------------------|--------|-----------------------------|
-| GC-1 | Formula identity in run snapshots | `WorkflowSnapshotResponse` should expose root `ref`, typed `formula_name`, `gc.formula`, or an equivalent canonical formula field. | **Critical** | Formula detail lookup should not fail when only the root bead `ref` knows the formula name. |
-| GC-2 | Canonical graph.v2 presentation | Populate `logical_nodes`, `logical_edges`, and `scope_groups`, or ship a shared Gas City presentation package that owns semantic ids, display order, hidden-control collapsing, loop/retry grouping, and visible edges. | **High** | The dashboard should consume presentation semantics instead of deriving a local TypeScript view model from raw bead metadata. |
-| GC-3 | Rig-store runtime freshness | Expose scoped rig-store bead reads through the supervisor, or guarantee that scoped run snapshots include current runtime state for non-city stores. | **High** | City-store runs can refresh bead status independently; rig-store runs are snapshot-bound. |
-| GC-4 | Per-execution session identity | Attach canonical session id/name to every execution instance or node when a session exists. | **High** | Current metadata is usable when present, but absent session fields force assignee/name matching and can leave nodes unresolved. |
-| GC-5 | Event identity on every run-affecting event | Every event that can affect a formula run should carry canonical `workflow_id`/`run_id`, `root_bead_id`, or equivalent identity in the envelope or nested payload metadata. | **High** | Identity-less events force broad refresh invalidation instead of precise run-detail refresh. |
-| GC-6 | OpenAPI schema accuracy | Gas City Huma/OpenAPI source must match observed payloads. Nullable `Bead.priority` is fixed in the paired working tree; remaining checks include legacy bead fields such as `owner`, `updated_at`, `closed_at` if still emitted; phantom event fields such as `next`; and formula-detail degraded/missing responses. | **Critical** | The dashboard now uses generated SDK + generated Zod validators. Future schema refreshes must not re-break valid degraded payloads or require dashboard-side schema overlays. |
-| GC-7 | Canonical execution-instance fields | Optionally expose execution instance id, semantic node id, loop iteration, retry attempt, current/historical flag, and attached session identity directly. | **Medium** | Existing metadata is enough for the current page, but canonical fields would delete projection code and remove field-precedence decisions from the dashboard. |
-| GC-8 | GC-native heartbeat/progress signal | Emit worker heartbeat or per-entity progress/liveness metadata such as `metadata.gc.last_heartbeat_at`, plus events when useful. | **High** | Ambient stuck/stale detection currently has to infer from bead/session joins and progress monotonicity because `bead.updated_at` is noisy and there is no per-entity progress SSE. |
-| GC-9 | Canonical formula-detail status in snapshots | Optionally include formula-detail availability/status on the run snapshot when formula detail cannot be fetched. | **Medium** | The dashboard currently models lookup failures locally. A supervisor-owned status would make diagnostics more consistent. |
-| GC-10 | Bead close with operator reason | `POST /v0/city/{cityName}/bead/{id}/close` accepts an optional length-bounded `reason` and persists it before closing. | **Resolved in working tree** | This removes the former dashboard close subprocess path; the browser calls the generated supervisor close endpoint directly with the optional reason body. |
-| GC-11 | Agent nudge endpoint | Expose an HTTP route to nudge an agent by alias (the `gc nudge <alias>` queue), returning an acceptance status. | **Resolved in working tree** | This removes the former dashboard nudge subprocess path; the browser calls the generated supervisor agent action endpoint directly. |
-| GC-12 | Agent composed-prompt (prime) read | Expose a read-only HTTP route returning an agent's composed behavioural prompt by alias, with a distinct "not configured" signal. | **Resolved in working tree** | This removes the final dashboard `gc` subprocess path; Agent Detail calls the generated supervisor prime endpoint directly. |
-| GC-13 | Mail clock-window query | `GET /v0/city/{cityName}/mail` should accept a duration or timestamp window such as `since` if the replacement dashboard needs calendar-based mail review. | **Low/Medium** | The dashboard can now expand history depth with `limit`, but it cannot ask for "last 24h" or "last 7d" without fetching by count and filtering client-side. |
+| ID    | Gap                                          | Needed upstream capability                                                                                                                                                                                                                                                                                            | Impact                       | Why the dashboard needs it                                                                                                                                                         |
+| ----- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GC-1  | Formula identity in run snapshots            | `WorkflowSnapshotResponse` should expose root `ref`, typed `formula_name`, `gc.formula`, or an equivalent canonical formula field.                                                                                                                                                                                    | **Critical**                 | Formula detail lookup should not fail when only the root bead `ref` knows the formula name.                                                                                        |
+| GC-2  | Canonical graph.v2 presentation              | Populate `logical_nodes`, `logical_edges`, and `scope_groups`, or ship a shared Gas City presentation package that owns semantic ids, display order, hidden-control collapsing, loop/retry grouping, and visible edges.                                                                                               | **High**                     | The dashboard should consume presentation semantics instead of deriving a local TypeScript view model from raw bead metadata.                                                      |
+| GC-3  | Rig-store runtime freshness                  | Expose scoped rig-store bead reads through the supervisor, or guarantee that scoped run snapshots include current runtime state for non-city stores.                                                                                                                                                                  | **High**                     | City-store runs can refresh bead status independently; rig-store runs are snapshot-bound.                                                                                          |
+| GC-4  | Per-execution session identity               | Attach canonical session id/name to every execution instance or node when a session exists.                                                                                                                                                                                                                           | **High**                     | Current metadata is usable when present, but absent session fields force assignee/name matching and can leave nodes unresolved.                                                    |
+| GC-5  | Event identity on every run-affecting event  | Every event that can affect a formula run should carry canonical `workflow_id`/`run_id`, `root_bead_id`, or equivalent identity in the envelope or nested payload metadata.                                                                                                                                           | **High**                     | Identity-less events force broad refresh invalidation instead of precise run-detail refresh.                                                                                       |
+| GC-6  | OpenAPI schema accuracy                      | Gas City Huma/OpenAPI source must match observed payloads. Nullable `Bead.priority` is fixed in the paired working tree; remaining checks include legacy bead fields such as `owner`, `updated_at`, `closed_at` if still emitted; phantom event fields such as `next`; and formula-detail degraded/missing responses. | **Critical**                 | The dashboard now uses generated SDK + generated Zod validators. Future schema refreshes must not re-break valid degraded payloads or require dashboard-side schema overlays.      |
+| GC-7  | Canonical execution-instance fields          | Optionally expose execution instance id, semantic node id, loop iteration, retry attempt, current/historical flag, and attached session identity directly.                                                                                                                                                            | **Medium**                   | Existing metadata is enough for the current page, but canonical fields would delete projection code and remove field-precedence decisions from the dashboard.                      |
+| GC-8  | GC-native heartbeat/progress signal          | Emit worker heartbeat or per-entity progress/liveness metadata such as `metadata.gc.last_heartbeat_at`, plus events when useful.                                                                                                                                                                                      | **High**                     | Ambient stuck/stale detection currently has to infer from bead/session joins and progress monotonicity because `bead.updated_at` is noisy and there is no per-entity progress SSE. |
+| GC-9  | Canonical formula-detail status in snapshots | Optionally include formula-detail availability/status on the run snapshot when formula detail cannot be fetched.                                                                                                                                                                                                      | **Medium**                   | The dashboard currently models lookup failures locally. A supervisor-owned status would make diagnostics more consistent.                                                          |
+| GC-10 | Bead close with operator reason              | `POST /v0/city/{cityName}/bead/{id}/close` accepts an optional length-bounded `reason` and persists it before closing.                                                                                                                                                                                                | **Resolved in working tree** | This removes the former dashboard close subprocess path; the browser calls the generated supervisor close endpoint directly with the optional reason body.                         |
+| GC-11 | Agent nudge endpoint                         | Expose an HTTP route to nudge an agent by alias (the `gc nudge <alias>` queue), returning an acceptance status.                                                                                                                                                                                                       | **Resolved in working tree** | This removes the former dashboard nudge subprocess path; the browser calls the generated supervisor agent action endpoint directly.                                                |
+| GC-12 | Agent composed-prompt (prime) read           | Expose a read-only HTTP route returning an agent's composed behavioural prompt by alias, with a distinct "not configured" signal.                                                                                                                                                                                     | **Resolved in working tree** | This removes the final dashboard `gc` subprocess path; Agent Detail calls the generated supervisor prime endpoint directly.                                                        |
+| GC-13 | Mail clock-window query                      | `GET /v0/city/{cityName}/mail` should accept a duration or timestamp window such as `since` if the replacement dashboard needs calendar-based mail review.                                                                                                                                                            | **Low/Medium**               | The dashboard can now expand history depth with `limit`, but it cannot ask for "last 24h" or "last 7d" without fetching by count and filtering client-side.                        |
+| GC-14 | Rig/service health and context facts         | Expose typed per-rig/service health, degraded-state, and stable rig identity relationships across relevant supervisor read models.                                                                                                                                                                                    | **Medium**                   | Health can show only current city health plus dashboard-local host/process facts; richer rig/service status and cross-domain rig grouping must wait for upstream facts.            |
 
 ## Gap Detail
 
@@ -232,8 +239,9 @@ Current state:
 - The committed dashboard schema has been corrected enough for current
   validators to run, but the upstream Gas City Huma/OpenAPI source still needs
   source-of-truth fixes.
-- Temporary dashboard DTO normalization remains in `gc-supervisor-decoders.ts`
-  until direct browser use and generated types delete the mirror layer.
+- The former hand-Zod dashboard supervisor decoder layer has been deleted; the
+  dashboard now relies on generated supervisor response validators at the edge
+  and local view-model projection where it owns composed UI state.
 
 Needed upstream change:
 
@@ -317,11 +325,12 @@ Why:
 ## Former CLI-Backed Operations Requiring HTTP Equivalents
 
 The current dashboard reaches the supervisor over HTTP for every migrated read
-and for claim, close, agent nudge, targeted bead create-and-sling, and the mail
-send/reply/archive/read-state writes. Those writes now use the
-browser-generated supervisor client directly. Maintainer-specific sling remains
-dashboard-mediated because it composes GitHub/maintainer data before
-dispatching to the supervisor. No operation remains on the `gc` CLI:
+and for claim, close, agent nudge, targeted bead create-and-sling,
+Maintainer-specific sling, and the mail send/reply/archive/read-state writes.
+Those writes now use the browser-generated supervisor client directly.
+Maintainer still composes GitHub/maintainer data and persists local slung-state
+through dashboard-local routes, but the actual supervisor sling dispatch is no
+longer dashboard-service mediated. No operation remains on the `gc` CLI:
 GC-10, GC-11, and GC-12 now provide supervisor HTTP equivalents for the former
 close, nudge, and prime paths. This satisfies the goal that the dashboard
 service never shells out to Gas City.
@@ -425,7 +434,7 @@ Current state:
 
 - `GET /v0/city/{cityName}/mail` exposes `limit`, `agent`, `status`, and `rig`.
 - The dashboard uses that generated query directly and now provides a
-  history-depth selector over `limit`.
+  history-depth selector over `limit` plus client-side 24h/7d/all filters.
 - The API does not expose a `since`, `before`, `after`, or equivalent
   clock-window filter for "last 24h", "last 7d", or calendar-bounded review.
 
@@ -440,6 +449,36 @@ Why:
   time-window review cannot be implemented precisely without a supervisor-owned
   query. Client-side timestamp filtering after a bounded count fetch would hide
   older in-window messages when the mailbox is busy.
+
+### GC-14: Rig/Service Health And Context Facts
+
+Current state:
+
+- The dashboard consumes generated supervisor city health/status and combines it
+  with dashboard-local host, process, local-tool, build, and dolt-noms facts.
+- The archived feature-gap plan and current attention architecture both leave
+  richer service/rig health as waiting on upstream supervisor facts.
+- Beads can filter by the generated supervisor `rig` query, but remaining
+  domains expose rig context only where each current data shape happens to carry
+  it. There is no canonical cross-domain rig/service context model.
+- Service/rig restart, suspend, resume, and run/order controls are explicitly
+  out of scope for this dashboard.
+
+Needed upstream change:
+
+- Expose typed per-rig and per-service health/degradation facts through the
+  supervisor, including stable rig identity fields that can be joined across
+  agents, sessions, beads, runs, mail, and events where the relationship exists.
+- Keep this read-only unless a future product requirement explicitly brings
+  service/rig mutation controls into scope.
+
+Why:
+
+- Health and Home can only surface broad supervisor/host/process status today.
+  They cannot distinguish a degraded rig, a failing service behind one rig, or
+  which visible work is affected without inventing local inference.
+- Cross-domain rig context should come from Gas City producer data, not from
+  dashboard-specific string matching or per-route adapters that drift.
 
 ## Explicit Non-Gaps
 
@@ -470,15 +509,18 @@ These are intentionally not tracked as current GC supervisor API gaps:
   from bead/session joins and progress monotonicity. That inference is useful
   today, but a native heartbeat/progress field would be the better upstream
   source of truth for future ambient status.
+- **Service/rig mutation controls.** The archived feature-gap plan explicitly
+  kept service/rig restart, suspend, resume, and run/order controls out of
+  scope. GC-14 is only a read-model gap for health and context.
 
 ## Downstream Dashboard Cleanup Unblocked By These Gaps
 
 Once these upstream gaps are closed and this repo refreshes
 `backend/openapi/gc-supervisor.openapi.json`, the dashboard should:
 
-1. Delete temporary hand-Zod supervisor adapters, `GcClient` mirror methods,
-   and any `SchemaOutputFor` machinery that duplicates generated response
-   validation.
+1. Keep the deleted hand-Zod supervisor adapters and `GcClient` mirror methods
+   from returning; use generated response validation plus local view-model
+   projection instead.
 2. Move raw supervisor mirror types out of `shared`; keep `shared` for
    dashboard-owned local service DTOs, UI/module contracts, and local/composed
    view models only.
@@ -492,3 +534,6 @@ Once these upstream gaps are closed and this repo refreshes
 7. Keep `backend/src/exec.ts` free of `gc` wrappers. After GC-10, GC-11, and
    GC-12, the only subprocesses behind the exec boundary are host-local
    `git`/`gh` — never `gc`.
+8. Replace dashboard-side rig/service health placeholders and per-route rig
+   grouping assumptions with canonical supervisor rig/service context when
+   GC-14 exists.

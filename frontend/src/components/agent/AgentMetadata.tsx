@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
-import type { GcSession } from 'gas-city-dashboard-shared';
+import type { DashboardSession } from 'gas-city-dashboard-shared';
 import { effectiveContextPct } from 'gas-city-dashboard-shared';
 import { formatRelative } from '../../hooks/time';
 
-export function AgentMetadata({ session, now }: { session: GcSession; now: number }) {
+export function AgentMetadata({ session, now }: { session: DashboardSession; now: number }) {
   const pct = effectiveContextPct(session);
   const items: ReadonlyArray<{ label: string; value: ReactNode }> = [
     { label: 'Rig', value: session.rig ?? '·' },
@@ -15,9 +15,7 @@ export function AgentMetadata({ session, now }: { session: GcSession; now: numbe
       value:
         typeof pct === 'number' ? (
           <span
-            className={`tnum ${
-              pct >= 95 ? 'text-accent' : pct >= 80 ? 'text-warn' : 'text-fg'
-            }`}
+            className={`tnum ${pct >= 95 ? 'text-accent' : pct >= 80 ? 'text-warn' : 'text-fg'}`}
           >
             {pct}%
           </span>
@@ -40,9 +38,7 @@ export function AgentMetadata({ session, now }: { session: GcSession; now: numbe
     <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-5 mb-12">
       {items.map((it) => (
         <div key={it.label}>
-          <dt className="text-label uppercase tracking-wider text-fg-faint mb-1">
-            {it.label}
-          </dt>
+          <dt className="text-label uppercase tracking-wider text-fg-faint mb-1">{it.label}</dt>
           <dd className="text-body text-fg">{it.value}</dd>
         </div>
       ))}

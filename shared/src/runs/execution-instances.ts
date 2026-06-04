@@ -1,6 +1,4 @@
-import type {
-  GcRunBead,
-} from '../run-snapshot.js';
+import type { RunSnapshotBead } from '../run-snapshot.js';
 import type {
   RunAttempt,
   RunAttemptSummary,
@@ -13,19 +11,10 @@ import type {
   RunNodeScope,
   RunSessionAttachment,
 } from '../run-detail.js';
-import {
-  attemptFor,
-  iterationFor,
-  nonEmpty,
-  positiveIntegerMeta,
-} from './bead-fields.js';
+import { attemptFor, iterationFor, nonEmpty, positiveIntegerMeta } from './bead-fields.js';
 import type { RunSessionLinkContext } from './session-link.js';
 import { runSessionLinkFor } from './session-link.js';
-import {
-  aggregateStatus,
-  isRunningStatus,
-  presentationStatus,
-} from './status.js';
+import { aggregateStatus, isRunningStatus, presentationStatus } from './status.js';
 
 export interface RunNodeGroup {
   semanticNodeId: string;
@@ -34,7 +23,7 @@ export interface RunNodeGroup {
   constructKind: RunConstructKind;
   scopeRef?: string;
   loopControlNodeId?: string;
-  beads: GcRunBead[];
+  beads: RunSnapshotBead[];
 }
 
 export function buildRunDisplayNode(
@@ -44,15 +33,11 @@ export function buildRunDisplayNode(
   sessionContext: RunSessionLinkContext = {},
 ): RunDisplayNode {
   const instances = group.beads
-    .map((bead, index) =>
-      buildExecutionInstance(group.semanticNodeId, bead, index, sessionContext),
-    )
+    .map((bead, index) => buildExecutionInstance(group.semanticNodeId, bead, index, sessionContext))
     .sort(compareExecutionInstances);
   const visibleInstance = preferredExecutionInstance(instances);
   const iterations = new Set(
-    instances
-      .map((instance) => iterationValue(instance.iteration))
-      .filter(isNumber),
+    instances.map((instance) => iterationValue(instance.iteration)).filter(isNumber),
   );
   const visibleIteration =
     (visibleInstance ? iterationValue(visibleInstance.iteration) : undefined) ??
@@ -72,9 +57,9 @@ export function buildRunDisplayNode(
     instance.session =
       instance.session.kind === 'attached'
         ? {
-          ...instance.session,
-          streamable: currentIteration && isRunningStatus(instance.status),
-        }
+            ...instance.session,
+            streamable: currentIteration && isRunningStatus(instance.status),
+          }
         : instance.session;
   }
 
@@ -124,7 +109,7 @@ export function latestIterationsByLoop(groups: RunNodeGroup[]): Map<string, numb
 
 function buildExecutionInstance(
   semanticNodeId: string,
-  bead: GcRunBead,
+  bead: RunSnapshotBead,
   index: number,
   sessionContext: RunSessionLinkContext,
 ): RunExecutionInstance {
@@ -170,7 +155,7 @@ function compareExecutionInstances(
 
 function attemptSummaryFor(
   instances: RunExecutionInstance[],
-  beads: GcRunBead[],
+  beads: RunSnapshotBead[],
 ): RunAttemptSummary {
   const attemptCount = attemptCountFor(instances);
   const activeAttempt = activeAttemptFor(instances);
@@ -180,17 +165,13 @@ function attemptSummaryFor(
     kind: 'tracked',
     count: Math.max(attemptCount, 1),
     badge:
-      badgeLabel === undefined
-        ? { kind: 'count-only' }
-        : { kind: 'bounded', label: badgeLabel },
+      badgeLabel === undefined ? { kind: 'count-only' } : { kind: 'bounded', label: badgeLabel },
     active:
-      activeAttempt === undefined
-        ? { kind: 'idle' }
-        : { kind: 'running', value: activeAttempt },
+      activeAttempt === undefined ? { kind: 'idle' } : { kind: 'running', value: activeAttempt },
   };
 }
 
-function attemptBadgeFor(beads: GcRunBead[]): string | undefined {
+function attemptBadgeFor(beads: RunSnapshotBead[]): string | undefined {
   const max = beads
     .map((bead) => positiveIntegerMeta(bead, 'gc.max_attempts'))
     .find((value) => value !== undefined);
@@ -201,9 +182,7 @@ function attemptBadgeFor(beads: GcRunBead[]): string | undefined {
 
 function attemptCountFor(instances: RunExecutionInstance[]): number {
   const attempts = new Set(
-    instances
-      .map((instance) => attemptValue(instance.attempt))
-      .filter(isNumber),
+    instances.map((instance) => attemptValue(instance.attempt)).filter(isNumber),
   );
   return attempts.size;
 }
@@ -213,10 +192,7 @@ function activeAttemptFor(instances: RunExecutionInstance[]): number | undefined
   return active ? attemptValue(active.attempt) : undefined;
 }
 
-function instanceLabel(
-  iteration: number | undefined,
-  attempt: number | undefined,
-): string {
+function instanceLabel(iteration: number | undefined, attempt: number | undefined): string {
   if (iteration !== undefined && attempt !== undefined) {
     return `iteration ${iteration}, attempt ${attempt}`;
   }

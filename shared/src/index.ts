@@ -3,11 +3,7 @@
 // `export type *` so importing the package root does not pull in dead JS.
 
 export type * from './snapshot/types.js';
-export {
-  resolveSessionForTarget,
-  matchesSessionTarget,
-  lastSegment,
-} from './session-resolve.js';
+export { resolveSessionForTarget, matchesSessionTarget, lastSegment } from './session-resolve.js';
 export * from './run-detail.js';
 export type * from './run-snapshot.js';
 export * from './run-scope.js';
@@ -40,15 +36,16 @@ export * from './links/relation-index.js';
 export * from './city.js';
 export * from './operator.js';
 export * from './operator-mail.js';
+export * from './maintainer-sling.js';
 export * from './alert.js';
 export * from './pending.js';
 export * from './context-window.js';
 export type * from './lists.js';
 export type * from './transcript.js';
-export type * from './gc-beads.js';
+export type * from './dashboard-beads.js';
 export type * from './activity.js';
-export type * from './gc-health.js';
+export type * from './dashboard-health.js';
 export type * from './api-error.js';
 export type * from './maintainer-triage.js';
 export type * from './views.js';
-export type * from './gc-client-types.js';
+export type * from './dashboard-sessions.js';

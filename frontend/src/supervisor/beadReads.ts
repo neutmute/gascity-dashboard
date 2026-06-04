@@ -3,7 +3,7 @@ import type {
   GetV0CityByCityNameBeadsData,
   ListBodyBead,
 } from '../generated/gc-supervisor-client/types.gen';
-import { getActiveCity } from '../api/cityBase';
+import { activeCityOrThrow } from '../api/cityBase';
 import { SupervisorApiError, supervisorApi } from './client';
 
 export type SupervisorBead = Bead;
@@ -24,6 +24,7 @@ export interface ListSupervisorBeadsOptions {
 }
 
 const BEADS_FETCH_LIMIT = 2000;
+const ASSIGNED_BEADS_FETCH_LIMIT = 200;
 const DETAIL_FALLBACK_FETCH_LIMIT = 2000;
 // The "real work" bead types the board fans out (one typed query each),
 // then keeps via defaultBeadFilter — the bookkeeping types
@@ -31,16 +32,13 @@ const DETAIL_FALLBACK_FETCH_LIMIT = 2000;
 // live gc/bd backend accepts as a `type=` filter: a rig-scoped include-closed
 // (`all=true`) query for a type the backend rejects fails closed (HTTP 503
 // "invalid issue type") and that one rejected leg blanks the whole board.
-// 'docs' was removed here because the live bd store's queryable set is
-// bug/feature/task/epic/chore/decision/… and does NOT include it (the
-// city-aggregate read had tolerated the bad filter, hiding the break). Note
-// the shared wire type still lists 'docs' (shared/src/gc-beads.ts
-// BeadIssueType, shared/src/runs/summary.ts ENGINEERING_TYPES) — that
-// shared-type-vs-queryable-backend divergence is a separate cleanup.
 const ENGINEERING_BEAD_TYPES: ReadonlySet<string> = new Set([
   'feature',
   'bug',
   'task',
+  'epic',
+  'chore',
+  'decision',
 ]);
 
 export async function listSupervisorBeads(
@@ -56,19 +54,50 @@ export async function listSupervisorBeads(
     ...(includeClosed ? { all: true } : {}),
     ...(rigFilter.length === 0 ? {} : { rig: rigFilter }),
   };
-  const lists = includeBookkeeping
-    ? [await supervisorApi().listBeads(cityName, baseQuery)]
-    : await Promise.all(
-      Array.from(ENGINEERING_BEAD_TYPES, (type) =>
-        supervisorApi().listBeads(cityName, { ...baseQuery, type }),
-      ),
-    );
-  const items = uniqueById(lists.flatMap((list) => list.items ?? []));
-  const filtered = includeBookkeeping ? items : items.filter(defaultBeadFilter);
-  const upstreamTotal = sumTotals(lists);
+  const list = await supervisorApi().listBeads(cityName, baseQuery);
+  const items = uniqueById(list.items ?? []);
+  const statusFiltered = includeClosed ? items : items.filter((bead) => bead.status !== 'closed');
+  const filtered = includeBookkeeping ? statusFiltered : statusFiltered.filter(defaultBeadFilter);
+  const upstreamTotal = countAsNumber(list.total);
   return {
     items: filtered,
     total: filtered.length,
+    ...(upstreamTotal === undefined ? {} : { upstream_total: upstreamTotal }),
+    upstream_fetched: items.length,
+    fetch_limit: limit,
+  };
+}
+
+export async function listSupervisorBeadsAssignedTo(
+  assignees: readonly string[],
+  options: Pick<ListSupervisorBeadsOptions, 'includeClosed' | 'limit'> = {},
+): Promise<SupervisorBeadList> {
+  const cityName = activeCityOrThrow('list supervisor assigned beads');
+  const uniqueAssignees = uniqueNonEmpty(assignees);
+  const limit = options.limit ?? ASSIGNED_BEADS_FETCH_LIMIT;
+  const includeClosed = options.includeClosed ?? false;
+  if (uniqueAssignees.length === 0) {
+    return {
+      items: [],
+      total: 0,
+      upstream_fetched: 0,
+      fetch_limit: limit,
+    };
+  }
+  const lists = await Promise.all(
+    uniqueAssignees.map((assignee) =>
+      supervisorApi().listBeads(cityName, {
+        assignee,
+        limit,
+        ...(includeClosed ? { all: true } : {}),
+      }),
+    ),
+  );
+  const items = uniqueById(lists.flatMap((list) => list.items ?? []));
+  const upstreamTotal = sumTotals(lists);
+  return {
+    items,
+    total: items.length,
     ...(upstreamTotal === undefined ? {} : { upstream_total: upstreamTotal }),
     upstream_fetched: items.length,
     fetch_limit: limit,
@@ -98,15 +127,6 @@ function defaultBeadFilter(bead: SupervisorBead): boolean {
   }
   return true;
 }
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
-}
-
 function countAsNumber(value: ListBodyBead['total']): number | undefined {
   if (typeof value === 'number') return value;
   if (typeof value === 'bigint') return Number(value);
@@ -130,6 +150,18 @@ function uniqueById(items: readonly SupervisorBead[]): SupervisorBead[] {
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     unique.push(item);
+  }
+  return unique;
+}
+
+function uniqueNonEmpty(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    unique.push(trimmed);
   }
   return unique;
 }

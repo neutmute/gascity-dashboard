@@ -14,7 +14,10 @@ import type { AttentionContributor } from '../attention/compose';
 import { RunsPage } from './Runs';
 import { MemoryRouter } from 'react-router-dom';
 import { NowProvider } from '../contexts/NowContext';
-import { loadSupervisorRunSummarySource } from '../supervisor/runSummary';
+import {
+  loadSupervisorRunSummaryPreviewSource,
+  loadSupervisorRunSummarySource,
+} from '../supervisor/runSummary';
 
 // gascity-dashboard-bqn: regression coverage for the live-updates wiring
 // on /runs. The actual SSE / coalesce / reconnect behavior lives in
@@ -34,6 +37,7 @@ import { loadSupervisorRunSummarySource } from '../supervisor/runSummary';
 //     fixture-fallback mode isn't hammered (architect H1).
 
 vi.mock('../supervisor/runSummary', () => ({
+  loadSupervisorRunSummaryPreviewSource: vi.fn(),
   loadSupervisorRunSummarySource: vi.fn(),
 }));
 
@@ -53,6 +57,7 @@ vi.mock('../hooks/useGcEvents', () => ({
   }),
 }));
 
+const mockLoadRunSummaryPreview = loadSupervisorRunSummaryPreviewSource as Mock;
 const mockLoadRunSummary = loadSupervisorRunSummarySource as Mock;
 
 function buildRunSource(
@@ -169,10 +174,12 @@ function contributor(items: ReturnType<AttentionContributor['getItems']>): Atten
 
 beforeEach(() => {
   setActiveCity('racoon-city');
+  mockLoadRunSummaryPreview.mockReset();
   mockLoadRunSummary.mockReset();
   lastHookCall.prefixes = null;
   lastHookCall.onMatch = null;
   invalidateKey('runs:summary:racoon-city');
+  mockLoadRunSummaryPreview.mockResolvedValue(buildRunSource('fresh'));
   mockLoadRunSummary.mockResolvedValue(buildRunSource('fresh'));
 });
 
@@ -181,10 +188,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function mount(
-  initialPath = '/runs',
-  contributors: readonly AttentionContributor[] = [],
-) {
+function mount(initialPath = '/runs', contributors: readonly AttentionContributor[] = []) {
   return render(
     <MemoryRouter
       initialEntries={[initialPath]}
@@ -211,6 +215,31 @@ async function waitForMount() {
 }
 
 describe('RunsPage — SSE wiring (gascity-dashboard-bqn)', () => {
+  it('paints from the fast preview source before the full run summary resolves', async () => {
+    const preview = buildRunSource('fresh');
+    const previewRuns = requireRunData(preview);
+    previewRuns.totalActive = 1;
+    previewRuns.runCounts.total = 1;
+    previewRuns.runCounts.visible = 1;
+    previewRuns.lanes = [activeLane({ title: 'Preview formula run' })];
+    mockLoadRunSummaryPreview.mockResolvedValue(preview);
+    const full = deferred<SourceState<RunSummary>>();
+    mockLoadRunSummary.mockReturnValue(full.promise);
+
+    mount();
+
+    expect(await screen.findByRole('link', { name: /Preview formula run/i })).toBeTruthy();
+    expect(screen.queryByText(/Loading formula runs/i)).toBeNull();
+    expect(mockLoadRunSummaryPreview).toHaveBeenCalledTimes(1);
+    expect(mockLoadRunSummary).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      full.resolve(buildRunSource('fresh'));
+      await full.promise;
+    });
+    await waitForMount();
+  });
+
   it('subscribes to useGcEventRefresh with [bead.] prefix', async () => {
     mount();
     await waitForMount();
@@ -259,12 +288,14 @@ describe('RunsPage — SSE wiring (gascity-dashboard-bqn)', () => {
     mockLoadRunSummary.mockResolvedValue(source);
 
     mount('/runs', [
-      contributor([{
-        id: 'runs:blocked-root:needs-operator',
-        domain: 'runs',
-        severity: 'attention',
-        title: 'Blocked formula run needs operator',
-      }]),
+      contributor([
+        {
+          id: 'runs:blocked-root:needs-operator',
+          domain: 'runs',
+          severity: 'attention',
+          title: 'Blocked formula run needs operator',
+        },
+      ]),
     ]);
 
     const blockedLink = await screen.findByRole('link', { name: /Blocked formula run/i });
@@ -327,13 +358,13 @@ describe('RunsPage — SSE wiring (gascity-dashboard-bqn)', () => {
     mount();
     await waitForMount();
     expect(screen.queryByText('Completed formula run')).toBeNull();
-    expect(
-      screen.getByText(/No active formula runs\. \(1 completed\.\)/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/No active formula runs\. \(1 completed\.\)/i)).toBeTruthy();
     // The toggle button is enabled (totalHistorical > 0) and labeled
     // with the count.
-    const toggleDefault = screen.getByRole('button', { name: /show 1 completed/i }) as HTMLButtonElement;
-    expect(toggleDefault.disabled).toBe(false);
+    const toggleDefault = (await screen.findByRole('button', {
+      name: /show 1 completed/i,
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(toggleDefault.disabled).toBe(false));
     expect(toggleDefault.getAttribute('aria-expanded')).toBe('false');
     cleanup();
 
@@ -341,7 +372,9 @@ describe('RunsPage — SSE wiring (gascity-dashboard-bqn)', () => {
     mount('/runs?history=1');
     await waitForMount();
     expect(screen.getByText('Completed formula run')).toBeTruthy();
-    const toggleHistory = screen.getByRole('button', { name: /hide historical/i }) as HTMLButtonElement;
+    const toggleHistory = screen.getByRole('button', {
+      name: /hide historical/i,
+    }) as HTMLButtonElement;
     expect(toggleHistory.getAttribute('aria-expanded')).toBe('true');
     expect(toggleHistory.getAttribute('aria-controls')).toBeTruthy();
   });
@@ -409,6 +442,7 @@ describe('RunsPage — SSE wiring (gascity-dashboard-bqn)', () => {
 
   it('manual Refresh button refetches the direct supervisor run summary', async () => {
     mount();
+    await waitFor(() => expect(mockLoadRunSummary).toHaveBeenCalledTimes(1));
     await waitForMount();
     // Reset to ignore the mount-effect call.
     mockLoadRunSummary.mockClear();
@@ -506,14 +540,26 @@ describe('RunsPage — partial lane set (gascity-dashboard-n6f1)', () => {
     await waitForMount();
 
     const marker = screen.getByText(/runs partial/i);
+    const live = screen.getByText(/^live$/i);
     expect(marker).toBeTruthy();
     expect(marker.getAttribute('role')).toBe('status');
+    expect(live.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('omits the partial signal on a clean direct run source', async () => {
     mount();
     await waitForMount();
 
-    expect(screen.queryByText(/runs partial/i)).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}

@@ -43,9 +43,7 @@ describe('LaneCard navigation', () => {
     );
 
     const link = screen.getByRole('link', { name: /adopt pr #42/i });
-    expect(link.getAttribute('href')).toBe(
-      '/runs/gc-root?scope_kind=city&scope_ref=racoon-city',
-    );
+    expect(link.getAttribute('href')).toBe('/runs/gc-root?scope_kind=city&scope_ref=racoon-city');
   });
 
   it('omits scope query params when the lane has unavailable scope', () => {
@@ -84,11 +82,10 @@ describe('LaneCard navigation', () => {
 });
 
 // gascity-dashboard-f4ps: historical lanes ship from the backend with
-// `health: { status: 'unavailable' }` because deriveWorkflowHealth runs only
-// over the active subset (backend/src/snapshot/service.ts). The health
-// concepts (thrashing, stalled-session) are meaningless for completed runs,
-// so the lane render must not surface the unavailable health string as if
-// it were a degradation signal.
+// `health: { status: 'unavailable' }` because run health is derived only over
+// the active subset. The health concepts (thrashing, stalled-session) are
+// meaningless for completed runs, so the lane render must not surface the
+// unavailable health string as if it were a degradation signal.
 describe('LaneCard historical-lane render', () => {
   function makeHistoricalLane(overrides: Partial<RunLane> = {}): RunLane {
     return {
@@ -150,10 +147,7 @@ describe('LaneCard historical-lane render', () => {
   it('does not render the health "unavailable" string for a historical lane', () => {
     render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <LaneCard
-          lane={makeHistoricalLane()}
-          now={Date.parse('2026-05-29T12:00:00Z')}
-        />
+        <LaneCard lane={makeHistoricalLane()} now={Date.parse('2026-05-29T12:00:00Z')} />
       </MemoryRouter>,
     );
 
@@ -166,10 +160,7 @@ describe('LaneCard historical-lane render', () => {
   it('renders the phase label in a quieter (muted) tone for a historical lane', () => {
     render(
       <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-        <LaneCard
-          lane={makeHistoricalLane()}
-          now={Date.parse('2026-05-29T12:00:00Z')}
-        />
+        <LaneCard lane={makeHistoricalLane()} now={Date.parse('2026-05-29T12:00:00Z')} />
       </MemoryRouter>,
     );
 

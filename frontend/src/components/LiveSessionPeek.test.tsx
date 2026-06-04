@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GcSession } from 'gas-city-dashboard-shared';
+import type { DashboardSession } from 'gas-city-dashboard-shared';
 import type {
   AgentResponse,
   SessionTranscriptGetResponse,
@@ -71,8 +71,8 @@ const snapshot: SessionTranscriptGetResponse = {
   turns: [{ role: 'assistant', text: 'snapshot turn body' }],
 };
 
-function session(overrides: Partial<GcSession>): GcSession {
-  return { id: 's1', state: 'active', ...overrides } as GcSession;
+function session(overrides: Partial<DashboardSession>): DashboardSession {
+  return { id: 's1', state: 'active', ...overrides } as DashboardSession;
 }
 
 // gascity-dashboard-ay6 / Phase-4 follow-up: minimal AgentResponse factory for
@@ -84,9 +84,10 @@ function agent(overrides: Partial<AgentResponse> & { sessionPresent?: boolean })
   // doesn't complain about a `session: undefined` assignment when no
   // session is requested. Spreading is the idiom that satisfies the
   // strict optionality contract.
-  const sessionField = sessionPresent && !('session' in rest)
-    ? { session: { name: 's1', attached: false, last_activity: '2026-05-29T00:00:00Z' } }
-    : {};
+  const sessionField =
+    sessionPresent && !('session' in rest)
+      ? { session: { name: 's1', attached: false, last_activity: '2026-05-29T00:00:00Z' } }
+      : {};
   return {
     name: 'a1',
     available: true,
@@ -133,14 +134,12 @@ describe('isAgentStreamable', () => {
     // The session guard is load-bearing: even a fully-active agent with
     // no session has nothing to stream from. This is the H2/M2 invariant
     // the Phase-4 review flagged as untested.
-    expect(
-      isAgentStreamable(agent({ state: 'active', running: true })),
-    ).toBe(false);
+    expect(isAgentStreamable(agent({ state: 'active', running: true }))).toBe(false);
   });
   it('is true when the agent has a session AND running=true', () => {
-    expect(
-      isAgentStreamable(agent({ state: 'asleep', running: true, sessionPresent: true })),
-    ).toBe(true);
+    expect(isAgentStreamable(agent({ state: 'asleep', running: true, sessionPresent: true }))).toBe(
+      true,
+    );
   });
   it('is true when the agent has a session AND gc state is active', () => {
     expect(
@@ -169,9 +168,6 @@ describe('LiveSessionPeek (streaming)', () => {
         const url = requestUrl(input);
         if (url === '/gc-supervisor/v0/city/test-city/session/s1/transcript?format=conversation') {
           return jsonResponse(snapshot);
-        }
-        if (url === '/api/city/test-city/sessions/s1/peek') {
-          throw new Error('old dashboard session peek route should not be called');
         }
         throw new Error(`unexpected fetch: ${url}`);
       }),
@@ -212,11 +208,8 @@ describe('LiveSessionPeek (streaming)', () => {
 });
 
 function requestUrl(input: RequestInfo | URL): string {
-  const url = input instanceof Request
-    ? input.url
-    : input instanceof URL
-      ? input.toString()
-      : String(input);
+  const url =
+    input instanceof Request ? input.url : input instanceof URL ? input.toString() : String(input);
   return stripSameOrigin(url);
 }
 

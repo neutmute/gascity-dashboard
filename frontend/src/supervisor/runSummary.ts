@@ -1,6 +1,6 @@
 import type {
-  GcBead,
-  GcSession,
+  DashboardBead,
+  DashboardSession,
   RunFeedScope,
   RunFeedScopeMap,
   RunSummary,
@@ -12,39 +12,38 @@ import {
   buildRunSummary,
   deriveRunHealth,
   fromFeedScope,
-  fromGcBead,
+  fromDashboardBead,
   fromRootMetadataScope,
   fromStoreRef,
   runBeadFilter,
   type LaneProgressMark,
 } from 'gas-city-dashboard-shared';
-import { getActiveCity } from '../api/cityBase';
+import { activeCityOrThrow } from '../api/cityBase';
 import type {
   Bead,
   FormulaFeedBody,
   ListBodyBead,
-  ListBodySessionResponse,
-  SessionResponse,
 } from '../generated/gc-supervisor-client/types.gen';
-import { supervisorApi } from './client';
+import { supervisorApiForRequestBudget } from './client';
+import { normalizeSessions } from './sessionReads';
 
 const RUNS_FETCH_LIMIT = 1_000;
 const RECENT_RUN_FETCH_LIMIT = 80;
 const RUNS_STALE_AFTER_MS = 60 * 1000;
+const REQUIRED_RUN_SUMMARY_TIMEOUT_MS = 5_000;
+const OPTIONAL_ENRICHMENT_TIMEOUT_MS = 2_500;
 
 interface LoadedRunBeads {
-  beads: GcBead[];
+  beads: DashboardBead[];
   feedScopes: RunFeedScopeMap;
   partial: boolean;
 }
 
-type RecentFetchOutcome =
-  | { ok: true; items: GcBead[]; partial: boolean }
-  | { ok: false };
+type RecentFetchOutcome = { ok: true; items: DashboardBead[]; partial: boolean } | { ok: false };
 
 type RunSessionsLookup =
-  | { kind: 'available'; sessions: GcSession[] }
-  | { kind: 'unavailable'; sessions: GcSession[] };
+  | { kind: 'available'; sessions: DashboardSession[] }
+  | { kind: 'unavailable'; sessions: DashboardSession[] };
 
 interface ProgressState {
   marks: Map<string, LaneProgressMark>;
@@ -62,7 +61,7 @@ export async function loadSupervisorRunSummarySource(): Promise<SourceState<RunS
       loadRunSessions(cityName),
     ]);
     const summary = buildRunSummary(
-      loaded.beads.filter(runBeadFilter).map(fromGcBead),
+      loaded.beads.filter(runBeadFilter).map(fromDashboardBead),
       loaded.feedScopes,
       loaded.partial,
     );
@@ -87,21 +86,53 @@ export async function loadSupervisorRunSummarySource(): Promise<SourceState<RunS
   }
 }
 
+export async function loadSupervisorRunSummaryPreviewSource(): Promise<SourceState<RunSummary>> {
+  const cityName = activeCityOrThrow('load supervisor run summary preview');
+  const fetchedAt = new Date().toISOString();
+  try {
+    const loaded = await loadRunBeads(cityName, RUNS_FETCH_LIMIT);
+    const summary = buildRunSummary(
+      loaded.beads.filter(runBeadFilter).map(fromDashboardBead),
+      loaded.feedScopes,
+      loaded.partial,
+    );
+    return {
+      source: 'runs',
+      status: 'fresh',
+      fetchedAt,
+      staleAt: new Date(Date.parse(fetchedAt) + RUNS_STALE_AFTER_MS).toISOString(),
+      error: { kind: 'none' },
+      data: summary,
+    };
+  } catch (err) {
+    return {
+      source: 'runs',
+      status: 'error',
+      error: errorMessage(err, 'formula runs unavailable'),
+    };
+  }
+}
+
 export function resetSupervisorRunSummaryStateForTests(): void {
   progressStateByCity.clear();
 }
 
-async function loadRunBeads(
-  cityName: string,
-  limit: number,
-): Promise<LoadedRunBeads> {
+function requiredRunSummaryApi() {
+  return supervisorApiForRequestBudget(REQUIRED_RUN_SUMMARY_TIMEOUT_MS);
+}
+
+function optionalRunSummaryApi() {
+  return supervisorApiForRequestBudget(OPTIONAL_ENRICHMENT_TIMEOUT_MS);
+}
+
+async function loadRunBeads(cityName: string, limit: number): Promise<LoadedRunBeads> {
   const moleculeFetch = settledRecentFetch(cityName, {
     limit: RECENT_RUN_FETCH_LIMIT,
     type: 'molecule',
     all: true,
   });
   const [activeList, feedDiscovery] = await Promise.all([
-    supervisorApi().listBeads(cityName, { limit }),
+    requiredRunSummaryApi().listBeads(cityName, { limit }),
     discoverFromFeed(cityName),
   ]);
   const active = normalizeBeads(activeList.items ?? []);
@@ -117,7 +148,7 @@ async function loadRunBeads(
   );
 
   const settled = await Promise.all([moleculeFetch, ...rigFetches]);
-  const recentItems: GcBead[] = [];
+  const recentItems: DashboardBead[] = [];
   let partial = feedDiscovery.partial || listIsPartial(activeList);
 
   for (const outcome of settled) {
@@ -141,7 +172,10 @@ async function settledRecentFetch(
   query: { limit: number; type: string; all: true; rig?: string },
 ): Promise<RecentFetchOutcome> {
   try {
-    const list = await supervisorApi().listBeads(cityName, query);
+    const list = await withOptionalReadBudget(
+      optionalRunSummaryApi().listBeads(cityName, query),
+      `recent ${query.type} beads`,
+    );
     return {
       ok: true,
       items: normalizeBeads(list.items ?? []),
@@ -160,10 +194,13 @@ interface FeedDiscovery {
 
 async function discoverFromFeed(cityName: string): Promise<FeedDiscovery> {
   try {
-    const runs = await supervisorApi().formulaFeed(cityName, {
-      scope_kind: 'city',
-      scope_ref: cityName,
-    });
+    const runs = await withOptionalReadBudget(
+      optionalRunSummaryApi().formulaFeed(cityName, {
+        scope_kind: 'city',
+        scope_ref: cityName,
+      }),
+      'formula feed',
+    );
     const rigNames = new Set<string>();
     const scopes = new Map<string, RunFeedScope>();
     for (const run of runs.items ?? []) {
@@ -190,7 +227,10 @@ async function discoverFromFeed(cityName: string): Promise<FeedDiscovery> {
 
 async function loadRunSessions(cityName: string): Promise<RunSessionsLookup> {
   try {
-    const list = await supervisorApi().listSessions(cityName);
+    const list = await withOptionalReadBudget(
+      optionalRunSummaryApi().listSessions(cityName),
+      'run sessions',
+    );
     return {
       kind: 'available',
       sessions: normalizeSessions(list),
@@ -227,7 +267,7 @@ function enrichRunSummary(
   };
 }
 
-function runRigNames(beads: readonly GcBead[]): string[] {
+function runRigNames(beads: readonly DashboardBead[]): string[] {
   const names = new Set<string>();
   for (const bead of beads) {
     const storeScope = fromStoreRef(bead.metadata?.['gc.root_store_ref']);
@@ -251,20 +291,35 @@ function unionRigNames(a: readonly string[], b: readonly string[]): string[] {
   return [...all];
 }
 
-function uniqueBeads(beads: readonly GcBead[]): GcBead[] {
-  const byId = new Map<string, GcBead>();
+function withOptionalReadBudget<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const budget = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${OPTIONAL_ENRICHMENT_TIMEOUT_MS}ms`));
+    }, OPTIONAL_ENRICHMENT_TIMEOUT_MS);
+  });
+  return Promise.race([
+    promise.finally(() => {
+      if (timeout !== null) clearTimeout(timeout);
+    }),
+    budget,
+  ]);
+}
+
+function uniqueBeads(beads: readonly DashboardBead[]): DashboardBead[] {
+  const byId = new Map<string, DashboardBead>();
   for (const bead of beads) {
     if (!byId.has(bead.id)) byId.set(bead.id, bead);
   }
   return Array.from(byId.values());
 }
 
-function normalizeBeads(beads: readonly Bead[]): GcBead[] {
+function normalizeBeads(beads: readonly Bead[]): DashboardBead[] {
   return beads.map(normalizeBead);
 }
 
-function normalizeBead(bead: Bead): GcBead {
-  const normalized: GcBead = {
+function normalizeBead(bead: Bead): DashboardBead {
+  const normalized: DashboardBead = {
     id: bead.id,
     title: bead.title,
     status: bead.status,
@@ -286,36 +341,6 @@ function normalizeBead(bead: Bead): GcBead {
   return normalized;
 }
 
-function normalizeSessions(list: ListBodySessionResponse): GcSession[] {
-  return (list.items ?? []).map(normalizeSession);
-}
-
-function normalizeSession(session: SessionResponse): GcSession {
-  const normalized: GcSession = {
-    id: session.id,
-    template: session.template,
-    session_name: session.session_name,
-    title: session.title,
-    state: session.state,
-    created_at: session.created_at,
-    attached: session.attached,
-    running: session.running,
-    provider: session.provider,
-  };
-  if (session.alias !== undefined) normalized.alias = session.alias;
-  if (session.reason !== undefined) normalized.reason = session.reason;
-  if (session.display_name !== undefined) normalized.display_name = session.display_name;
-  if (session.last_active !== undefined) normalized.last_active = session.last_active;
-  if (session.rig !== undefined) normalized.rig = session.rig;
-  if (session.pool !== undefined) normalized.pool = session.pool;
-  if (session.agent_kind !== undefined) normalized.agent_kind = session.agent_kind;
-  if (session.model !== undefined) normalized.model = session.model;
-  if (session.context_pct !== undefined) normalized.context_pct = session.context_pct;
-  if (session.context_window !== undefined) normalized.context_window = session.context_window;
-  if (session.activity !== undefined) normalized.activity = session.activity;
-  return normalized;
-}
-
 function listIsPartial(list: ListBodyBead): boolean {
   return list.partial === true || (list.partial_errors?.length ?? 0) > 0;
 }
@@ -326,12 +351,4 @@ function feedIsPartial(feed: FormulaFeedBody): boolean {
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message.trim().length > 0 ? err.message : fallback;
-}
-
-function activeCityOrThrow(operation: string): string {
-  const cityName = getActiveCity();
-  if (cityName === null) {
-    throw new Error(`${operation} called before an active city was resolved`);
-  }
-  return cityName;
 }

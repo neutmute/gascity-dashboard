@@ -1,7 +1,7 @@
-import type { GcBead } from '../gc-beads.js';
-import type { GcSession } from '../gc-client-types.js';
+import type { DashboardBead } from '../dashboard-beads.js';
+import type { DashboardSession } from '../dashboard-sessions.js';
 
-function metaString(bead: GcBead, key: string): string | undefined {
+function metaString(bead: DashboardBead, key: string): string | undefined {
   const value = bead.metadata?.[key];
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -11,7 +11,7 @@ function metaString(bead: GcBead, key: string): string | undefined {
   return undefined;
 }
 
-function metaNumber(bead: GcBead, key: string): number | undefined {
+function metaNumber(bead: DashboardBead, key: string): number | undefined {
   const raw = bead.metadata?.[key];
   if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) return raw;
   if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) {
@@ -47,13 +47,13 @@ export interface RelationIndex {
   beadsForPr: Map<string, string[]>;
   beadsForIssue: Map<string, string[]>;
   beadsForSession: Map<string, string[]>;
-  sessions: Map<string, GcSession>;
+  sessions: Map<string, DashboardSession>;
 }
 
 const SCOPE_REF_KEYS = ['gc.scope_ref', 'scope_ref', 'scope_id'] as const;
 const SCOPE_KIND_KEYS = ['gc.scope_kind', 'scope_kind'] as const;
 
-function beadScope(bead: GcBead, cityName: string): string {
+function beadScope(bead: DashboardBead, cityName: string): string {
   let scopeRef: string | undefined;
   for (const key of SCOPE_REF_KEYS) {
     const value = metaString(bead, key);
@@ -77,7 +77,7 @@ function beadScope(bead: GcBead, cityName: string): string {
 const GITHUB_PR_ARTIFACT = /^github-pr:[^/]+\/[^/]+\/(\d+)$/;
 const GITHUB_PR_URL_NUMBER = /\/(?:pull\/)?(\d+)(?:[/?#]|$)/;
 
-function resolvePrRef(bead: GcBead): { prNumber?: string; prUrl?: string } {
+function resolvePrRef(bead: DashboardBead): { prNumber?: string; prUrl?: string } {
   const evidenceUrl = metaString(bead, 'evidence.pr_url');
   const evidenceNumber = metaString(bead, 'evidence.pr_number');
   const artifactPath = metaString(bead, 'evidence.artifact_path');
@@ -88,11 +88,7 @@ function resolvePrRef(bead: GcBead): { prNumber?: string; prUrl?: string } {
   const urlNumberMatch = evidenceUrl?.match(GITHUB_PR_URL_NUMBER);
 
   const prNumber =
-    evidenceNumber ??
-    artifactMatch?.[1] ??
-    urlNumberMatch?.[1] ??
-    reviewNumber ??
-    undefined;
+    evidenceNumber ?? artifactMatch?.[1] ?? urlNumberMatch?.[1] ?? reviewNumber ?? undefined;
   const prUrl = evidenceUrl ?? reviewUrl ?? undefined;
 
   const ref: { prNumber?: string; prUrl?: string } = {};
@@ -101,7 +97,7 @@ function resolvePrRef(bead: GcBead): { prNumber?: string; prUrl?: string } {
   return ref;
 }
 
-function toIndexBead(bead: GcBead, cityName: string): IndexBead {
+function toIndexBead(bead: DashboardBead, cityName: string): IndexBead {
   const { prNumber, prUrl } = resolvePrRef(bead);
   const indexBead: IndexBead = {
     id: bead.id,
@@ -145,11 +141,7 @@ function retryKey(bead: IndexBead): string {
 function markSuperseded(beads: IndexBead[]): void {
   const maxAttempt = new Map<string, number>();
   for (const bead of beads) {
-    if (
-      bead.moleculeId === undefined ||
-      bead.stepId === undefined ||
-      bead.attempt === undefined
-    ) {
+    if (bead.moleculeId === undefined || bead.stepId === undefined || bead.attempt === undefined) {
       continue;
     }
     const key = retryKey(bead);
@@ -159,11 +151,7 @@ function markSuperseded(beads: IndexBead[]): void {
     }
   }
   for (const bead of beads) {
-    if (
-      bead.moleculeId === undefined ||
-      bead.stepId === undefined ||
-      bead.attempt === undefined
-    ) {
+    if (bead.moleculeId === undefined || bead.stepId === undefined || bead.attempt === undefined) {
       continue;
     }
     const top = maxAttempt.get(retryKey(bead));
@@ -178,8 +166,8 @@ function push(map: Map<string, string[]>, key: string, value: string): void {
 }
 
 export function buildRelationIndex(
-  beads: readonly GcBead[],
-  sessions: readonly GcSession[],
+  beads: readonly DashboardBead[],
+  sessions: readonly DashboardSession[],
   cityName: string,
 ): RelationIndex {
   const indexBeads = beads.map((b) => toIndexBead(b, cityName));
@@ -205,7 +193,7 @@ export function buildRelationIndex(
     if (bead.sessionId) push(beadsForSession, bead.sessionId, bead.id);
   }
 
-  const sessionMap = new Map<string, GcSession>();
+  const sessionMap = new Map<string, DashboardSession>();
   for (const session of sessions) sessionMap.set(session.id, session);
 
   return {

@@ -5,7 +5,7 @@ import {
   type SourceState,
   type SourceStatus,
 } from 'gas-city-dashboard-shared';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getActiveCity } from '../api/cityBase';
 import { useAttentionModel } from '../attention/context';
@@ -14,15 +14,15 @@ import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { PartialDataNotice } from '../components/PartialDataNotice';
 import { SseIndicator } from '../components/SseIndicator';
-import {
-  RunMap,
-  RUNS_HISTORICAL_SECTION_ID,
-} from '../components/run/RunMap';
+import { RunMap, RUNS_HISTORICAL_SECTION_ID } from '../components/run/RunMap';
 import { useNow } from '../contexts/NowContext';
 import { formatRelative } from '../hooks/time';
 import { useCachedData } from '../hooks/useCachedData';
 import { useGcEventRefresh } from '../hooks/useGcEvents';
-import { loadSupervisorRunSummarySource } from '../supervisor/runSummary';
+import {
+  loadSupervisorRunSummaryPreviewSource,
+  loadSupervisorRunSummarySource,
+} from '../supervisor/runSummary';
 
 // /runs route (gascity-dashboard-0t6, made live in
 // gascity-dashboard-bqn). Reads the direct supervisor run summary source
@@ -37,7 +37,7 @@ import { loadSupervisorRunSummarySource } from '../supervisor/runSummary';
 // fires onMatch when a bead.* event arrives. The hook coalesces its
 // own bursts to ~1 fire per 2.5s; we layer a 10s in-component debounce
 // floor on top because runs refresh triggers a full upstream
-// gc.listBeads({ limit: 1000 }) call (architect H2 — upstream-load
+// supervisor listBeads({ limit: 1000 }) call (architect H2 — upstream-load
 // protection during slung-pipeline bursts). The callback also no-ops
 // when the runs source is in fixture-fallback mode (gc down) so
 // the dashboard's own host doesn't get hammered with loadFixture calls
@@ -47,8 +47,7 @@ import { loadSupervisorRunSummarySource } from '../supervisor/runSummary';
 // SSE is the path for actual data updates.
 
 const REFRESH_DEBOUNCE_MS = 10_000;
-const RUN_PHASE_GRAMMAR =
-  'Phase grammar: intake, implementation, review, approval, finalization.';
+const RUN_PHASE_GRAMMAR = 'Phase grammar: intake, implementation, review, approval, finalization.';
 const HISTORY_QUERY_PARAM = 'history';
 const HISTORY_QUERY_VALUE = '1';
 
@@ -57,7 +56,8 @@ export function RunsPage() {
   const cityName = getActiveCity();
   const { data, loading, error, refresh } = useCachedData(
     `runs:summary:${cityName ?? 'no-city'}`,
-    loadSupervisorRunSummarySource,
+    loadSupervisorRunSummaryPreviewSource,
+    { refreshFetcher: loadSupervisorRunSummarySource },
   );
   const [searchParams, setSearchParams] = useSearchParams();
   // gascity-dashboard-yh5i: ?history=1 toggles the historical lane
@@ -76,6 +76,7 @@ export function RunsPage() {
     runs?.status === 'fresh' || runs?.status === 'fixture' || runs?.status === 'stale'
       ? runs.data
       : null;
+  const fullRefreshKeyRef = useRef<string | null>(null);
   const totalHistorical = runsData?.totalHistorical ?? 0;
   // gascity-dashboard-n6f1: the backend now degrades (not collapses) when a
   // single rig's recent-run query fails, flagging lanesPartial. Surface it
@@ -98,10 +99,20 @@ export function RunsPage() {
     );
   }, [showHistory, setSearchParams]);
 
+  useEffect(() => {
+    if (runs === null || runs.status === 'error') return;
+    const refreshKey = cityName ?? 'no-city';
+    if (fullRefreshKeyRef.current === refreshKey) return;
+    fullRefreshKeyRef.current = refreshKey;
+    void refresh().catch(() => {
+      fullRefreshKeyRef.current = null;
+    });
+  }, [cityName, refresh, runs]);
+
   const onSseMatch = useCallback(() => {
     // Skip when supervisor is unreachable — every forced refresh under
     // fixture-fallback re-runs loadFixture(), which is wasted file IO.
-    if (runsStatusRef.current !== "fresh") return;
+    if (runsStatusRef.current !== 'fresh') return;
     // Skip when an explicit refresh is already in flight. Without this
     // guard, a fast SSE event firing while a slow upstream call is
     // still resolving lets two requests race; older-completion can
@@ -126,15 +137,15 @@ export function RunsPage() {
   const synopsis = runSynopsis(data);
 
   const freshnessLabel = runs
-    ? runs.status === "fresh"
+    ? runs.status === 'fresh'
       ? null
-      : runs.status === "fixture"
-        ? "fixture data"
-        : runs.status === "error"
-          ? "live data unavailable"
+      : runs.status === 'fixture'
+        ? 'fixture data'
+        : runs.status === 'error'
+          ? 'live data unavailable'
           : runs.fetchedAt
             ? `stale ${formatRelative(runs.fetchedAt, now)} ago`
-            : "stale"
+            : 'stale'
     : null;
 
   return (
@@ -142,6 +153,7 @@ export function RunsPage() {
       <PageHeader
         title="Formula Runs"
         synopsis={synopsis}
+        className="md:items-start"
         meta={
           <>
             {error && (
@@ -152,49 +164,64 @@ export function RunsPage() {
             {freshnessLabel !== null && (
               <span
                 className={`text-label uppercase tracking-wider tnum ${
-                  runs?.status === "error" ? "text-accent" : "text-fg-faint"
+                  runs?.status === 'error' ? 'text-accent' : 'text-fg-faint'
                 }`}
               >
                 {freshnessLabel}
               </span>
             )}
-            <PartialDataNotice
-              show={lanesPartial}
-              label="runs partial"
-              title="one or more rigs' recent runs were unavailable; the lane set may be incomplete"
-            />
-            <SseIndicator state={sseState} />
-            <Button
-              size="sm"
-              onClick={toggleHistory}
-              // yh5i: disable only when the toggle is off AND there's
-              // nothing to show. If the user already opened history
-              // (showHistory=true) we must let them close it, even if
-              // the last historical lane has since dropped out — otherwise
-              // a back-button + SSE refresh sequence locks the toggle open.
-              disabled={!showHistory && totalHistorical === 0}
-              aria-expanded={showHistory}
-              // aria-controls only references the historical section's id
-              // when that element is actually in the DOM; the WAI-ARIA
-              // spec requires referenced ids to exist.
-              {...(showHistory ? { 'aria-controls': RUNS_HISTORICAL_SECTION_ID } : {})}
-              aria-label={
-                showHistory
-                  ? 'Hide historical formula runs.'
-                  : totalHistorical === 0
-                    ? 'No completed formula runs in the current window.'
-                    : `Show ${totalHistorical} completed formula runs.`
-              }
-            >
-              {showHistory
-                ? 'Hide history'
-                : totalHistorical > 0
-                  ? `Show history (${totalHistorical})`
-                  : 'Show history'}
-            </Button>
-            <Button size="sm" onClick={() => void refresh()} disabled={loading}>
-              {loading ? "Refreshing" : "Refresh"}
-            </Button>
+            <div className="grid w-full min-w-[18rem] grid-cols-[7rem_minmax(6.5rem,1fr)] items-center gap-x-4 gap-y-3 sm:w-[34rem] sm:grid-cols-[7rem_6.5rem_10rem_7rem]">
+              <SseIndicator state={sseState} />
+              <span>
+                {lanesPartial ? (
+                  <PartialDataNotice
+                    label="runs partial"
+                    title="one or more rigs' recent runs were unavailable; the lane set may be incomplete"
+                  />
+                ) : (
+                  <span aria-hidden="true" className="invisible normal-case text-body text-warn">
+                    runs partial
+                  </span>
+                )}
+              </span>
+              <Button
+                size="sm"
+                className="w-full justify-center"
+                onClick={toggleHistory}
+                // yh5i: disable only when the toggle is off AND there's
+                // nothing to show. If the user already opened history
+                // (showHistory=true) we must let them close it, even if
+                // the last historical lane has since dropped out — otherwise
+                // a back-button + SSE refresh sequence locks the toggle open.
+                disabled={!showHistory && totalHistorical === 0}
+                aria-expanded={showHistory}
+                // aria-controls only references the historical section's id
+                // when that element is actually in the DOM; the WAI-ARIA
+                // spec requires referenced ids to exist.
+                {...(showHistory ? { 'aria-controls': RUNS_HISTORICAL_SECTION_ID } : {})}
+                aria-label={
+                  showHistory
+                    ? 'Hide historical formula runs.'
+                    : totalHistorical === 0
+                      ? 'No completed formula runs in the current window.'
+                      : `Show ${totalHistorical} completed formula runs.`
+                }
+              >
+                {showHistory
+                  ? 'Hide history'
+                  : totalHistorical > 0
+                    ? `Show history (${totalHistorical})`
+                    : 'Show history'}
+              </Button>
+              <Button
+                size="sm"
+                className="w-full justify-center"
+                onClick={() => void refresh()}
+                disabled={loading}
+              >
+                {loading ? 'Refreshing' : 'Refresh'}
+              </Button>
+            </div>
           </>
         }
       />
@@ -214,7 +241,7 @@ export function RunsPage() {
 }
 
 function runSynopsis(data: SourceState<RunSummary> | undefined): string {
-  if (data === undefined) return "Loading formula run lanes.";
+  if (data === undefined) return 'Loading formula run lanes.';
 
   if (data.status !== 'error') {
     return `${data.data.totalActive} active runs across the supervisor's bead store. ${RUN_PHASE_GRAMMAR}`;
