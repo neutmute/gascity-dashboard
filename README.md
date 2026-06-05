@@ -24,8 +24,8 @@ Until then, this repo exists so the dashboard can move quickly as a standalone N
 ## Quick start (dev)
 
 ```bash
-git clone <your-clone-url> gas-city-dashboard
-cd gas-city-dashboard
+git clone <your-clone-url>
+cd gascity-dashboard
 npm install
 npm run build:shared            # types must build first
 
