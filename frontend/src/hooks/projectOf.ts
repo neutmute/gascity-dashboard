@@ -1,4 +1,5 @@
 import type { DashboardSession } from 'gas-city-dashboard-shared';
+import { getActiveCity } from '../api/cityBase';
 import type { AgentResponse } from '../generated/gc-supervisor-client/types.gen';
 import type { SupervisorBead } from '../supervisor/beadReads';
 import type { SupervisorMailItem } from '../supervisor/mailReads';
@@ -31,7 +32,23 @@ export function beadProject(bead: SupervisorBead): string {
   return m?.[1] ?? bead.id;
 }
 
+// Stable grouping KEY for cross-rig orchestration agents/sessions. This is an
+// internal identity used for bucketing + collapse state and never shown raw to
+// the operator: the displayed LABEL is the active city name (see
+// `orchestrationLabel`). The key stays a constant so grouping is independent of
+// whichever city is currently mounted.
 export const ORCHESTRATION_PROJECT = 'Orchestration';
+
+/**
+ * Display label for the cross-rig orchestration bucket. The operator thinks of
+ * mayor / dispatchers / PLs as "the city", not as an abstract "Orchestration"
+ * group, so we render the active city name (e.g. `ds-research`). Falls back to
+ * the constant before the router has resolved a city — a degraded label is
+ * better than an empty one.
+ */
+export function orchestrationLabel(): string {
+  return getActiveCity() ?? ORCHESTRATION_PROJECT;
+}
 
 // Residual bucket for a row with no rig association and no orchestration role.
 export const NO_RIG_PROJECT = '(no rig)';
@@ -60,6 +77,59 @@ export function isPerRigDispatcher(s: DashboardSession): boolean {
   return PER_RIG_DISPATCHER_RX.test(s.alias ?? '');
 }
 
+// ── Worker-session classification (Work-in-flight signal) ─────────────────
+//
+// The Work-in-flight section counts the live WORKER sessions, not the
+// in-progress beads: the work-beads churn to zero within seconds (focus-reviews
+// finish fast) and live in rig stores the dashboard's bead fetch doesn't
+// reliably aggregate, while the worker SESSIONS stay active across that churn.
+// A worker session is the stable "what is working" signal.
+//
+// Orchestration sessions (mayor, the global + per-rig control dispatchers, the
+// per-rig project leads, the oversight chief-of-staff) are excluded: they
+// direct work, they don't perform it. The exclusion reuses the orchestration
+// predicates above plus the role markers below.
+
+// A worker session's template/name ends in a worker/pool role — `polecat`,
+// `scix-worker`, `worker-1` — optionally with a numeric slot suffix, and may
+// carry a trailing `-gc-XXXXX` spawned-session handle. Anchored to the END so a
+// role like `oversight-worker-review` (not a worker) doesn't slip through on a
+// mid-string match.
+const WORKER_ROLE_RX = /(?:worker|polecat)(?:-\d+)?$/;
+
+// Per-rig orchestration markers that DON'T live in ORCHESTRATION_TEMPLATES
+// (which only covers the rig-less cross-rig set). A rig-scoped project-lead or
+// chief-of-staff directs that rig's work; it is not a worker.
+const RIG_ORCHESTRATION_RX = /(?:\.project-lead|chief-of-staff)$/;
+
+/**
+ * True when a session is a live worker actively performing work — the signal
+ * the Work-in-flight section counts. Requires a live state (`active` or
+ * `running` — the same running signal isRunningAgent / isSessionStreamable /
+ * stateTone honour, so a worker reported as `running` is not silently dropped),
+ * a worker/pool role in the template or runtime name, and that the session is
+ * NOT any flavour of orchestration (cross-rig, per-rig dispatcher,
+ * project-lead, chief-of-staff).
+ */
+export function isWorkerSession(s: DashboardSession): boolean {
+  if (s.state !== 'active' && s.state !== 'running') return false;
+  if (isOrchestrationSession(s) || isPerRigDispatcher(s)) return false;
+  const template = s.template ?? '';
+  const alias = s.alias ?? '';
+  if (RIG_ORCHESTRATION_RX.test(template) || RIG_ORCHESTRATION_RX.test(alias)) {
+    return false;
+  }
+  // The worker role can surface in the template (`polecat`, `scix-worker`) or,
+  // for a dynamically-spawned slot, in the runtime session_name
+  // (`polecat-gc-335825`). Strip any `-gc-XXXXX` handle first so the role
+  // anchor matches the cleaned name.
+  const sessionName = s.session_name;
+  const candidates = [template, alias, sessionName]
+    .filter((c) => c.length > 0)
+    .map((c) => cleanWorkerName(c));
+  return candidates.some((c) => WORKER_ROLE_RX.test(c));
+}
+
 function normalizeRigKey(name: string): string {
   return name.toLowerCase().replace(/_/g, '-');
 }
@@ -73,7 +143,7 @@ export interface ProjectBucket {
 
 export function sessionProject(session: DashboardSession): ProjectBucket {
   if (isOrchestrationSession(session)) {
-    return { key: ORCHESTRATION_PROJECT, label: ORCHESTRATION_PROJECT };
+    return { key: ORCHESTRATION_PROJECT, label: orchestrationLabel() };
   }
   const candidate = session.rig ?? session.pool ?? session.template;
   if (!candidate) {
@@ -125,7 +195,7 @@ export function isPerRigDispatcherAgent(a: AgentResponse): boolean {
 
 export function agentProject(agent: AgentResponse): ProjectBucket {
   if (isOrchestrationAgent(agent)) {
-    return { key: ORCHESTRATION_PROJECT, label: ORCHESTRATION_PROJECT };
+    return { key: ORCHESTRATION_PROJECT, label: orchestrationLabel() };
   }
   // Agents — unlike sessions — never carry a `template` field; rig/pool are
   // the only grouping candidates. Empty-string `rig` is treated as absent
@@ -149,6 +219,34 @@ export function agentProject(agent: AgentResponse): ProjectBucket {
  */
 export function canonicalRigLabel(name: string): string {
   return name.endsWith('-main') ? name.slice(0, -'-main'.length) : name;
+}
+
+// Trailing `-gc-XXXXX` (or other 2/4-letter-prefixed) live-session handle that
+// leaks into a worker name when the supervisor labels a dynamically-spawned
+// slot by its session (e.g. `polecat-gc-335825`). Mirrors the session-id
+// alphabet; anchored to the END so only a real suffix is cut. The id body is
+// hyphen-free (`gc-335825`, not `gc-33-5825`) so the match binds to the minimal
+// trailing handle. The body MUST contain a digit (mirroring BARE_SESSION_ID_RX
+// in shared/work-in-flight.ts): live session ids always carry a numeric handle,
+// so requiring a digit stops the `[a-z]{4}` prefix branch from false-stripping a
+// hyphenated role whose penultimate segment is four letters (e.g. the `-scix-`
+// in `*-scix-worker`, which has no digit in `worker`).
+const WORKER_SESSION_SUFFIX_RX = /-(?:gc|td|th|[a-z]{4})-[a-z0-9]*[0-9][a-z0-9]*$/;
+
+/**
+ * Clean a worker/agent/assignee name for display: strip any leading filesystem
+ * path (keep the basename) and any trailing `-gc-XXXXX` live-session suffix, so
+ * `/home/ds/gas-city/city-infra-polecat` shows as `city-infra-polecat` and
+ * `polecat-gc-335825` shows as `polecat`. Returns the trimmed input unchanged
+ * when neither a path nor a session suffix is present.
+ */
+export function cleanWorkerName(name: string): string {
+  const trimmed = name.trim();
+  // basename — handle both '/' and '\' for cross-platform safety.
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  const basename = parts[parts.length - 1] ?? trimmed;
+  const stripped = basename.replace(WORKER_SESSION_SUFFIX_RX, '');
+  return stripped.length > 0 ? stripped : basename;
 }
 
 /**

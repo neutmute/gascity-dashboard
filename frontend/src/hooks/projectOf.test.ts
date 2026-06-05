@@ -1,14 +1,42 @@
 import { describe, expect, it } from 'vitest';
+import { getActiveCity, setActiveCity } from '../api/cityBase';
 import {
+  ORCHESTRATION_PROJECT,
   agentProject,
   beadProject,
+  cleanWorkerName,
   isAgentOutsideRig,
   isOrchestrationAgent,
   isOrchestrationSession,
   isPerRigDispatcherAgent,
+  isWorkerSession,
   mailProject,
+  orchestrationLabel,
   sessionProject,
 } from './projectOf';
+import type { DashboardSession } from 'gas-city-dashboard-shared';
+
+function gcSession(partial: Partial<DashboardSession>): DashboardSession {
+  return {
+    id: partial.id ?? 'gc-1',
+    template: '',
+    session_name: partial.id ?? 'gc-1',
+    title: '',
+    state: 'active',
+    created_at: '2026-06-03T00:00:00Z',
+    attached: false,
+    running: true,
+    provider: 'claude',
+    ...partial,
+  } as DashboardSession;
+}
+
+// The cross-rig orchestration bucket now LABELS with the active city name
+// (the operator thinks "the city", not "Orchestration"); the KEY stays the
+// stable ORCHESTRATION_PROJECT constant. The global test setup sets the active
+// city to 'test-city'. Resolved lazily (a function, not a module-load const)
+// so it reads the city AFTER setup has run, not at import time.
+const cityLabel = (): string => getActiveCity() ?? ORCHESTRATION_PROJECT;
 
 describe('beadProject', () => {
   it.each([
@@ -85,18 +113,18 @@ describe('mailProject', () => {
 
 // ── Agent grouping (gascity-dashboard-ay6 + Phase-4 H3/M3 follow-up) ──
 describe('agentProject', () => {
-  it('routes cross-rig orchestration agents to the Orchestration pinned group', () => {
+  it('routes cross-rig orchestration agents to the pinned group, labelled with the city name', () => {
     expect(agentProject({ name: 'mayor' } as never)).toEqual({
-      key: 'Orchestration',
-      label: 'Orchestration',
+      key: ORCHESTRATION_PROJECT,
+      label: cityLabel(),
     });
     expect(agentProject({ name: 'control-dispatcher' } as never)).toEqual({
-      key: 'Orchestration',
-      label: 'Orchestration',
+      key: ORCHESTRATION_PROJECT,
+      label: cityLabel(),
     });
     expect(agentProject({ name: 'oversight-rig.chief-of-staff' } as never)).toEqual({
-      key: 'Orchestration',
-      label: 'Orchestration',
+      key: ORCHESTRATION_PROJECT,
+      label: cityLabel(),
     });
   });
 
@@ -223,5 +251,127 @@ describe('agentProject -main canonicalization', () => {
     expect(agentProject({ name: 'z', rig: '/home/ds/gascity-packs' } as never).label).toBe(
       'gascity-packs',
     );
+  });
+});
+
+describe('orchestrationLabel', () => {
+  it('returns the active city name (operator thinks "the city", not "Orchestration")', () => {
+    const prior = getActiveCity();
+    try {
+      setActiveCity('ds-research');
+      expect(orchestrationLabel()).toBe('ds-research');
+      // The KEY is unaffected — only the display label tracks the city.
+      expect(agentProject({ name: 'mayor' } as never).key).toBe(ORCHESTRATION_PROJECT);
+      expect(agentProject({ name: 'mayor' } as never).label).toBe('ds-research');
+      // sessionProject mirrors the same label change for orchestration sessions.
+      expect(sessionProject({ template: 'mayor' } as never)).toEqual({
+        key: ORCHESTRATION_PROJECT,
+        label: 'ds-research',
+      });
+    } finally {
+      if (prior !== null) setActiveCity(prior);
+    }
+  });
+});
+
+describe('cleanWorkerName', () => {
+  it('strips a trailing -gc-XXXXX live-session suffix to the role', () => {
+    expect(cleanWorkerName('polecat-gc-335825')).toBe('polecat');
+    expect(cleanWorkerName('scix-worker-gc-335812')).toBe('scix-worker');
+    expect(cleanWorkerName('enterprisebench-worker-gc-335808')).toBe('enterprisebench-worker');
+  });
+
+  it('strips a leading filesystem path to the basename', () => {
+    expect(cleanWorkerName('/home/ds/gas-city/city-infra-polecat')).toBe('city-infra-polecat');
+  });
+
+  it('strips both a path and a session suffix together', () => {
+    expect(cleanWorkerName('/home/ds/gas-city/polecat-gc-335825')).toBe('polecat');
+  });
+
+  it('also strips td-/th-/4-letter-prefixed session handles', () => {
+    expect(cleanWorkerName('worker-td-9abc')).toBe('worker');
+    expect(cleanWorkerName('worker-fddc-12xy')).toBe('worker');
+  });
+
+  it('does NOT strip a hyphenated role whose penultimate segment is 4 letters but carries no session digit', () => {
+    // `-scix-worker` matches the `<4-letter-prefix>-<body>` shape, but the body
+    // (`worker`) has no digit, so it is a role suffix, not a live-session handle
+    // (live ids always carry a numeric handle). Stripping it would truncate the
+    // label and mis-classify the worker.
+    expect(cleanWorkerName('city-scix-worker')).toBe('city-scix-worker');
+    expect(cleanWorkerName('infra-scix-worker')).toBe('infra-scix-worker');
+    // The genuine handle (digit body) on the same role still strips cleanly.
+    expect(cleanWorkerName('city-scix-worker-gc-335812')).toBe('city-scix-worker');
+  });
+
+  it('leaves a clean name unchanged', () => {
+    expect(cleanWorkerName('polecat-1')).toBe('polecat-1');
+    expect(cleanWorkerName('mayor')).toBe('mayor');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(cleanWorkerName('  polecat-gc-335825  ')).toBe('polecat');
+  });
+});
+
+describe('isWorkerSession', () => {
+  it('counts active polecat / worker sessions', () => {
+    expect(isWorkerSession(gcSession({ template: 'polecat', rig: 'gascity' }))).toBe(true);
+    expect(isWorkerSession(gcSession({ template: 'scix-worker', rig: 'scix' }))).toBe(true);
+    expect(isWorkerSession(gcSession({ template: 'worker-1', rig: 'geo' }))).toBe(true);
+  });
+
+  it('counts a dynamically-spawned slot named by its session handle', () => {
+    expect(
+      isWorkerSession(
+        gcSession({
+          template: 'pool',
+          session_name: 'polecat-gc-335825',
+          rig: 'gascity',
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("counts a worker reported in the 'running' state", () => {
+    // isRunningAgent / isSessionStreamable / stateTone all honour 'running';
+    // isWorkerSession must too, or a worker in that state is silently dropped
+    // from the Workers-active count.
+    expect(
+      isWorkerSession(gcSession({ template: 'polecat', rig: 'gascity', state: 'running' })),
+    ).toBe(true);
+  });
+
+  it('excludes a worker session that is not active', () => {
+    expect(
+      isWorkerSession(gcSession({ template: 'polecat', rig: 'gascity', state: 'asleep' })),
+    ).toBe(false);
+    expect(
+      isWorkerSession(gcSession({ template: 'polecat', rig: 'gascity', state: 'closed' })),
+    ).toBe(false);
+  });
+
+  it('excludes cross-rig orchestration (mayor, control-dispatcher, chief-of-staff)', () => {
+    expect(isWorkerSession(gcSession({ template: 'mayor', rig: '' }))).toBe(false);
+    expect(isWorkerSession(gcSession({ template: 'control-dispatcher', rig: '' }))).toBe(false);
+    expect(isWorkerSession(gcSession({ template: 'oversight-rig.chief-of-staff', rig: '' }))).toBe(
+      false,
+    );
+  });
+
+  it('excludes per-rig dispatchers and project-leads', () => {
+    expect(
+      isWorkerSession(
+        gcSession({ template: 'worker', rig: 'gascity', alias: 'gascity/control-dispatcher' }),
+      ),
+    ).toBe(false);
+    expect(isWorkerSession(gcSession({ template: 'gascity.project-lead', rig: 'gascity' }))).toBe(
+      false,
+    );
+  });
+
+  it('excludes a non-worker rig session (no worker/pool role)', () => {
+    expect(isWorkerSession(gcSession({ template: 'reviewer', rig: 'gascity' }))).toBe(false);
   });
 });

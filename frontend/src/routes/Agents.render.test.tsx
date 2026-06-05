@@ -115,6 +115,13 @@ function stubFetch(options: StubFetchOptions = {}) {
           },
         });
       }
+      // The "Workers active" section reads sessions (+ beads as best-effort
+      // context). None of the post-ay6 regression cases assert on it; the stub
+      // sessions list carries only orchestration, so it renders its calm
+      // "No workers active right now." empty state.
+      if (url.startsWith('/gc-supervisor/v0/city/test-city/beads') && method === 'GET') {
+        return jsonResponse({ items: [], total: 0 });
+      }
       if (url === '/gc-supervisor/v0/city/test-city/session/gc-2568/respond' && method === 'POST') {
         return jsonResponse({ id: 'gc-2568', status: 'accepted' }, { status: 202 });
       }
@@ -190,6 +197,7 @@ beforeEach(() => {
   fetchCalls.length = 0;
   invalidate('agents');
   invalidate('sessions');
+  invalidate('beads:in-flight');
   stubFetch();
 });
 

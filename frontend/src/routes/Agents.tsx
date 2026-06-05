@@ -8,9 +8,10 @@ import { ListSearchBar } from '../components/ListSearchBar';
 import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
 import { PartialDataNotice } from '../components/PartialDataNotice';
+import { WorkInFlight } from '../components/WorkInFlight';
 import { LiveSessionPeek, isAgentStreamable } from '../components/LiveSessionPeek';
 import { SseIndicator } from '../components/SseIndicator';
-import { StatusBadge, type StatusTone } from '../components/StatusBadge';
+import { StatusBadge, stateTone } from '../components/StatusBadge';
 import { Table, type TableColumn } from '../components/Table';
 import { useNow } from '../contexts/NowContext';
 import { useCachedData } from '../hooks/useCachedData';
@@ -23,8 +24,14 @@ import {
   type AgentPendingInteraction,
 } from '../supervisor/agentPending';
 import { listSupervisorSessions } from '../supervisor/sessionReads';
+import { listSupervisorBeads } from '../supervisor/beadReads';
 import { listSupervisorAgents, type SupervisorAgent } from '../supervisor/agentReads';
-import { agentProject, isAgentOutsideRig, isPerRigDispatcherAgent } from '../hooks/projectOf';
+import {
+  agentProject,
+  cleanWorkerName,
+  isAgentOutsideRig,
+  isPerRigDispatcherAgent,
+} from '../hooks/projectOf';
 import { agentSlug } from '../hooks/sessionSlug';
 
 // gascity-dashboard-ay6: the Agents view consumes the supervisor's
@@ -46,12 +53,29 @@ export function isRunningAgent(a: SupervisorAgent): boolean {
   return !a.suspended && (a.state === 'active' || a.state === 'running' || a.running === true);
 }
 
+// Whether an agent is visible while the 'running' toggle is on. Running agents
+// always show; a non-running agent shows ONLY if it has an urgent ('attention')
+// item (e.g. blocked on a pending interaction) so a genuinely stuck agent is
+// never hidden. A passive 'watch' item (suspended / asleep / idle) does NOT
+// keep a non-running agent visible — keying on any-non-null severity is what
+// let a suspended=true agent leak through the 'running' filter.
+export function isVisibleUnderRunning(
+  a: SupervisorAgent,
+  severity: 'attention' | 'watch' | null,
+): boolean {
+  return isRunningAgent(a) || severity === 'attention';
+}
+
 // Display label for the row: 'rig · agent' (e.g. 'gascity-packs · polecat-1').
 // Agents outside a rig (cross-rig orchestration or the residual no-rig
-// bucket) carry no rig prefix — just the alias.
+// bucket) carry no rig prefix — just the (cleaned) alias. The alias is run
+// through cleanWorkerName so a path-leaking or session-suffixed name
+// (e.g. `/home/ds/gas-city/city-infra-polecat`, `polecat-gc-335825`) renders
+// as a clean role, never the raw path or `-gc-XXXXX` suffix.
 export function agentRowLabel(a: SupervisorAgent): string {
-  if (isAgentOutsideRig(a)) return a.name;
-  return `${agentProject(a).label} · ${a.name}`;
+  const name = cleanWorkerName(a.name);
+  if (isAgentOutsideRig(a)) return name;
+  return `${agentProject(a).label} · ${name}`;
 }
 
 const AGENT_SEARCH_FIELDS = (a: SupervisorAgent): ReadonlyArray<string> =>
@@ -68,6 +92,13 @@ export function AgentsPage() {
   // Fetch the sessions list in parallel so we can map agent.session.name
   // -> session.id at peek time.
   const sessionsCache = useCachedData('sessions', listSupervisorSessions);
+  // The "Workers active" section is SESSION-driven: it counts the live worker
+  // sessions (stable across the bead churn), grouped by rig. Beads are fetched
+  // as best-effort secondary context only — when an in-progress bead's assignee
+  // embeds a worker session's id, the section appends it to that worker's row.
+  // The beads churn to zero within seconds and aren't reliably aggregated, so a
+  // worker with no captured bead is the common (and still-valid) case.
+  const beadsCache = useCachedData('beads:in-flight', () => listSupervisorBeads());
   const rows = useMemo<SupervisorAgent[]>(() => data?.items ?? [], [data]);
   const sessionIds = useMemo(
     () => (sessionsCache.data?.items ?? []).map((session) => session.id).sort(),
@@ -119,7 +150,16 @@ export function AgentsPage() {
     return sessionsById.get(sessionName) ?? null;
   }, [peekAgent, sessionsById]);
 
-  const sseState = useGcEventRefresh([GC_EVENT_PREFIX.session, 'agent.'], () => void refresh());
+  const sseState = useGcEventRefresh(
+    [GC_EVENT_PREFIX.session, GC_EVENT_PREFIX.bead, 'agent.'],
+    () => {
+      void refresh();
+      // The Work-in-flight section reads beads + sessions; keep both fresh on a
+      // bead/session transition so the in-flight rows track the live work.
+      void beadsCache.refresh();
+      void sessionsCache.refresh();
+    },
+  );
 
   const synopsis = useMemo(() => buildAgentSynopsis(rows), [rows]);
   const handlePendingResponse = useCallback(
@@ -163,11 +203,12 @@ export function AgentsPage() {
     const q = search.trim().toLowerCase();
     return rows.filter((a) => {
       if (rigFilter !== '' && agentProject(a).label !== rigFilter) return false;
-      // Always surface agents that need attention (e.g. blocked on a pending
-      // interaction) — they must never be hidden by the 'running' default,
-      // since a stuck agent is usually NOT running.
-      const needsAttention = resourceAttentionSeverity(attention, 'agents', a.name) !== null;
-      if (runningOnly && !isRunningAgent(a) && !needsAttention) return false;
+      // Only 'attention' severity (e.g. blocked on a pending interaction)
+      // bypasses the 'running' filter, never a passive 'watch' (suspended /
+      // asleep / idle). Keying on any-non-null severity is what let a
+      // suspended=true agent leak through the toggle. See isVisibleUnderRunning.
+      const severity = resourceAttentionSeverity(attention, 'agents', a.name);
+      if (runningOnly && !isVisibleUnderRunning(a, severity)) return false;
       if (q.length === 0) return true;
       return AGENT_SEARCH_FIELDS(a).some((field) => field.toLowerCase().includes(q));
     });
@@ -393,6 +434,22 @@ export function AgentsPage() {
         }
       />
 
+      <WorkInFlight
+        beads={beadsCache.data?.items ?? []}
+        sessions={sessionsCache.data?.items ?? []}
+        sessionsLoading={sessionsCache.loading}
+        sessionsError={sessionsCache.error}
+      />
+
+      {/* The bottom roster is the "available agents" view — the mayor, PLs, and
+          dispatchers that are running-but-idle, distinct from the working
+          sessions above. A calm section header (matching the "Workers active"
+          style) keeps the two groups from bleeding into one. */}
+      <header className="flex items-baseline justify-between border-b border-rule pb-2 mb-4">
+        <h2 className="text-headline text-fg">Available agents</h2>
+        <span className="text-label tnum text-fg-muted">{rows.length}</span>
+      </header>
+
       <div className="mb-6 space-y-3">
         <ListSearchBar
           value={search}
@@ -518,32 +575,10 @@ async function copyAttachCommand(
   }
 }
 
-// Single source of truth for state → tone mapping. Aligned with how the
-// gc supervisor emits agent (and session) states. Unknown states default
-// to neutral so we don't lie about them. 'detached' is explicit (not a
-// silent default) so reviewers see the intent.
-export function stateTone(state: string): StatusTone {
-  switch (state) {
-    case 'active':
-    case 'running':
-      return 'ok';
-    case 'rate-limited':
-    case 'rate_limited':
-    case 'waiting':
-      return 'warn';
-    case 'failed':
-    case 'closed':
-    case 'errored':
-    case 'stuck':
-      return 'stuck';
-    case 'detached':
-    case 'asleep':
-    case 'idle':
-    case 'creating':
-    default:
-      return 'neutral';
-  }
-}
+// stateTone moved to components/StatusBadge.tsx (alongside StatusTone /
+// beadStatusTone) to break the Agents → WorkInFlight → Agents import cycle.
+// Re-exported here so existing importers of `./Agents` keep working.
+export { stateTone } from '../components/StatusBadge';
 
 // Buckets a raw state into the synopsis category. Distinct from
 // stateTone because 'detached' and 'idle' share a tone (neutral) but the
