@@ -110,11 +110,45 @@ async function runTheme(browser, theme) {
     await page.getByRole('heading', { name: /adopt pr #42/i }).waitFor({ timeout: 5_000 });
     await page.getByText(/v11 · seq 91/i).waitFor({ timeout: 5_000 });
     await page.getByRole('heading', { name: /formula graph/i }).waitFor({ timeout: 5_000 });
-    await page.getByRole('heading', { name: /local changes/i }).waitFor({ timeout: 5_000 });
+    // Diff-rendering checks (gascity-dashboard-r1fg): assert the patch
+    // actually renders as a structured diff — per-file <summary> rows and
+    // insert/delete code lines — not merely that the patch text appears
+    // somewhere on the page. These were downgraded during the #63
+    // integration and restored per gascity-dashboard-3ozw.
+    await page.getByRole('heading', { name: /^local changes$/i }).waitFor({ timeout: 5_000 });
     await page
-      .getByText('preserve failed attempt transcript links', { exact: true })
+      .locator('.formula-run-diff-view summary')
+      .filter({
+        hasText: 'shared/src/runs/enrich.ts',
+      })
       .waitFor({ timeout: 5_000 });
-    await page.getByText('old session guard').waitFor({ timeout: 5_000 });
+    await page
+      .locator('.formula-run-diff-view summary')
+      .filter({
+        hasText: 'docs/plan.md',
+      })
+      .waitFor({ timeout: 5_000 });
+    await page
+      .locator('.diff-code-insert')
+      .filter({
+        hasText: 'preserve failed attempt transcript links',
+      })
+      .first()
+      .waitFor({ timeout: 5_000 });
+    await page
+      .locator('.diff-code-delete')
+      .filter({
+        hasText: 'old session guard',
+      })
+      .first()
+      .waitFor({ timeout: 5_000 });
+    await page
+      .locator('.diff-code-insert')
+      .filter({
+        hasText: '# Plan',
+      })
+      .first()
+      .waitFor({ timeout: 5_000 });
     // Related section (gascity-dashboard-j4x) — RK3 density gate. The
     // high-volume fixture (40 molecule members + 3 unresolved links) must
     // render exactly one aggregate maroon mark in the Related section, cap
@@ -199,6 +233,22 @@ async function runTheme(browser, theme) {
 
     await page.getByRole('button', { name: /pre-approval ci repair loop/i }).click();
     await page.getByText(/session unresolved for this node/i).waitFor({ timeout: 5_000 });
+    // Session-tab availability check (gascity-dashboard-r1fg): a selected
+    // node with unresolved session state must keep the Session tab enabled
+    // so the unresolved explanation stays reachable.
+    const sessionTabAvailable = await page
+      .getByRole('tab', { name: /session/i })
+      .evaluate(
+        (node) =>
+          node instanceof HTMLButtonElement &&
+          !node.disabled &&
+          node.getAttribute('aria-disabled') !== 'true',
+      );
+    if (!sessionTabAvailable) {
+      result.errors.push(
+        'Session tab was unavailable for a selected node with unresolved session state',
+      );
+    }
 
     await page.goto(`${CITY_BASE}/runs/gc-adopt-pr-partial`, {
       waitUntil: 'domcontentloaded',
@@ -282,18 +332,53 @@ function recordApiFailures(result, apiCalls, apiFailures) {
 }
 
 async function installApiFixtureRoutes(context) {
+  // Ambient city-scoped surfaces (Header/Home modules: agents, mail, events,
+  // health, dolt-noms, maintainer triage). The harness focuses on the
+  // run-detail journey, but the strict any-API-failure tripwire observes the
+  // whole page — without these mocks every ambient call 404s against the
+  // fixture city and fails the run before the diff checks mean anything
+  // (gascity-dashboard-3ozw). Playwright matches the most-recently-registered
+  // handler first, so these ambient routes go in FIRST and the journey-specific
+  // routes registered below win on any overlap.
+  const emptyListBody = JSON.stringify({ items: [], partial: false, total: 0 });
+  const fulfillJson = (body) => async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body });
+  };
+  await context.route(/\/gc-supervisor\/v0\/city\/[^/]+\/agents(\?|$)/, fulfillJson(emptyListBody));
+  await context.route(/\/gc-supervisor\/v0\/city\/[^/]+\/mail(\?|$)/, fulfillJson(emptyListBody));
+  await context.route(/\/gc-supervisor\/v0\/city\/[^/]+\/events(\?|$)/, fulfillJson(emptyListBody));
+  await context.route(
+    /\/gc-supervisor\/v0\/city\/[^/]+\/health(\?|$)/,
+    // Shape mirrors the generated HealthOutputBody (gc-supervisor-client
+    // zod.gen.ts) — re-check after an OpenAPI regen. The tripwire only
+    // observes HTTP status for THIS health route, so body drift here fails
+    // silently. The trend/triage mocks below are different: their bodies are
+    // run through shared/ decoders client-side, so their shapes must match
+    // shared/src/{dashboard-health,maintainer-triage}.ts or the page breaks.
+    fulfillJson(JSON.stringify({ city: CITY, status: 'ok', uptime_sec: 1, version: 'fixture' })),
+  );
+  await context.route(
+    '**/api/city/*/dolt-noms/trend',
+    fulfillJson(JSON.stringify({ available: false, samples: [], reason: 'store_health_absent' })),
+  );
+  await context.route(
+    '**/api/city/*/maintainer/triage',
+    fulfillJson(
+      JSON.stringify({
+        computed_at: null,
+        repo: 'fixture/fixture',
+        tiers: [],
+        totals: { issues_open: 0, prs_open: 0 },
+      }),
+    ),
+  );
+
   // The city switcher (Header) lists managed cities directly through the
   // supervisor transport proxy. Mock it so the harness needs no live supervisor.
-  await context.route('**/gc-supervisor/v0/cities', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        items: [{ name: CITY, running: true }],
-        total: 1,
-      }),
-    });
-  });
+  await context.route(
+    '**/gc-supervisor/v0/cities',
+    fulfillJson(JSON.stringify({ items: [{ name: CITY, running: true }], total: 1 })),
+  );
 
   // Dashboard-local city-scoped endpoints ride `/api/city/:cityName/*`.
   // Supervisor-owned reads use `/gc-supervisor/v0/city/:cityName/*`.
@@ -329,17 +414,16 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/city/*/config', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
+  await context.route(
+    '**/api/city/*/config',
+    fulfillJson(
+      JSON.stringify({
         cityName: 'racoon-city',
         cityRoot: '/tmp/gascity',
         useFixtures: false,
       }),
-    });
-  });
+    ),
+  );
 
   await context.route('**/api/client-errors', async (route) => {
     await route.fulfill({
@@ -364,45 +448,30 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/api/city/*/runs/gc-adopt-pr-active/diff**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(fixture.diff),
-    });
-  });
+  await context.route(
+    '**/api/city/*/runs/gc-adopt-pr-active/diff**',
+    fulfillJson(JSON.stringify(fixture.diff)),
+  );
 
-  await context.route('**/api/city/*/runs/gc-no-graph/diff**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(fixture.diff),
-    });
-  });
+  await context.route(
+    '**/api/city/*/runs/gc-no-graph/diff**',
+    fulfillJson(JSON.stringify(fixture.diff)),
+  );
 
-  await context.route('**/api/city/*/runs/gc-not-git/diff**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(unavailableDiff('not_git')),
-    });
-  });
+  await context.route(
+    '**/api/city/*/runs/gc-not-git/diff**',
+    fulfillJson(JSON.stringify(unavailableDiff('not_git'))),
+  );
 
-  await context.route('**/api/city/*/runs/gc-path-unknown/diff**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(unavailableDiff('path_unknown')),
-    });
-  });
+  await context.route(
+    '**/api/city/*/runs/gc-path-unknown/diff**',
+    fulfillJson(JSON.stringify(unavailableDiff('path_unknown'))),
+  );
 
-  await context.route('**/api/city/*/runs/gc-clean-worktree/diff**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(cleanWorktreeDiff()),
-    });
-  });
+  await context.route(
+    '**/api/city/*/runs/gc-clean-worktree/diff**',
+    fulfillJson(JSON.stringify(cleanWorktreeDiff())),
+  );
 
   await context.route('**/gc-supervisor/v0/city/*/workflow/**', async (route) => {
     const runId = workflowRunId(route.request().url());
@@ -449,13 +518,10 @@ async function installApiFixtureRoutes(context) {
     });
   });
 
-  await context.route('**/gc-supervisor/v0/city/*/sessions', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(sessionListFixture()),
-    });
-  });
+  await context.route(
+    '**/gc-supervisor/v0/city/*/sessions',
+    fulfillJson(JSON.stringify(sessionListFixture())),
+  );
 
   await context.route('**/gc-supervisor/v0/city/*/session/*/transcript**', async (route) => {
     const sessionId = route
